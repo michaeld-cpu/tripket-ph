@@ -1,0 +1,127 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --card: #ffffff;
+  --sidebar: #fafafa;
+}
+
+html, body { height: 100%; }
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-feature-settings: "cv02","cv03","cv04","cv11";
+}
+
+/* ─── Easing tokens (Emil Kowalski-derived custom curves) ─── */
+:root {
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-out-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+/* Card/section enter — fast, decisive, no fade-in lingering */
+@keyframes enter-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-enter {
+  animation: enter-up 280ms var(--ease-out-strong) both;
+}
+
+/* Bars: never start from scaleY(0) — "nothing in the real world appears from nothing" */
+@keyframes bar-grow {
+  from { opacity: 0; transform: scaleY(0.05); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+.animate-bar {
+  transform-origin: bottom;
+  animation: bar-grow 900ms var(--ease-out-drawer) both;
+}
+
+/* Line chart left→right reveal — under 800ms for perceived performance */
+@keyframes reveal-lr {
+  from { clip-path: inset(0 100% 0 0); }
+  to   { clip-path: inset(0 0 0 0); }
+}
+.animate-reveal-lr {
+  animation: reveal-lr 1400ms var(--ease-out-strong) both;
+}
+
+/* Dot pop — start from scale(0.85) not 0, subtle overshoot, no jarring 30% bounce */
+@keyframes dot-pop {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+  60%  { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.animate-dot {
+  animation: dot-pop 420ms var(--ease-out-strong) both;
+}
+
+/* Modal — center-origin (Emil's exception), scale from 0.96 not 0, fast feedback */
+@keyframes modal-enter {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.animate-modal {
+  transform-origin: center;
+  animation: modal-enter 200ms var(--ease-out-strong) both;
+}
+
+/* Modal backdrop — pure opacity, fast */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-backdrop {
+  animation: fade-in 160ms var(--ease-out-strong) both;
+}
+
+/* Popover — opacity:0 only at the very start (40ms) so background never bleeds through;
+   the rest of the animation is pure scale, keeping the white surface opaque */
+@keyframes popover-enter {
+  0%   { opacity: 0; transform: scale(0.95); }
+  25%  { opacity: 1; transform: scale(0.97); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.animate-popover {
+  animation: popover-enter 160ms var(--ease-out-strong) both;
+}
+
+/* Status pill — subtle scale feedback on press; color transitions stay quick */
+.pill-pressable {
+  transition: background-color 150ms ease, color 150ms ease, transform 120ms ease-out;
+}
+.pill-pressable:active {
+  transform: scale(0.97);
+}
+
+.bar-group > div:not(.tooltip) {
+  transition: opacity 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.chart-bars:hover .bar-group > div:not(.tooltip) {
+  opacity: 0.3;
+}
+.chart-bars:hover .bar-group:hover > div:not(.tooltip) {
+  opacity: 1;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-gray-200 bg-white p-5;
+  }
+  .btn {
+    @apply inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50;
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700;
+  }
+  .pill {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+}

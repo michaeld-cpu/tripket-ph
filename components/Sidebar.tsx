@@ -1,0 +1,294 @@
+"use client";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
+
+type IconProps = { className?: string };
+
+const DashboardIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <rect x="3" y="3" width="7" height="9" rx="1.5" />
+    <rect x="14" y="3" width="7" height="5" rx="1.5" />
+    <rect x="14" y="12" width="7" height="9" rx="1.5" />
+    <rect x="3" y="16" width="7" height="5" rx="1.5" />
+  </svg>
+);
+
+const FerryIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M12 3v3" />
+    <path d="M6 13V8h12v5" />
+    <path d="M3 13h18l-1.8 5.2a2 2 0 0 1-1.9 1.3H6.7a2 2 0 0 1-1.9-1.3L3 13Z" />
+    <path d="M2.5 21c1.2 0 1.2-1 2.4-1s1.2 1 2.4 1 1.2-1 2.4-1 1.2 1 2.3 1 1.2-1 2.4-1 1.2 1 2.4 1 1.2-1 2.3-1" />
+  </svg>
+);
+
+const RouteIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="6" cy="6" r="2.5" />
+    <circle cx="18" cy="18" r="2.5" />
+    <path d="M8.5 6H15a3.5 3.5 0 0 1 0 7H9a3.5 3.5 0 0 0 0 7h6.5" />
+  </svg>
+);
+
+const VoyageIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+);
+
+const TicketIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4V8Z" />
+    <path d="M10 6v12" strokeDasharray="2 2" />
+  </svg>
+);
+
+const SettingsIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+  </svg>
+);
+
+const ChevronLeft = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M15 6l-6 6 6 6" />
+  </svg>
+);
+
+type NavItem = { href: string; label: string; Icon: (p: IconProps) => JSX.Element };
+
+const navSections: { title: string; items: NavItem[] }[] = [
+  {
+    title: "Overview",
+    items: [
+      { href: "/", label: "Dashboard", Icon: DashboardIcon },
+    ],
+  },
+  {
+    title: "Operations",
+    items: [
+      { href: "/vessels",  label: "Vessels",  Icon: FerryIcon },
+      { href: "/routes",   label: "Routes",   Icon: RouteIcon },
+      { href: "/voyages",  label: "Voyages",  Icon: VoyageIcon },
+      { href: "/bookings", label: "Bookings", Icon: TicketIcon },
+    ],
+  },
+  {
+    title: "GENERAL",
+    items: [
+      { href: "/settings", label: "Settings", Icon: SettingsIcon },
+    ],
+  },
+];
+
+export default function Sidebar() {
+  const path = usePathname();
+  const [collapsed, setCollapsed] = useState(false);
+
+  return (
+    <aside
+      className={`relative flex h-screen shrink-0 flex-col border-r border-slate-200/70 py-5 transition-[width] duration-300 ease-out ${
+        collapsed ? "w-[72px] px-2" : "w-60 px-3"
+      }`}
+      style={{
+        // Atmospheric vertical gradient — slate-50 fading to white at the bottom
+        // Adds depth without using a flat fill (frontend-design skill: avoid solid backgrounds)
+        background:
+          "linear-gradient(180deg, rgb(248 250 252 / 0.7) 0%, rgb(248 250 252 / 0.5) 60%, rgb(255 255 255 / 0.6) 100%)",
+      }}
+    >
+      {/* Brand header */}
+      <motion.div
+        initial={{ opacity: 0, y: -4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ type: "spring", stiffness: 240, damping: 26, mass: 0.7 }}
+        className={`mb-6 flex items-center gap-2.5 ${collapsed ? "justify-center px-0" : "px-2"}`}
+      >
+        <div className="relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-600">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/imgs/logo.png" alt="Tripket PH" className="h-5 w-5 object-contain brightness-0 invert" />
+          {/* Highlight edge — Vercel/Linear "inner-edge refraction" */}
+          <span className="pointer-events-none absolute inset-0 rounded-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]" />
+        </div>
+        {!collapsed && (
+          <div className="min-w-0">
+            <div className="truncate text-[15px] font-semibold tracking-tight text-slate-900">Tripket PH</div>
+          </div>
+        )}
+      </motion.div>
+
+      <nav className="flex flex-1 flex-col gap-6">
+        {navSections.map((section, sectionIdx) => {
+          // Cascading stagger across the whole nav — one orchestrated entrance per the skill
+          const sectionBaseIdx = navSections
+            .slice(0, sectionIdx)
+            .reduce((sum, s) => sum + s.items.length, 0);
+          return (
+            <div key={section.title}>
+              {!collapsed && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3, ease: "easeOut", delay: 0.05 + sectionIdx * 0.06 }}
+                  className="mb-2 px-2 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-slate-400"
+                >
+                  {section.title}
+                </motion.div>
+              )}
+              {collapsed && sectionIdx > 0 && (
+                <div className="mx-3 mb-2 h-px bg-slate-200/70" />
+              )}
+              <div className="flex flex-col gap-px">
+                {section.items.map(({ href, label, Icon }, itemIdx) => {
+                  const active = href === "/" ? path === "/" : path.startsWith(href);
+                  const cascadeIdx = sectionBaseIdx + itemIdx;
+                  return (
+                    <motion.div
+                      key={href}
+                      initial={{ opacity: 0, x: -4 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 240,
+                        damping: 26,
+                        mass: 0.7,
+                        delay: 0.1 + cascadeIdx * 0.035,
+                      }}
+                    >
+                      <Link
+                        href={href}
+                        title={collapsed ? label : undefined}
+                        style={{ transitionTimingFunction: "cubic-bezier(0.16, 1, 0.3, 1)" }}
+                        className={`group relative flex items-center rounded-md text-[13.5px] transition-[background-color,color,transform] duration-200 active:scale-[0.97] ${
+                          collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-1.5"
+                        } ${
+                          active
+                            ? "font-medium tracking-tight text-slate-900"
+                            : "font-normal text-slate-600 hover:bg-slate-100/70 hover:text-slate-900"
+                        }`}
+                      >
+                        {active && !collapsed && (
+                          <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-brand-500" />
+                        )}
+                        <Icon
+                          className={`h-[18px] w-[18px] shrink-0 transition-colors duration-200 ${
+                            active ? "text-brand-600" : "text-slate-400 group-hover:text-slate-700"
+                          }`}
+                        />
+                        {!collapsed && <span>{label}</span>}
+                      </Link>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </nav>
+
+      {/* User block — pinned to bottom */}
+      <UserBlock collapsed={collapsed} />
+
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        className="absolute -right-3 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full bg-brand-600 text-white shadow-[0_4px_12px_rgba(234,88,12,0.3)] ring-[2px] ring-white transition-[background-color,transform] duration-150 ease-out hover:bg-brand-700 active:scale-90"
+      >
+        <ChevronLeft className={`h-3.5 w-3.5 transition-transform duration-200 ease-out ${collapsed ? "rotate-180" : ""}`} />
+      </button>
+    </aside>
+  );
+}
+
+function UserBlock({ collapsed }: { collapsed: boolean }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const user = { email: "admin@tripket.ph", role: "Admin", initials: "AD" };
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setMenuOpen(false); }
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  const handleLogout = () => {
+    setMenuOpen(false);
+    // TODO: wire up real auth signout
+  };
+
+  return (
+    <div className="relative mt-4 border-t border-slate-200/70 pt-3" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setMenuOpen(o => !o)}
+        title={collapsed ? `${user.email} · ${user.role}` : undefined}
+        className={`group flex w-full items-center rounded-lg transition-[background-color,transform] duration-150 ease-out hover:bg-white/70 active:scale-[0.98] ${
+          collapsed ? "justify-center px-0 py-2" : "gap-2.5 px-2 py-2"
+        }`}
+      >
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-900 text-[11px] font-semibold text-white">
+          {user.initials}
+        </div>
+        {!collapsed && (
+          <>
+            <div className="min-w-0 flex-1 text-left">
+              <div className="truncate text-[13px] font-medium text-slate-900">{user.role}</div>
+              <div className="truncate text-[11px] text-slate-500">{user.email}</div>
+            </div>
+          </>
+        )}
+      </button>
+
+      <AnimatePresence>
+        {menuOpen && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.97, y: 6 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.97, y: 6 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28, mass: 0.8 }}
+            style={{ transformOrigin: "bottom left" }}
+            className="absolute bottom-full left-0 right-0 z-40 mb-2 overflow-hidden rounded-xl bg-white py-1 shadow-[0_20px_40px_-20px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/70"
+          >
+            <div className="border-b border-slate-100 px-3 py-2">
+              <div className="truncate text-[12px] font-medium text-slate-900">{user.email}</div>
+              <div className="text-[10px] uppercase tracking-[0.08em] text-slate-400">{user.role}</div>
+            </div>
+            <button
+              onClick={() => setMenuOpen(false)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-slate-700 transition-[background-color] duration-150 ease-out hover:bg-slate-50"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-500">
+                <circle cx="12" cy="8" r="4" />
+                <path d="M4 21a8 8 0 0 1 16 0" />
+              </svg>
+              Account settings
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-rose-600 transition-[background-color] duration-150 ease-out hover:bg-rose-50"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <path d="M16 17l5-5-5-5" />
+                <path d="M21 12H9" />
+              </svg>
+              Log out
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
