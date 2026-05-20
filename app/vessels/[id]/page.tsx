@@ -1,7 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
+import maplibregl, { Map as MapLibreMap, Marker } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import {
   fetchDashboardData,
@@ -11,12 +13,19 @@ import {
 } from "@/lib/dashboard-data";
 import EditVesselModal from "@/components/EditVesselModal";
 import DeleteVesselDialog from "@/components/DeleteVesselDialog";
-import { Skeleton } from "@/components/Skeleton";
 
 // Shared design tokens — one source of truth for chrome / typography across all cards on this page.
 const CARD = "overflow-hidden rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70";
 const SECTION_HEADER = "border-b border-slate-100 px-5 py-3.5";
-const EYEBROW = "text-[10.5px] font-semibold uppercase tracking-[0.12em] text-slate-400";
+
+// Vessel initials — mirrors the helper on the vessels table page so the avatar reads consistently.
+function vesselInitials(name: string): string {
+  const cleaned = name.replace(/^MV\.?\s+/i, "").trim();
+  const words = cleaned.split(/\s+/).filter((w) => w.length > 0 && !/^(of|the|and)$/i.test(w));
+  if (words.length === 0) return name.slice(0, 2).toUpperCase();
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
 
 const statusTone: Record<Vessel["status"], { pill: string; dot: string }> = {
   Active:      { pill: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60", dot: "bg-emerald-500" },
@@ -68,25 +77,340 @@ function useMockVoyage(vessel: Vessel | null) {
   };
 }
 
-// Mock scheduled-departures history per vessel
+// Mock scheduled-departures history per vessel.
+// Each row carries a scheduled time AND an actual time — vessels don't always run on time,
+// so we compute a deterministic delay (sometimes 0, sometimes 5–40 min late) per row.
 function mockSchedule(vesselId: string, routePair: [string, string]) {
   let h = 0;
   for (let i = 0; i < vesselId.length; i++) h = (h * 31 + vesselId.charCodeAt(i)) >>> 0;
   const today = new Date("2026-05-19");
-  return Array.from({ length: 5 }).map((_, i) => {
-    const d = new Date(today); d.setDate(today.getDate() - (4 - i));
-    const isToday = i === 4;
+  const addMin = (hhmm: string, mins: number) => {
+    const [hh, mm] = hhmm.split(":").map(Number);
+    const total = hh * 60 + mm + mins;
+    const H = Math.floor(((total % (24 * 60)) + 24 * 60) % (24 * 60) / 60);
+    const M = ((total % 60) + 60) % 60;
+    return `${String(H).padStart(2, "0")}:${String(M).padStart(2, "0")}`;
+  };
+  const LEN = 10;
+  return Array.from({ length: LEN }).map((_, i) => {
+    const d = new Date(today); d.setDate(today.getDate() - (LEN - 1 - i));
+    const isToday = i === LEN - 1;
+    const scheduledDep = i % 2 === 0 ? "05:30" : "14:00";
+    // Mix of on-time (~40%) and late departures (5–40 min).
+    const depDelay = ((h >> (i * 5)) & 0xff) < 100 ? 0 : 5 + ((h >> (i * 5)) % 36);
+    const actualDep = addMin(scheduledDep, depDelay);
+    // Crossing takes a base duration (90 min) with small ±jitter; arrival inherits dep delay.
+    const baseDuration = 90;
+    const crossingJitter = ((h >> (i * 7)) % 11) - 5; // -5..+5
+    const scheduledArr = addMin(scheduledDep, baseDuration);
+    const actualArr = addMin(actualDep, baseDuration + crossingJitter);
+    // Arrival delay vs the schedule (can be negative for early; rare but possible).
+    const [sH, sM] = scheduledArr.split(":").map(Number);
+    const [aH, aM] = actualArr.split(":").map(Number);
+    const arrDelay = (aH * 60 + aM) - (sH * 60 + sM);
     return {
       id: `SCH-${vesselId}-${i}`,
       from: routePair[0],
       to: i % 2 === 1 ? "TAG" : routePair[1],
       date: d,
-      time: i % 2 === 0 ? "05:30" : "14:00",
-      status: isToday ? (i === 4 ? "Departed" : "En route") : "Arrived",
+      time: scheduledDep,        // scheduled departure
+      actualDep,                  // actual departure
+      depDelay,                   // minutes late on departure
+      scheduledArr,
+      actualArr,
+      arrDelay,
+      status: isToday ? "Departed" : "Arrived",
       sold: 1 + ((h >> (i * 3)) % 8),
       capacity: 200,
     };
   });
+}
+
+// ─────────── Voyage map — MapLibre basemap with overlaid route & animated ship ───────────
+// Real-world ferry routes as polylines of ocean waypoints so the ship stays on water,
+// not flying across islands. Each entry is a full path [departure, ...sea points, arrival].
+type RoutePath = [number, number][]; // lng/lat polyline
+const FERRY_ROUTES: Record<string, RoutePath> = {
+  // Batangas (Luzon) → Calapan (Mindoro): head south out of Batangas Bay into the
+  // open Verde Island Passage, then south-east through clear deep water, then
+  // east into Calapan — staying in the strait the whole way.
+  // South out of Batangas Bay, bend east north of Verde Island, run along the
+  // northern flank of Verde, then south-east past its eastern tip, then south
+  // into Calapan from the north.
+  "BAT|Calapan": [
+    [121.0583, 13.7565], // Batangas Port
+    [121.0400, 13.7200],
+    [121.0200, 13.6700], // south through open Batangas Bay
+    [121.0000, 13.6100], // continue south, clear of Luzon coast
+    [120.9900, 13.5500], // deep open water, well south of the peninsula
+    [121.0200, 13.5100], // start bending east, far from any land
+    [121.0800, 13.4900],
+    [121.1400, 13.4700], // east through open Verde Island Passage
+    [121.1700, 13.4400],
+    [121.1808, 13.4106], // Calapan
+  ],
+  // Cebu City → Dumaguete: south-west through Tañon Strait (between Negros & Cebu)
+  "CEB|Dumaguete City": [
+    [123.9036, 10.3157], // Cebu
+    [123.7000, 10.1000],
+    [123.5200,  9.8500],
+    [123.4000,  9.5500],
+    [123.3050,  9.3103], // Dumaguete
+  ],
+  // Manila → Puerto Princesa: south-west across the West Philippine Sea
+  "MNL|Puerto Princesa": [
+    [120.9842, 14.5995], // Manila Bay
+    [120.6500, 14.0000],
+    [120.0000, 13.0000],
+    [119.4000, 11.5000],
+    [119.0000, 10.5000],
+    [118.7350,  9.7392], // Puerto Princesa
+  ],
+  // Manila → Iloilo: south through Sibuyan Sea, west of Mindoro, east of Panay
+  "MNL|Iloilo": [
+    [120.9842, 14.5995], // Manila
+    [120.9000, 14.0000],
+    [120.9500, 13.0000],
+    [121.4000, 12.0000],
+    [122.0000, 11.2000],
+    [122.5644, 10.7202], // Iloilo
+  ],
+  // Manila → Cebu: south through Tablas Strait, then east through Visayan Sea
+  "MNL|Cebu City": [
+    [120.9842, 14.5995], // Manila
+    [121.0500, 13.6000],
+    [121.6000, 12.5000],
+    [122.5000, 11.7000],
+    [123.4000, 10.9000],
+    [123.9036, 10.3157], // Cebu
+  ],
+};
+
+function resolveRoute(fromCode: string, toCity: string): RoutePath {
+  const key = `${fromCode}|${toCity}`;
+  return FERRY_ROUTES[key] ?? FERRY_ROUTES["BAT|Calapan"];
+}
+
+// Walk a lng/lat polyline and return the point at fractional progress t ∈ [0,1].
+function pointOnRoute(path: RoutePath, t: number): [number, number] {
+  if (path.length < 2) return path[0] ?? [0, 0];
+  const segLens: number[] = [];
+  let total = 0;
+  for (let i = 1; i < path.length; i++) {
+    const dLng = path[i][0] - path[i - 1][0];
+    const dLat = path[i][1] - path[i - 1][1];
+    const len = Math.hypot(dLng, dLat);
+    segLens.push(len);
+    total += len;
+  }
+  const target = Math.max(0, Math.min(1, t)) * total;
+  let acc = 0;
+  for (let i = 0; i < segLens.length; i++) {
+    if (acc + segLens[i] >= target) {
+      const f = segLens[i] === 0 ? 0 : (target - acc) / segLens[i];
+      const a = path[i], b = path[i + 1];
+      return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+    }
+    acc += segLens[i];
+  }
+  return path[path.length - 1];
+}
+
+// Slice the polyline from the start up to fractional progress t — used to draw the
+// traveled-so-far line, faithful to the same waypoint geometry as the full route.
+function sliceRoute(path: RoutePath, t: number): RoutePath {
+  if (path.length < 2 || t <= 0) return [path[0]];
+  if (t >= 1) return path;
+  const segLens: number[] = [];
+  let total = 0;
+  for (let i = 1; i < path.length; i++) {
+    const len = Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]);
+    segLens.push(len);
+    total += len;
+  }
+  const target = t * total;
+  let acc = 0;
+  const out: RoutePath = [path[0]];
+  for (let i = 0; i < segLens.length; i++) {
+    if (acc + segLens[i] >= target) {
+      const f = segLens[i] === 0 ? 0 : (target - acc) / segLens[i];
+      const a = path[i], b = path[i + 1];
+      out.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
+      return out;
+    }
+    out.push(path[i + 1]);
+    acc += segLens[i];
+  }
+  return out;
+}
+
+function VoyageMap({
+  voyage,
+  isLive,
+}: {
+  voyage: ReturnType<typeof useMockVoyage>;
+  isLive: boolean;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const fromMarkerRef = useRef<Marker | null>(null);
+  const toMarkerRef   = useRef<Marker | null>(null);
+  const shipMarkerRef = useRef<Marker | null>(null);
+  const shipLabelRef  = useRef<Marker | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+  // SVG-projected route — recomputed on map move so it tracks pan/zoom.
+  const [projected, setProjected] = useState<{ full: string; traveled: string } | null>(null);
+
+  const route = voyage ? resolveRoute(voyage.fromCode, voyage.toCity) : null;
+
+  // Init map once
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+      center: [122, 12],
+      zoom: 6,
+      attributionControl: false,
+      cooperativeGestures: false,
+    });
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+    map.on("load", () => setMapReady(true));
+    mapRef.current = map;
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
+  }, []);
+
+  // When route changes (or map loads): drop endpoint markers and fit bounds.
+  // The route lines themselves are drawn as an SVG overlay (see effect below) so they
+  // stay full-saturation regardless of the basemap wash applied to the canvas.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !route || !voyage) return;
+
+    const from = route[0];
+    const to = route[route.length - 1];
+    fromMarkerRef.current?.remove();
+    toMarkerRef.current?.remove();
+    const fromEl = document.createElement("div");
+    fromEl.className = "h-3 w-3 rounded-full bg-brand-500 ring-4 ring-brand-500/20";
+    fromMarkerRef.current = new maplibregl.Marker({ element: fromEl }).setLngLat(from).addTo(map);
+
+    const toEl = document.createElement("div");
+    toEl.className = "h-3 w-3 rounded-full border-2 border-brand-500 bg-white ring-4 ring-brand-500/20";
+    toMarkerRef.current = new maplibregl.Marker({ element: toEl }).setLngLat(to).addTo(map);
+
+    const bounds = route.reduce(
+      (b, p) => b.extend(p),
+      new maplibregl.LngLatBounds(route[0], route[0]),
+    );
+    map.fitBounds(bounds, { padding: { top: 80, bottom: 80, left: 60, right: 60 }, duration: 0 });
+  }, [mapReady, voyage?.fromCode, voyage?.toCity]);
+
+  // SVG route overlay — project route lng/lats to screen pixels and rebuild on every map move.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !route || !voyage) {
+      setProjected(null);
+      return;
+    }
+    const buildPaths = () => {
+      const fullPts = route.map((p) => map.project(p));
+      const traveledPts = sliceRoute(route, voyage.progress).map((p) => map.project(p));
+      const toD = (pts: { x: number; y: number }[]) =>
+        pts.length === 0 ? "" : "M " + pts.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ");
+      setProjected({ full: toD(fullPts), traveled: toD(traveledPts) });
+    };
+    buildPaths();
+    map.on("move", buildPaths);
+    map.on("resize", buildPaths);
+    return () => {
+      map.off("move", buildPaths);
+      map.off("resize", buildPaths);
+    };
+  }, [mapReady, voyage?.fromCode, voyage?.toCity, voyage?.progress]);
+
+  // Ship marker + label — update position whenever progress changes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !route || !voyage || !isLive) {
+      shipMarkerRef.current?.remove(); shipMarkerRef.current = null;
+      shipLabelRef.current?.remove();  shipLabelRef.current  = null;
+      return;
+    }
+    const shipPos = pointOnRoute(route, voyage.progress);
+
+    if (!shipMarkerRef.current) {
+      const el = document.createElement("div");
+      el.className = "relative grid place-items-center";
+      el.innerHTML = `
+        <span class="absolute inline-flex h-6 w-6 rounded-full bg-brand-500 opacity-30 animate-ping"></span>
+        <span class="relative h-3.5 w-3.5 rounded-full bg-brand-500 ring-2 ring-white"></span>
+      `;
+      shipMarkerRef.current = new maplibregl.Marker({ element: el }).setLngLat(shipPos).addTo(map);
+    } else {
+      shipMarkerRef.current.setLngLat(shipPos);
+    }
+
+    if (!shipLabelRef.current) {
+      const el = document.createElement("div");
+      el.className = "relative z-[10] whitespace-nowrap rounded-md bg-white px-3 py-1.5 text-[12px] font-semibold text-slate-900 shadow-[0_4px_12px_-2px_rgba(15,23,42,0.18)]";
+      el.innerHTML = `
+        <span class="inline-flex items-center gap-1.5">
+          <span class="h-1.5 w-1.5 rounded-full bg-brand-500"></span>
+          En route
+        </span>
+        <span class="ml-2 font-normal tabular-nums text-slate-500">${voyage.remainingLabel} remaining</span>
+      `;
+      shipLabelRef.current = new maplibregl.Marker({ element: el, offset: [0, -38] }).setLngLat(shipPos).addTo(map);
+    } else {
+      shipLabelRef.current.setLngLat(shipPos);
+      const text = shipLabelRef.current.getElement().querySelector("span:last-child");
+      if (text) text.textContent = `${voyage.remainingLabel} remaining`;
+    }
+  }, [mapReady, isLive, voyage?.progress, voyage?.remainingLabel, voyage?.fromCode, voyage?.toCity]);
+
+  return (
+    <div className="relative h-[340px] overflow-hidden rounded-2xl bg-[#dde9f2] shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
+      <div ref={containerRef} className="voyage-map-canvas absolute inset-0 h-full w-full" />
+      {/* SVG route overlay — rendered above the basemap canvas (which is filtered) so the
+          orange route is unaffected by the basemap desaturation. */}
+      {projected && (
+        <svg
+          className="pointer-events-none absolute inset-0 z-[2] h-full w-full"
+          aria-hidden
+        >
+          <path
+            d={projected.full}
+            fill="none"
+            stroke="#f97316"
+            strokeOpacity="0.4"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeDasharray="6 7"
+          />
+          <path
+            d={projected.traveled}
+            fill="none"
+            stroke="#f97316"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+      {/* Scoped filter — desaturates only the basemap canvas, leaving SVG + markers vivid */}
+      <style jsx>{`
+        .voyage-map-canvas :global(.maplibregl-canvas) {
+          filter: saturate(0.55) brightness(1.03) hue-rotate(8deg);
+        }
+      `}</style>
+
+    </div>
+  );
 }
 
 export default function VesselDetailPage() {
@@ -115,12 +439,12 @@ export default function VesselDetailPage() {
       {/* Breadcrumb */}
       <nav className="mb-4 flex items-center gap-1.5 text-[12px] text-slate-500">
         <Link href="/vessels" className="transition-colors duration-150 ease-out hover:text-slate-900">
-          Operations
-        </Link>
-        <span className="text-slate-300">›</span>
-        <Link href="/vessels" className="transition-colors duration-150 ease-out hover:text-slate-900">
           Vessels
         </Link>
+        <span className="text-slate-300">›</span>
+        <span className="truncate text-slate-700">
+          {vessel?.name ?? "…"}
+        </span>
       </nav>
 
       {/* Title row — sits above the grid */}
@@ -165,286 +489,344 @@ export default function VesselDetailPage() {
         )}
       </div>
 
-      {/* ───────────────  MAIN GRID — info LEFT, map RIGHT (full-bleed)  ─────────────── */}
+      {/* ───────────────  MAIN GRID — Shippit-style layout  ─────────────── */}
+      {/* LEFT (5/12):  search + Add departure · primary current-voyage card · secondary previous-departure cards */}
+      {/* RIGHT (7/12): map up top · vessel + departure detail panels below (2-col grid like the reference) */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        {/* LEFT COLUMN — skeleton placeholder while content is being designed */}
-        <div className="space-y-4 lg:col-span-7">
-          {/* Live voyage skeleton */}
-          <section className={CARD}>
-            <header className={SECTION_HEADER}>
-              <Skeleton className="h-3 w-24" />
-            </header>
-            <div className="px-5 py-4">
-              <div className="grid grid-cols-3 items-end gap-4">
-                <div>
-                  <Skeleton className="h-2.5 w-16" />
-                  <Skeleton className="mt-2 h-3 w-20" />
-                  <Skeleton className="mt-1.5 h-5 w-24" />
+
+        {/* LEFT COLUMN */}
+        <div className="space-y-3 lg:col-span-5">
+          {/* Section header */}
+          {vessel && voyage && (
+            <div className="flex items-baseline justify-between px-1 pt-1 pb-0.5">
+              <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">Departures</h2>
+              <span className="font-mono text-[11.5px] tabular-nums text-slate-400">
+                {mockSchedule(vessel.id, [voyage.fromCode, voyage.toCode]).length}
+              </span>
+            </div>
+          )}
+
+          {/* Primary card — current voyage. Brand-filled with a warm highlight to lift the orange. */}
+          {vessel && voyage && isLive && (
+            <article
+              className="relative overflow-hidden rounded-2xl p-2 shadow-[0_1px_2px_rgba(15,23,42,0.06),0_16px_36px_-12px_rgba(234,88,12,0.45)]"
+              style={{
+                // Outer orange frame with a soft top-right highlight so it isn't flat.
+                backgroundImage:
+                  "radial-gradient(140% 80% at 100% 0%, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 55%), linear-gradient(180deg, #fb923c 0%, #f97316 55%, #ea580c 100%)",
+              }}
+            >
+              {/* Top strip — status + ID, sit on the orange frame above the white panel */}
+              <div className="flex items-center justify-between px-3 pt-1.5 pb-2">
+                <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white">
+                  <span className="relative inline-flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-70" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-white" />
+                  </span>
+                  En route
+                </span>
+                <span className="font-mono text-[11px] tabular-nums text-white/85">
+                  #{voyage.fromCode}{voyage.toCode}-{vessel.id.slice(-4).toUpperCase()}
+                </span>
+              </div>
+
+              {/* Inner white content panel — rounded inside the orange frame */}
+              <div className="overflow-hidden rounded-xl bg-white">
+                {/* Route timeline */}
+                <div className="relative px-5 py-5">
+                  <span aria-hidden className="absolute left-[27.5px] top-[34px] h-[36px] w-px bg-slate-200" />
+                  <ol className="relative space-y-4">
+                    <li className="grid grid-cols-[14px_1fr_auto] items-center gap-4">
+                      <span className="relative z-10 inline-flex h-3 w-3 rounded-full bg-brand-500 ring-[3px] ring-brand-100" />
+                      <div className="min-w-0">
+                        <div className="truncate text-[15px] font-semibold leading-tight tracking-tight text-slate-900">{voyage.fromCity}</div>
+                        <div className="mt-0.5 font-mono text-[11px] tabular-nums text-slate-500">Departed {voyage.departedLabel}</div>
+                      </div>
+                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums tracking-wider text-slate-600">{voyage.fromCode}</span>
+                    </li>
+                    <li className="grid grid-cols-[14px_1fr_auto] items-center gap-4">
+                      <span className="relative z-10 inline-flex h-3 w-3 rounded-full border-[2px] border-brand-500 bg-white" />
+                      <div className="min-w-0">
+                        <div className="truncate text-[15px] font-semibold leading-tight tracking-tight text-slate-900">{voyage.toCity}</div>
+                        <div className="mt-0.5 font-mono text-[11px] tabular-nums text-slate-500">ETA {voyage.etaLabel}</div>
+                      </div>
+                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums tracking-wider text-slate-600">{voyage.toCode}</span>
+                    </li>
+                  </ol>
                 </div>
-                <div className="flex flex-col items-center">
-                  <Skeleton className="h-2.5 w-10" />
-                  <Skeleton className="mt-2 h-3 w-28" />
-                  <Skeleton className="mt-1.5 h-5 w-24" />
-                </div>
-                <div className="flex flex-col items-end">
-                  <Skeleton className="h-2.5 w-10" />
-                  <Skeleton className="mt-2 h-3 w-24" />
-                  <Skeleton className="mt-1.5 h-5 w-24" />
+
+                {/* Footer metrics — inside the white panel, hairline divider */}
+                <div className="grid grid-cols-2 border-t border-slate-100 divide-x divide-slate-100">
+                  <div className="px-5 py-3">
+                    <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Vessel</div>
+                    <div className="mt-1 truncate text-[12.5px] font-medium tracking-tight text-slate-800">{vessel.name}</div>
+                  </div>
+                  <div className="px-5 py-3 text-right">
+                    <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Remaining</div>
+                    <div className="mt-1 font-mono text-[12.5px] font-semibold tabular-nums text-brand-600">{voyage.remainingLabel}</div>
+                  </div>
                 </div>
               </div>
-              <Skeleton className="mt-5 h-[3px] w-full rounded-full" />
-            </div>
-          </section>
+            </article>
+          )}
 
-          {/* Specs skeleton */}
-          <section className={CARD}>
-            <div className="grid grid-cols-3 divide-x divide-slate-100">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="px-5 py-4">
-                  <Skeleton className="h-2.5 w-20" />
-                  <Skeleton className="mt-2 h-4 w-28" />
-                  <Skeleton className="mt-1.5 h-3 w-24" />
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* Passenger types skeleton */}
-          <section className={CARD}>
-            <header className={SECTION_HEADER}>
-              <Skeleton className="h-3 w-28" />
-            </header>
-            <ul className="divide-y divide-slate-100">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <li key={i} className="flex items-center gap-3 px-5 py-3.5">
-                  <div className="min-w-0 flex-1">
-                    <Skeleton className="h-3.5 w-40" />
-                    <Skeleton className="mt-1.5 h-3 w-56" />
+          {/* Secondary cards — past departures. Same anatomy, neutral palette. */}
+          {vessel && voyage && mockSchedule(vessel.id, [voyage.fromCode, voyage.toCode])
+            .filter(s => s.status === "Arrived")
+            .map((s) => {
+              const arrivalCity = s.to === voyage.toCode ? voyage.toCity : s.to === "TAG" ? "Tagbilaran" : voyage.toCity;
+              return (
+                <article
+                  key={s.id}
+                  className="relative overflow-hidden rounded-2xl p-2 shadow-[0_1px_2px_rgba(15,23,42,0.03),0_6px_16px_-8px_rgba(15,23,42,0.08)]"
+                  style={{
+                    // Quiet slate frame — same anatomy as the primary card, neutral palette.
+                    backgroundImage:
+                      "radial-gradient(140% 80% at 100% 0%, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 55%), linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)",
+                  }}
+                >
+                  {/* Top strip — date + ID, sit on the slate frame above the white panel */}
+                  <div className="flex items-center justify-between px-3 pt-1.5 pb-2">
+                    <span className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      {s.date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                    </span>
+                    <span className="font-mono text-[11px] tabular-nums text-slate-400">{s.id.replace("SCH-", "#")}</span>
                   </div>
-                  <Skeleton className="h-3 w-16" />
-                </li>
-              ))}
-            </ul>
-          </section>
 
-          {/* Scheduled departures skeleton */}
-          <section className={CARD}>
-            <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
-              <Skeleton className="h-3 w-36" />
-              <Skeleton className="h-6 w-24 rounded-lg" />
-            </header>
-            <ul className="divide-y divide-slate-100">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <li key={i} className="grid grid-cols-[88px_1fr_60px_92px_160px] items-center gap-3 px-5 py-3.5">
-                  <Skeleton className="h-3.5 w-20" />
-                  <Skeleton className="h-3 w-28" />
-                  <Skeleton className="h-3 w-12" />
-                  <Skeleton className="h-5 w-20 rounded-full" />
-                  <div>
-                    <div className="flex items-baseline justify-between gap-2">
-                      <Skeleton className="h-2.5 w-12" />
-                      <Skeleton className="h-2.5 w-12" />
+                  {/* Inner white content panel */}
+                  <div className="overflow-hidden rounded-xl bg-white">
+                    <div className="relative px-5 py-4">
+                      <span aria-hidden className="absolute left-[27.5px] top-[26px] h-[32px] w-px bg-slate-200" />
+                      <ol className="relative space-y-3.5">
+                        <li className="grid grid-cols-[14px_1fr_auto] items-center gap-4">
+                          <span className="relative z-10 inline-flex h-2.5 w-2.5 rounded-full bg-slate-400 ring-[3px] ring-slate-100" />
+                          <div className="min-w-0">
+                            <div className="truncate text-[13.5px] font-medium tracking-tight text-slate-900">{voyage.fromCity}</div>
+                            <div className="mt-0.5 inline-flex items-baseline gap-1 font-mono text-[10.5px] tabular-nums text-slate-500">
+                              Departed <span className="font-semibold text-slate-700">{s.actualDep}</span>
+                              {s.depDelay > 0 && <span className="text-amber-600">+{s.depDelay}m</span>}
+                            </div>
+                          </div>
+                          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums tracking-wider text-slate-500">{s.from}</span>
+                        </li>
+                        <li className="grid grid-cols-[14px_1fr_auto] items-center gap-4">
+                          <span className="relative z-10 inline-flex h-2.5 w-2.5 rounded-full border-[2px] border-slate-400 bg-white" />
+                          <div className="min-w-0">
+                            <div className="truncate text-[13.5px] font-medium tracking-tight text-slate-900">{arrivalCity}</div>
+                            <div className="mt-0.5 inline-flex items-baseline gap-1 font-mono text-[10.5px] tabular-nums text-slate-500">
+                              Arrived <span className="font-semibold text-slate-700">{s.actualArr}</span>
+                              {s.arrDelay > 0 ? (
+                                <span className="text-amber-600">+{s.arrDelay}m</span>
+                              ) : s.arrDelay < 0 ? (
+                                <span className="text-emerald-600">{s.arrDelay}m</span>
+                              ) : (
+                                <span className="text-slate-400">on time</span>
+                              )}
+                            </div>
+                          </div>
+                          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums tracking-wider text-slate-500">{s.to}</span>
+                        </li>
+                      </ol>
                     </div>
-                    <Skeleton className="mt-1 h-[3px] w-full rounded-full" />
                   </div>
-                </li>
-              ))}
-            </ul>
-          </section>
+                </article>
+              );
+            })}
         </div>
 
-        {/* LEFT COLUMN (real content — currently hidden, restore by swapping with skeleton above) */}
-        <div className="hidden space-y-4 lg:col-span-7">
-          {/* Live voyage — Departed / Now / ETA timeline */}
-          {isLive && voyage && (
-            <section className={CARD}>
-              <header className={SECTION_HEADER}>
-                <h2 className={EYEBROW}>Live voyage</h2>
-              </header>
-              <div className="px-5 py-4">
-                <div className="grid grid-cols-3 items-end gap-4">
-                  <div>
-                    <div className={EYEBROW}>Departed</div>
-                    <div className="mt-1 text-[12.5px] text-slate-500">{voyage.fromCity}</div>
-                    <div className="mt-0.5 font-mono text-[17px] font-semibold tabular-nums tracking-tight text-slate-900">
-                      {voyage.departedLabel}
+        {/* RIGHT COLUMN — map + vessel/departure detail panels.
+            Sticky so it stays in view at a glance while the LEFT scrolls independently.
+            No internal scroll: all cards must fit within the viewport at a glance. */}
+        <div className="space-y-3 lg:col-span-7 lg:sticky lg:top-6 lg:self-start">
+          {/* Map */}
+          <VoyageMap voyage={voyage} isLive={!!isLive} />
+
+          {/* Vessel + Departure details — stacked panels */}
+          {vessel && (
+            <div className="space-y-3">
+              {/* Vessel — primary reference card */}
+              <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.10)]">
+                {/* Identity strip — initials, name, type, status (compact header) */}
+                <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-3.5">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-[12.5px] font-bold tracking-wide text-brand-600">
+                    {vesselInitials(vessel.name)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="truncate text-[15px] font-semibold leading-tight tracking-tight text-slate-900">{vessel.name}</h3>
+                      <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${statusTone[vessel.status].pill}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${statusTone[vessel.status].dot}`} />
+                        {vessel.status}
+                      </span>
                     </div>
-                  </div>
-                  <div className="text-center">
-                    <div className={EYEBROW}>Now</div>
-                    <div className="mt-1 text-[12.5px] text-slate-500">{voyage.remainingLabel} remaining</div>
-                    <div className="mt-0.5 font-mono text-[17px] font-semibold tabular-nums tracking-tight text-brand-600">
-                      {voyage.nowLabel}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className={EYEBROW}>ETA</div>
-                    <div className="mt-1 text-[12.5px] text-slate-500">{voyage.toCity}</div>
-                    <div className="mt-0.5 font-mono text-[17px] font-semibold tabular-nums tracking-tight text-slate-900">
-                      {voyage.etaLabel}
-                    </div>
+                    <div className="mt-0.5 text-[11.5px] text-slate-500">{vessel.type}</div>
                   </div>
                 </div>
-                <div className="relative mt-4 h-[3px] rounded-full bg-slate-100">
-                  <div
-                    className="absolute left-0 top-0 h-full rounded-full bg-brand-500"
-                    style={{ width: `${voyage.progress * 100}%` }}
-                  />
-                  <span
-                    className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-brand-500 bg-white shadow-[0_0_0_4px_rgba(251,146,60,0.12)]"
-                    style={{ left: `${voyage.progress * 100}%` }}
-                  />
+
+                {/* Hero metrics — IMO · Pax · Slots as the focal data */}
+                <div className="grid grid-cols-3 divide-x divide-slate-100">
+                  <div className="px-5 py-4">
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                        <rect x="4" y="6" width="16" height="12" rx="2" />
+                        <path d="M8 10h8M8 14h5" />
+                      </svg>
+                      IMO
+                    </div>
+                    <div className="mt-1.5 truncate font-mono text-[18px] font-semibold tabular-nums tracking-tight text-slate-900">
+                      {vessel.imo}
+                    </div>
+                  </div>
+                  <div className="px-5 py-4">
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                        <circle cx="12" cy="8" r="3.5" />
+                        <path d="M5 21c0-3.9 3.1-7 7-7s7 3.1 7 7" />
+                      </svg>
+                      Pax
+                    </div>
+                    <div className="mt-1.5 flex items-baseline gap-1">
+                      <span className="font-mono text-[22px] font-semibold leading-none tabular-nums tracking-tight text-slate-900">
+                        {vessel.passengers.toLocaleString()}
+                      </span>
+                      <span className="text-[10.5px] text-slate-400">seats</span>
+                    </div>
+                  </div>
+                  <div className="px-5 py-4">
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                        <path d="M3 17h2l2-6h10l2 6h2" />
+                        <circle cx="7.5" cy="17.5" r="1.5" />
+                        <circle cx="16.5" cy="17.5" r="1.5" />
+                      </svg>
+                      Slots
+                    </div>
+                    <div className="mt-1.5 flex items-baseline gap-1">
+                      {vessel.vehicleSlots !== null ? (
+                        <>
+                          <span className="font-mono text-[22px] font-semibold leading-none tabular-nums tracking-tight text-slate-900">
+                            {vessel.vehicleSlots}
+                          </span>
+                          <span className="text-[10.5px] text-slate-400">vehicles</span>
+                        </>
+                      ) : (
+                        <span className="text-[18px] font-semibold leading-none text-slate-300">—</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
-            </section>
-          )}
 
-          {/* Vessel specs */}
-          {vessel && (
-            <section className={CARD}>
-              <dl className="grid grid-cols-3 divide-x divide-slate-100">
-                <div className="px-5 py-4">
-                  <dt className={EYEBROW}>Vessel type</dt>
-                  <dd className="mt-1.5 text-[15px] font-semibold tracking-tight text-slate-900">{vessel.type}</dd>
-                  <dd className="mt-0.5 font-mono text-[11.5px] tabular-nums text-slate-500">IMO {vessel.imo}</dd>
-                </div>
-                <div className="px-5 py-4">
-                  <dt className={EYEBROW}>Capacity</dt>
-                  <dd className="mt-1.5 text-[15px] font-semibold tracking-tight text-slate-900">
-                    {vessel.passengers.toLocaleString()}
-                    <span className="ml-1 text-[11.5px] font-normal text-slate-400">pax</span>
-                  </dd>
-                  <dd className="mt-0.5 text-[11.5px] text-slate-500">
-                    {vessel.vehicleSlots === null ? "Passenger only" : `${vessel.vehicleSlots} vehicle slots`}
-                  </dd>
-                </div>
-                <div className="px-5 py-4">
-                  <dt className={EYEBROW}>Accepted vehicles</dt>
-                  <dd className="mt-1.5 text-[15px] font-semibold tracking-tight text-slate-900">
-                    {vessel.vehicleSlots === null
-                      ? "Passengers only"
-                      : `${vessel.vehicleClasses?.filter((c) => c.enabled).length ?? 0} classes`}
-                  </dd>
-                  <dd className="mt-0.5 truncate text-[11.5px] text-slate-500">
-                    {vessel.vehicleSlots !== null && vessel.vehicleClasses
-                      ? vessel.vehicleClasses.filter((c) => c.enabled).map((c) => c.label).join(", ") || "None configured"
-                      : "—"}
-                  </dd>
-                </div>
-              </dl>
-            </section>
-          )}
+              {/* Passenger types — primary reference card.
+                  Falls back to a sensible default set when the vessel doesn't carry its own. */}
+              {(() => {
+                const DEFAULT_PASSENGER_TYPES: PassengerType[] = [
+                  { key: "adult",   label: "Adult",            discountPct: 0,  requiredDoc: "Government-issued ID" },
+                  { key: "senior",  label: "Senior citizen",   discountPct: 20, requiredDoc: "Senior citizen ID" },
+                  { key: "pwd",     label: "PWD",              discountPct: 20, requiredDoc: "PWD ID" },
+                  { key: "student", label: "Student",          discountPct: 20, requiredDoc: "School ID, valid sem" },
+                  { key: "child",   label: "Child (3–11)",     discountPct: 50, requiredDoc: "Birth certificate" },
+                  { key: "infant",  label: "Infant (under 3)", discountPct: 100, requiredDoc: "Birth certificate", isInfant: true },
+                ];
+                const list = vessel.passengerTypes && vessel.passengerTypes.length > 0
+                  ? vessel.passengerTypes
+                  : DEFAULT_PASSENGER_TYPES;
+                return (
+                <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.10)]">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
+                    <div className="min-w-0">
+                      <h3 className="text-[15px] font-semibold tracking-tight text-slate-900">Passenger types</h3>
+                      <p className="mt-0.5 text-[10.5px] text-slate-500">Discounts require valid ID on boarding</p>
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-slate-600">{list.length}</span>
+                  </div>
 
-          {/* Passenger types */}
-          {vessel && (
-            <section className={CARD}>
-              <header className={SECTION_HEADER}>
-                <h2 className={EYEBROW}>Passenger types</h2>
-              </header>
-              {vessel.passengerTypes && vessel.passengerTypes.length > 0 ? (
-                <ul className="divide-y divide-slate-100">
-                  {vessel.passengerTypes.map((pt: PassengerType) => (
-                    <li key={pt.key} className="flex items-center gap-3 px-5 py-3.5">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[13.5px] font-medium tracking-tight text-slate-900">{pt.label}</div>
-                        <div className="truncate text-[11.5px] text-slate-500">{pt.requiredDoc}</div>
-                      </div>
-                      <span className={`shrink-0 font-mono text-[12.5px] tabular-nums ${pt.isInfant ? "text-emerald-600" : "text-slate-700"}`}>
-                        {pt.isInfant ? "Free" : `${pt.discountPct}% off`}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="px-5 py-6 text-center">
-                  <p className="text-[12.5px] text-slate-500">No passenger categories configured.</p>
+                  {/* Two-column grid — compact, with glyph + label + emphasized discount */}
+                  <ul className="grid grid-cols-2">
+                    {list.map((pt: PassengerType, i) => {
+                      const col = i % 2;
+                      const row = Math.floor(i / 2);
+                      const isFree = pt.isInfant || pt.discountPct === 100;
+                      const isBase = pt.discountPct === 0;
+                      return (
+                        <li
+                          key={pt.key}
+                          className={`group flex items-center gap-2.5 px-4 py-2.5 transition-colors duration-150 hover:bg-slate-50/60 ${
+                            row !== 0 ? "border-t border-slate-100" : ""
+                          } ${col === 0 ? "border-r border-slate-100" : ""}`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[12.5px] font-medium tracking-tight text-slate-900">{pt.label}</div>
+                            <div className="mt-0.5 truncate text-[10.5px] text-slate-400">
+                              {isFree ? "No fare" : isBase ? "Standard fare" : `${pt.discountPct}% off base`}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            {isFree ? (
+                              <span className="inline-flex rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-emerald-700">
+                                Free
+                              </span>
+                            ) : isBase ? (
+                              <span className="text-[10.5px] font-medium uppercase tracking-[0.1em] text-slate-400">Base</span>
+                            ) : (
+                              <span className="inline-flex items-baseline gap-0.5">
+                                <span className="font-mono text-[15px] font-semibold leading-none tabular-nums tracking-tight text-slate-900">
+                                  {pt.discountPct}
+                                </span>
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">% off</span>
+                              </span>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+                );
+              })()}
+
+              {/* Vehicle classes */}
+              {vessel.vehicleSlots !== null && vessel.vehicleClasses && vessel.vehicleClasses.length > 0 && (
+                <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200/70">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
+                    <h3 className="text-[15px] font-semibold tracking-tight text-slate-900">Vehicle classes</h3>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-slate-600">
+                      {vessel.vehicleClasses.filter((c) => c.enabled).length}/{vessel.vehicleClasses.length}
+                    </span>
+                  </div>
+                  <ul>
+                    {vessel.vehicleClasses.map((cls: VehicleClass, i) => (
+                      <li
+                        key={cls.key}
+                        className={`grid grid-cols-[14px_1fr_auto] items-center gap-3 px-4 py-1.5 ${
+                          i !== 0 ? "border-t border-slate-100" : ""
+                        }`}
+                      >
+                        <span
+                          className={`grid h-4 w-4 place-items-center rounded border ${
+                            cls.enabled
+                              ? "border-emerald-500 bg-emerald-500 text-white"
+                              : "border-slate-300 bg-white"
+                          }`}
+                        >
+                          {cls.enabled && (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
+                              <path d="M5 12l5 5 9-11" />
+                            </svg>
+                          )}
+                        </span>
+                        <div className={`min-w-0 text-[13px] tracking-tight ${cls.enabled ? "font-medium text-slate-900" : "text-slate-500"}`}>
+                          {cls.label}
+                        </div>
+                        <span className="shrink-0 font-mono text-[11px] tabular-nums text-slate-400">{cls.descriptor}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
-            </section>
-          )}
-
-          {/* Vehicle classes (only if vehicle-capable) */}
-          {vessel && vessel.vehicleSlots !== null && vessel.vehicleClasses && vessel.vehicleClasses.length > 0 && (
-            <section className={CARD}>
-              <header className={SECTION_HEADER}>
-                <h2 className={EYEBROW}>Vehicle classes</h2>
-              </header>
-              <ul className="divide-y divide-slate-100">
-                {vessel.vehicleClasses.map((cls: VehicleClass) => (
-                  <li key={cls.key} className="flex items-center gap-3 px-5 py-3">
-                    <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${cls.enabled ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white"}`}>
-                      {cls.enabled && (
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
-                          <path d="M5 12l5 5 9-11" />
-                        </svg>
-                      )}
-                    </span>
-                    <div className="min-w-0 flex-1 text-[13.5px] font-medium tracking-tight text-slate-900">{cls.label}</div>
-                    <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-slate-500">{cls.descriptor}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          {/* Scheduled departures */}
-          {vessel && voyage && (
-            <section className={CARD}>
-              <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
-                <h2 className={EYEBROW}>Scheduled departures</h2>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11.5px] font-medium text-slate-700 transition-[background-color,transform] duration-150 ease-out hover:bg-slate-50 active:scale-[0.97]"
-                >
-                  Edit schedule
-                </button>
-              </header>
-              <ul className="divide-y divide-slate-100">
-                {mockSchedule(vessel.id, [voyage.fromCode, voyage.toCode]).map((s) => {
-                  const pct = (s.sold / s.capacity) * 100;
-                  const isLiveRun = s.status === "En route" || s.status === "Departed";
-                  return (
-                    <li key={s.id} className="grid grid-cols-[88px_1fr_60px_92px_160px] items-center gap-3 px-5 py-3.5">
-                      <div className="font-mono text-[12.5px] font-medium tabular-nums tracking-tight text-slate-900">
-                        {s.from}<span className="px-1 text-slate-300">→</span>{s.to}
-                      </div>
-                      <div className="text-[12.5px] text-slate-600">
-                        {s.date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                      </div>
-                      <div className="font-mono text-[12.5px] tabular-nums text-slate-700">{s.time}</div>
-                      <div>
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          isLiveRun
-                            ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60"
-                            : "bg-slate-100 text-slate-600 ring-1 ring-slate-200/60"
-                        }`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${isLiveRun ? "bg-emerald-500" : "bg-slate-400"}`} />
-                          {s.status}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="flex items-baseline justify-between gap-2">
-                          <span className="text-[11px] text-slate-500">Tickets</span>
-                          <span className="font-mono text-[11.5px] tabular-nums text-slate-700">
-                            {s.sold}<span className="text-slate-400">/{s.capacity}</span>
-                          </span>
-                        </div>
-                        <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-slate-100">
-                          <div className="h-full rounded-full bg-brand-500" style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
+            </div>
           )}
         </div>
-
-        {/* RIGHT COLUMN — map placeholder, inside grid, matches info-column height */}
-        <aside className="lg:col-span-5">
-          <div className="h-full min-h-[480px] overflow-hidden rounded-2xl bg-[#aedcf3] shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70" />
-        </aside>
       </div>
 
       <EditVesselModal

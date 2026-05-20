@@ -33,7 +33,7 @@ function LogoTile({ line, size = 24 }: { line: Line; size?: number }) {
 }
 
 export default function ShippingLineSwitcher() {
-  const { active, setActiveId, lines } = useShippingLine();
+  const { active, setActiveId, lines, locked } = useShippingLine();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -63,6 +63,17 @@ export default function ShippingLineSwitcher() {
     () => lines.filter(l => l.name.toLowerCase().includes(query.toLowerCase())),
     [query, lines]
   );
+
+  // Operator mode — render a static identity badge after all hooks have run,
+  // so React sees a consistent hook count when the role flips.
+  if (locked) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm">
+        <LogoTile line={active} size={24} />
+        <span className="block max-w-[240px] truncate whitespace-nowrap text-left font-medium">{active.name}</span>
+      </div>
+    );
+  }
 
   return (
     <div className="relative" ref={ref}>

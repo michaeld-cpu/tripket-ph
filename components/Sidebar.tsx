@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { useCurrentUser } from "./UserContext";
 
 type IconProps = { className?: string };
 
@@ -207,7 +208,17 @@ export default function Sidebar() {
 function UserBlock({ collapsed }: { collapsed: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const user = { email: "admin@tripket.ph", role: "Admin", initials: "AD" };
+  const { user: currentUser, setRole } = useCurrentUser();
+
+  // Derive display props from the active user
+  const initials = currentUser.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("") || "??";
+  const roleLabel = currentUser.role === "admin" ? "Admin" : "Operator";
+  const user = { email: currentUser.email, role: roleLabel, initials };
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -275,6 +286,35 @@ function UserBlock({ collapsed }: { collapsed: boolean }) {
               </svg>
               Account settings
             </button>
+
+            {/* Dev-only role switcher — remove once real auth lands */}
+            <div className="border-t border-slate-100 px-3 pb-1 pt-2">
+              <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                View as
+              </div>
+              <div className="mt-1.5 grid grid-cols-2 gap-1">
+                <button
+                  onClick={() => { setRole("admin"); setMenuOpen(false); }}
+                  className={`rounded-md px-2 py-1 text-[11.5px] font-medium transition-colors duration-150 ease-out ${
+                    currentUser.role === "admin"
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  Admin
+                </button>
+                <button
+                  onClick={() => { setRole("operator"); setMenuOpen(false); }}
+                  className={`rounded-md px-2 py-1 text-[11.5px] font-medium transition-colors duration-150 ease-out ${
+                    currentUser.role === "operator"
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  Operator
+                </button>
+              </div>
+            </div>
             <button
               onClick={handleLogout}
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-rose-600 transition-[background-color] duration-150 ease-out hover:bg-rose-50"
