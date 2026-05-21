@@ -72,9 +72,9 @@ const navSections: { title: string; items: NavItem[] }[] = [
   {
     title: "Operations",
     items: [
-      { href: "/vessels",  label: "Vessels",  Icon: FerryIcon },
-      { href: "/routes",   label: "Routes",   Icon: RouteIcon },
       { href: "/voyages",  label: "Voyages",  Icon: VoyageIcon },
+      { href: "/routes",   label: "Routes",   Icon: RouteIcon },
+      { href: "/vessels",  label: "Vessels",  Icon: FerryIcon },
       { href: "/bookings", label: "Bookings", Icon: TicketIcon },
     ],
   },
