@@ -292,79 +292,21 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
   );
 }
 
-/* ─────────────────────────  STEP INDICATOR  ───────────────────────── */
+/* ─────────────────────────  STEP INDICATOR  ─────────────────────────
+   Thin re-export over the shared Stepper so every dialog renders the
+   same active/done/upcoming shapes. Kept here to avoid touching the
+   call sites in AddVesselModal / EditVesselModal.                       */
 
-const STEPS = [
-  { num: 1 as const, label: "Identity & capacity" },
-  { num: 2 as const, label: "Classes & fares" },
-  { num: 3 as const, label: "Review" },
+import SharedStepper from "@/components/Stepper";
+
+const VESSEL_STEPS = [
+  { id: "1", label: "Identity & capacity" },
+  { id: "2", label: "Classes & fares" },
+  { id: "3", label: "Review" },
 ];
 
 export function StepIndicator({ current }: { current: 1 | 2 | 3 }) {
-  return (
-    <div className="flex items-center">
-      {STEPS.map((s, i) => {
-        const state: "complete" | "active" | "upcoming" =
-          current > s.num ? "complete" : current === s.num ? "active" : "upcoming";
-
-        return (
-          <div key={s.num} className="flex flex-1 items-center">
-            <div className="flex items-center gap-2.5">
-              <div className="relative grid h-6 w-6 shrink-0 place-items-center">
-                {state === "active" && (
-                  <span className="absolute inset-0 rounded-full bg-brand-500/15" />
-                )}
-                <span
-                  className={`relative grid h-6 w-6 place-items-center rounded-full text-[11px] font-semibold tabular-nums transition-[background-color,color,border-color] duration-300 ease-out ${
-                    state === "complete"
-                      ? "bg-brand-600 text-white"
-                      : state === "active"
-                      ? "border border-brand-500 bg-white text-brand-700"
-                      : "border border-slate-200 bg-white text-slate-400"
-                  }`}
-                >
-                  {state === "complete" ? (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
-                      <path d="M5 12l5 5 9-11" />
-                    </svg>
-                  ) : (
-                    s.num
-                  )}
-                </span>
-              </div>
-              <div className="flex flex-col leading-tight">
-                <span className={`text-[10.5px] font-semibold uppercase tracking-[0.1em] ${
-                  state === "upcoming" ? "text-slate-400" : "text-slate-500"
-                }`}>
-                  Step {s.num}
-                </span>
-                <span className={`text-[12px] tracking-tight ${
-                  state === "active"
-                    ? "font-medium text-slate-900"
-                    : state === "complete"
-                    ? "font-normal text-slate-600"
-                    : "font-normal text-slate-400"
-                }`}>
-                  {s.label}
-                </span>
-              </div>
-            </div>
-            {i < STEPS.length - 1 && (
-              <div className="mx-3 flex-1">
-                <div className="relative h-px w-full bg-slate-200">
-                  <span
-                    className={`absolute inset-y-0 left-0 bg-brand-500 transition-[width] duration-500 ease-out ${
-                      current > s.num ? "w-full" : "w-0"
-                    }`}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
+  return <SharedStepper steps={VESSEL_STEPS} currentIdx={current - 1} />;
 }
 
 /* ─────────────────────────  STEP 2  ───────────────────────── */
