@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import Stepper from "@/components/Stepper";
 import WizardHeader from "@/components/wizard/WizardHeader";
@@ -82,6 +82,18 @@ const STEPS: { id: StepId; label: string; description: string }[] = [
   { id: "review",   label: "Review",   description: "Confirm and create." },
 ];
 
+/**
+ * Payload emitted when the wizard finalises. The voyages calendar uses this
+ * to render the new schedule as one (or many, for weekly recurrence) blocks
+ * on the appropriate day+time cells.
+ */
+export type CreatedSchedule = {
+  schedule: ScheduleValue;
+  routes: RoutesValue;
+  vessel: VesselValue;
+  fares: FaresValue;
+};
+
 export default function CreateScheduleModal({
   open,
   onClose,
@@ -89,7 +101,7 @@ export default function CreateScheduleModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate?: () => void;
+  onCreate?: (payload: CreatedSchedule) => void;
 }) {
   const [stepIdx, setStepIdx] = useState(0);
   const [schedule, setSchedule] = useState<ScheduleValue>(initialScheduleValue);
@@ -98,6 +110,20 @@ export default function CreateScheduleModal({
   const [fares, setFares] = useState<FaresValue>(initialFaresValue);
   const step = STEPS[stepIdx];
   const isLast = stepIdx === STEPS.length - 1;
+
+  // Every time the modal opens, reset the wizard back to fresh defaults — and
+  // critically, recompute `initialScheduleValue()` so the departure date is
+  // today, not whatever today was when the page first mounted. Without this,
+  // the modal would keep stamping schedules with the date of the very first
+  // page load until the operator manually changed it.
+  useEffect(() => {
+    if (!open) return;
+    setStepIdx(0);
+    setSchedule(initialScheduleValue());
+    setRoutes(initialRoutesValue());
+    setVessel(initialVesselValue());
+    setFares(initialFaresValue());
+  }, [open]);
 
 
   // When the operator is registering a new vessel inline (step 3, mode === "new"),
@@ -112,7 +138,7 @@ export default function CreateScheduleModal({
       return;
     }
     if (isLast) {
-      onCreate?.();
+      onCreate?.({ schedule, routes, vessel, fares });
       onClose();
       setStepIdx(0); // reset for next mount
       return;
