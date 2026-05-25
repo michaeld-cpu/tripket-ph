@@ -47,10 +47,46 @@ const TicketIcon = ({ className }: IconProps) => (
   </svg>
 );
 
+const AuditIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z" />
+    <path d="M14 3v6h6" />
+    <path d="M8 13h8M8 17h5" />
+  </svg>
+);
+
+const ReportsIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 3v18h18" />
+    <path d="M7 14l4-4 3 3 5-6" />
+  </svg>
+);
+
+const UsersIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+  </svg>
+);
+
 const SettingsIcon = ({ className }: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <circle cx="12" cy="12" r="3" />
     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+  </svg>
+);
+
+const ShieldIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M12 3 4 6v6c0 4.4 3.4 8.4 8 9 4.6-.6 8-4.6 8-9V6l-8-3Z" />
+  </svg>
+);
+
+const ChevronDown = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M6 9l6 6 6-6" />
   </svg>
 );
 
@@ -60,30 +96,45 @@ const ChevronLeft = ({ className }: IconProps) => (
   </svg>
 );
 
-type NavItem = { href: string; label: string; Icon: (p: IconProps) => JSX.Element };
+type NavLeaf = { kind: "leaf"; href: string; label: string; Icon: (p: IconProps) => JSX.Element };
+type NavGroup = {
+  kind: "group";
+  /** Path prefix used to detect "active descendant" for auto-expand + highlight. */
+  basePath: string;
+  label: string;
+  Icon: (p: IconProps) => JSX.Element;
+  children: NavLeaf[];
+};
+type NavEntry = NavLeaf | NavGroup;
 
-const navSections: { title: string; items: NavItem[] }[] = [
+// Flat list — section title labels removed for compactness. A single hairline
+// divider separates the top "Overview" cluster from everything else, and a
+// second divider before Settings, matching reference apps like Linear / Vercel.
+const navEntries: (NavEntry | { kind: "divider" })[] = [
+  { kind: "leaf", href: "/",         label: "Dashboard", Icon: DashboardIcon },
+
+  { kind: "divider" },
+
+  { kind: "leaf", href: "/voyages",  label: "Voyages",   Icon: VoyageIcon },
+  { kind: "leaf", href: "/routes",   label: "Routes",    Icon: RouteIcon },
+  { kind: "leaf", href: "/vessels",  label: "Vessels",   Icon: FerryIcon },
+  { kind: "leaf", href: "/bookings", label: "Bookings",  Icon: TicketIcon },
+  { kind: "leaf", href: "/reports",  label: "Reports",   Icon: ReportsIcon },
+
   {
-    title: "Overview",
-    items: [
-      { href: "/", label: "Dashboard", Icon: DashboardIcon },
+    kind: "group",
+    basePath: "/security",
+    label: "Security",
+    Icon: ShieldIcon,
+    children: [
+      { kind: "leaf", href: "/users",      label: "Users",      Icon: UsersIcon },
+      { kind: "leaf", href: "/audit-logs", label: "Audit logs", Icon: AuditIcon },
     ],
   },
-  {
-    title: "Operations",
-    items: [
-      { href: "/voyages",  label: "Voyages",  Icon: VoyageIcon },
-      { href: "/routes",   label: "Routes",   Icon: RouteIcon },
-      { href: "/vessels",  label: "Vessels",  Icon: FerryIcon },
-      { href: "/bookings", label: "Bookings", Icon: TicketIcon },
-    ],
-  },
-  {
-    title: "GENERAL",
-    items: [
-      { href: "/settings", label: "Settings", Icon: SettingsIcon },
-    ],
-  },
+
+  { kind: "divider" },
+
+  { kind: "leaf", href: "/settings", label: "Settings",  Icon: SettingsIcon },
 ];
 
 export default function Sidebar() {
@@ -122,73 +173,8 @@ export default function Sidebar() {
         )}
       </motion.div>
 
-      <nav className="flex flex-1 flex-col gap-6">
-        {navSections.map((section, sectionIdx) => {
-          // Cascading stagger across the whole nav — one orchestrated entrance per the skill
-          const sectionBaseIdx = navSections
-            .slice(0, sectionIdx)
-            .reduce((sum, s) => sum + s.items.length, 0);
-          return (
-            <div key={section.title}>
-              {!collapsed && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.3, ease: "easeOut", delay: 0.05 + sectionIdx * 0.06 }}
-                  className="mb-2 px-2 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-slate-400"
-                >
-                  {section.title}
-                </motion.div>
-              )}
-              {collapsed && sectionIdx > 0 && (
-                <div className="mx-3 mb-2 h-px bg-slate-200/70" />
-              )}
-              <div className="flex flex-col gap-px">
-                {section.items.map(({ href, label, Icon }, itemIdx) => {
-                  const active = href === "/" ? path === "/" : path.startsWith(href);
-                  const cascadeIdx = sectionBaseIdx + itemIdx;
-                  return (
-                    <motion.div
-                      key={href}
-                      initial={{ opacity: 0, x: -4 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{
-                        type: "spring",
-                        stiffness: 240,
-                        damping: 26,
-                        mass: 0.7,
-                        delay: 0.1 + cascadeIdx * 0.035,
-                      }}
-                    >
-                      <Link
-                        href={href}
-                        title={collapsed ? label : undefined}
-                        style={{ transitionTimingFunction: "cubic-bezier(0.16, 1, 0.3, 1)" }}
-                        className={`group relative flex items-center rounded-md text-[13.5px] transition-[background-color,color,transform] duration-200 active:scale-[0.97] ${
-                          collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-1.5"
-                        } ${
-                          active
-                            ? "font-medium tracking-tight text-slate-900"
-                            : "font-normal text-slate-600 hover:bg-slate-100/70 hover:text-slate-900"
-                        }`}
-                      >
-                        {active && !collapsed && (
-                          <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-brand-500" />
-                        )}
-                        <Icon
-                          className={`h-[18px] w-[18px] shrink-0 transition-colors duration-200 ${
-                            active ? "text-brand-600" : "text-slate-400 group-hover:text-slate-700"
-                          }`}
-                        />
-                        {!collapsed && <span>{label}</span>}
-                      </Link>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
+      <nav className="flex flex-1 flex-col gap-px">
+        <NavRenderer entries={navEntries} path={path} collapsed={collapsed} />
       </nav>
 
       {/* User block — pinned to bottom */}
@@ -202,6 +188,164 @@ export default function Sidebar() {
         <ChevronLeft className={`h-3.5 w-3.5 transition-transform duration-200 ease-out ${collapsed ? "rotate-180" : ""}`} />
       </button>
     </aside>
+  );
+}
+
+// ─────────── NavRenderer — flat list with optional collapsible groups ───────────
+function NavRenderer({
+  entries,
+  path,
+  collapsed,
+}: {
+  entries: (NavEntry | { kind: "divider" })[];
+  path: string;
+  collapsed: boolean;
+}) {
+  // Cascading stagger index across all rendered rows.
+  let cascadeIdx = 0;
+  return (
+    <>
+      {entries.map((entry, i) => {
+        if (entry.kind === "divider") {
+          return <div key={`d-${i}`} className="my-2 mx-2 h-px bg-slate-200/70" />;
+        }
+        if (entry.kind === "leaf") {
+          const idx = cascadeIdx++;
+          return <NavLink key={entry.href} leaf={entry} active={isActive(entry.href, path)} collapsed={collapsed} cascadeIdx={idx} />;
+        }
+        // group
+        const idx = cascadeIdx++;
+        return <NavGroupItem key={entry.label} group={entry} path={path} collapsed={collapsed} cascadeIdx={idx} />;
+      })}
+    </>
+  );
+}
+
+function isActive(href: string, path: string) {
+  return href === "/" ? path === "/" : path.startsWith(href);
+}
+
+function NavLink({
+  leaf, active, collapsed, cascadeIdx, indent,
+}: {
+  leaf: NavLeaf;
+  active: boolean;
+  collapsed: boolean;
+  cascadeIdx: number;
+  indent?: boolean;
+}) {
+  const { href, label, Icon } = leaf;
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -4 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ type: "spring", stiffness: 240, damping: 26, mass: 0.7, delay: 0.1 + cascadeIdx * 0.035 }}
+    >
+      <Link
+        href={href}
+        title={collapsed ? label : undefined}
+        style={{ transitionTimingFunction: "cubic-bezier(0.16, 1, 0.3, 1)" }}
+        className={`group relative flex items-center rounded-md text-[13.5px] transition-[background-color,color,transform] duration-200 active:scale-[0.97] ${
+          collapsed ? "justify-center px-0 py-2.5" : indent ? "gap-3 py-1.5 pl-9 pr-3" : "gap-3 px-3 py-1.5"
+        } ${
+          active
+            ? "font-medium tracking-tight text-slate-900"
+            : "font-normal text-slate-600 hover:bg-slate-100/70 hover:text-slate-900"
+        }`}
+      >
+        {active && !collapsed && (
+          <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-brand-500" />
+        )}
+        <Icon className={`h-[18px] w-[18px] shrink-0 transition-colors duration-200 ${active ? "text-brand-600" : "text-slate-400 group-hover:text-slate-700"}`} />
+        {!collapsed && <span>{label}</span>}
+      </Link>
+    </motion.div>
+  );
+}
+
+function NavGroupItem({
+  group, path, collapsed, cascadeIdx,
+}: {
+  group: NavGroup;
+  path: string;
+  collapsed: boolean;
+  cascadeIdx: number;
+}) {
+  const hasActiveChild = group.children.some((c) => isActive(c.href, path));
+  // Default open when a child is active; otherwise let user toggle.
+  const [open, setOpen] = useState(hasActiveChild);
+  useEffect(() => {
+    if (hasActiveChild) setOpen(true);
+  }, [hasActiveChild]);
+
+  const Icon = group.Icon;
+
+  // Collapsed sidebar: render children as siblings so icons stack vertically
+  // — no expansion affordance, matches Linear's compact mode.
+  if (collapsed) {
+    return (
+      <>
+        {group.children.map((leaf, i) => (
+          <NavLink
+            key={leaf.href}
+            leaf={leaf}
+            active={isActive(leaf.href, path)}
+            collapsed={collapsed}
+            cascadeIdx={cascadeIdx + i}
+          />
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -4 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ type: "spring", stiffness: 240, damping: 26, mass: 0.7, delay: 0.1 + cascadeIdx * 0.035 }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        style={{ transitionTimingFunction: "cubic-bezier(0.16, 1, 0.3, 1)" }}
+        className={`group relative flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-left text-[13.5px] transition-[background-color,color,transform] duration-200 active:scale-[0.97] ${
+          hasActiveChild
+            ? "font-medium tracking-tight text-slate-900"
+            : "font-normal text-slate-600 hover:bg-slate-100/70 hover:text-slate-900"
+        }`}
+      >
+        <Icon className={`h-[18px] w-[18px] shrink-0 transition-colors duration-200 ${hasActiveChild ? "text-brand-600" : "text-slate-400 group-hover:text-slate-700"}`} />
+        <span className="flex-1">{group.label}</span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
+        />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="mt-0.5 flex flex-col gap-px">
+              {group.children.map((leaf, i) => (
+                <NavLink
+                  key={leaf.href}
+                  leaf={leaf}
+                  active={isActive(leaf.href, path)}
+                  collapsed={collapsed}
+                  cascadeIdx={cascadeIdx + i + 1}
+                  indent
+                />
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }
 
