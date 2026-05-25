@@ -34,6 +34,7 @@ export default function EditVesselModal({ open, vessel, onClose, onSave }: Props
     passengers: "",
     vehicleSlots: "",
     status: "Active" as Vessel["status"],
+    lineId: "",
   });
   const [vehicleClasses, setVehicleClasses] = useState<VehicleClass[]>(defaultVehicleClasses);
   const [passengerTypes, setPassengerTypes] = useState<PassengerType[]>(defaultPassengerTypes);
@@ -52,6 +53,9 @@ export default function EditVesselModal({ open, vessel, onClose, onSave }: Props
       passengers: String(vessel.passengers),
       vehicleSlots: vessel.vehicleSlots === null ? "" : String(vessel.vehicleSlots),
       status: vessel.status,
+      // Vessel.lineId not yet persisted on the canonical Vessel type — falls
+      // back to the active line via VesselFormBody's render-time hydration.
+      lineId: "",
     });
     const savedClasses = vessel.vehicleClasses ?? [];
     const merged = defaultVehicleClasses.map((d) => {

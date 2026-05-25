@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Line } from "@/lib/shipping-lines";
 import { useShippingLine } from "./ShippingLineContext";
 
-function LogoTile({ line, size = 24 }: { line: Line; size?: number }) {
+export function LogoTile({ line, size = 24 }: { line: Line; size?: number }) {
   const [err, setErr] = useState(false);
   const px = `${size}px`;
   if (err) {

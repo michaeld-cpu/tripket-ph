@@ -1,0 +1,777 @@
+"use client";
+import { useMemo } from "react";
+import type { ScheduleValue, DayKey } from "@/components/schedule-steps/ScheduleStep";
+import type { RoutesValue, Port } from "@/components/schedule-steps/RoutesStep";
+import { PORTS } from "@/components/schedule-steps/RoutesStep";
+import type { VesselValue, FleetVessel } from "@/components/schedule-steps/VesselStep";
+import type { FaresValue } from "@/components/schedule-steps/FaresStep";
+
+/**
+ * Review step — final stop of the Create-Schedule wizard.
+ *
+ * Treats the schedule like a real itinerary the operator is about to commit:
+ *  - Hero: boarding-pass card with origin/destination codes + perforated stats strip
+ *  - 2×2 detail grid: Schedule / Route / Vessel / Fares, each with Edit jump-back
+ *  - Footer confirm copy
+ *
+ * Because every previous step gates Continue on completeness, we don't render
+ * a warning banner — anything that lands here is by definition valid.
+ */
+
+const DAY_SHORT: Record<DayKey, string> = {
+  Mon: "M", Tue: "T", Wed: "W", Thu: "Th", Fri: "F", Sat: "S", Sun: "Su",
+};
+const DAY_LONG: Record<DayKey, string> = {
+  Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday",
+  Fri: "Friday", Sat: "Saturday", Sun: "Sunday",
+};
+
+// Note: passenger / vehicle / add-on metadata now comes from the vessel's
+// own catalog (vessel.passengerTypes / vehicleClasses / addOns), so there
+// are no static records here anymore.
+
+export default function ReviewStep({
+  schedule,
+  routes,
+  vessel,
+  fares,
+  fleet,
+  onEdit,
+}: {
+  schedule: ScheduleValue;
+  routes: RoutesValue;
+  vessel: VesselValue;
+  fares: FaresValue;
+  fleet: FleetVessel[];
+  onEdit: (stepIdx: number) => void;
+}) {
+  // ── Cross-step lookups ──
+  const origin      = useMemo(() => PORTS.find((p) => p.code === routes.originCode) ?? null, [routes.originCode]);
+  const destination = useMemo(() => PORTS.find((p) => p.code === routes.destinationCode) ?? null, [routes.destinationCode]);
+  const pickedFleet = useMemo(() => fleet.find((v) => v.id === vessel.fleetVesselId) ?? null, [fleet, vessel.fleetVesselId]);
+
+  const vesselName  = vessel.mode === "fleet" ? pickedFleet?.name ?? null : vessel.name.trim() || null;
+  const vesselType  = vessel.mode === "fleet" ? pickedFleet?.type ?? null : vessel.type;
+  const vesselPax   = vessel.mode === "fleet" ? pickedFleet?.passengerCapacity ?? 0 : Number(vessel.passengerCapacity) || 0;
+  const vesselSlots = vessel.mode === "fleet" ? pickedFleet?.vehicleSlots ?? 0 : Number(vessel.vehicleSlots) || 0;
+  const vesselImo   = vessel.mode === "fleet" ? null : vessel.imoNumber.trim() || null;
+
+  // ── Trips total (weekly only) ──
+  const tripsTotal = useMemo(() => {
+    if (schedule.recurrence === "once") return 1;
+    const dep = new Date(schedule.departureDate + "T00:00:00");
+    const end = new Date(schedule.endDate + "T00:00:00");
+    if (isNaN(dep.getTime()) || isNaN(end.getTime()) || schedule.runsOn.length === 0) return 0;
+    const runsKey = new Set(schedule.runsOn);
+    let count = 0;
+    const cursor = new Date(dep);
+    while (cursor <= end) {
+      const dow = (cursor.getDay() + 6) % 7;
+      const key = (["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] as DayKey[])[dow];
+      if (runsKey.has(key)) count++;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return count;
+  }, [schedule]);
+
+  // ── Span (days between dep & end, for weekly) ──
+  const spanDays = useMemo(() => {
+    if (schedule.recurrence === "once") return 0;
+    const dep = new Date(schedule.departureDate + "T00:00:00");
+    const end = new Date(schedule.endDate + "T00:00:00");
+    if (isNaN(dep.getTime()) || isNaN(end.getTime())) return 0;
+    return Math.round((end.getTime() - dep.getTime()) / 86_400_000) + 1;
+  }, [schedule]);
+
+  // ── Fares math — read from the vessel's catalog + the schedule's pricing ──
+  const baseEconomy = Number(fares.baseFare) || 0;
+
+  type FareLine = { key: string; label: string; sublabel: string; amount: number; free?: boolean };
+
+  const passengerLines: FareLine[] = vessel.passengerTypes
+    .filter((p) => fares.passengerPrices[p.key]?.enabled)
+    .map((p) => {
+      const row = fares.passengerPrices[p.key];
+      if (p.isInfant) {
+        return { key: p.key, label: p.label, sublabel: p.requiredDoc, amount: 0, free: true };
+      }
+      const computed = p.discountPct > 0 ? Math.round(baseEconomy * (1 - p.discountPct / 100)) : baseEconomy;
+      const amount = row.price ? Number(row.price) || 0 : computed;
+      const sublabel = p.discountPct > 0 ? `${p.discountPct}% off base · ${p.requiredDoc}` : p.requiredDoc;
+      return { key: p.key, label: p.label, sublabel, amount };
+    });
+
+  const vehicleLines = vesselSlots > 0
+    ? vessel.vehicleClasses
+        .filter((c) => c.enabled && fares.vehiclePrices[c.key]?.enabled)
+        .map((c) => ({
+          key: c.key,
+          label: c.label,
+          sublabel: c.descriptor,
+          amount: Number(fares.vehiclePrices[c.key]?.price) || 0,
+        }))
+    : [];
+
+  const addOnLines = vessel.addOns
+    .filter((a) => fares.addOnPrices[a.key]?.enabled)
+    .map((a) => ({
+      key: a.key,
+      label: a.label,
+      sublabel: a.descriptor,
+      amount: Number(fares.addOnPrices[a.key]?.price) || a.defaultPrice,
+    }));
+
+  const passengerSubtotal = passengerLines.filter((l) => !l.free).reduce((s, l) => s + l.amount, 0);
+  const vehicleSubtotal = vehicleLines.reduce((s, l) => s + l.amount, 0);
+  const addOnSubtotal = addOnLines.reduce((s, l) => s + l.amount, 0);
+  const sampleBasket = passengerSubtotal + vehicleSubtotal + addOnSubtotal;
+
+  const cheapest = passengerLines.filter((l) => !l.free).reduce<FareLine | null>((min, l) => !min || l.amount < min.amount ? l : min, null);
+  const priciest = passengerLines.filter((l) => !l.free).reduce<FareLine | null>((max, l) => !max || l.amount > max.amount ? l : max, null);
+
+  // ── Estimated arrival time for the hero pill ──
+  const eta = useMemo(() => {
+    const m = schedule.departureTime?.match(/^(\d{1,2}):(\d{2})$/);
+    const avg = (Number(routes.durationLowHrs) + Number(routes.durationHighHrs)) / 2;
+    if (!m || !Number.isFinite(avg) || avg <= 0) return null;
+    const startMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    const total = Math.round(startMin + avg * 60);
+    const endH = Math.floor(total / 60) % 24;
+    const endM = total % 60;
+    const period = endH < 12 ? "AM" : "PM";
+    const h12 = ((endH + 11) % 12) + 1;
+    const overnight = total >= 24 * 60;
+    return `${h12}:${String(endM).padStart(2, "0")} ${period}${overnight ? " (next day)" : ""}`;
+  }, [schedule.departureTime, routes.durationLowHrs, routes.durationHighHrs]);
+
+  return (
+    <div className="space-y-5 [&>*]:[animation:review-fade-in_360ms_cubic-bezier(0.16,1,0.3,1)_both]">
+      <style>{`
+        @keyframes review-fade-in {
+          0%   { opacity: 0; transform: translateY(6px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        /* ── Emil-style collapse / expand for native <details> ──
+           Animates ::details-content height + opacity in *both* directions.
+           Requires:
+             • interpolate-size on a parent so block-size: auto is animatable
+             • transition-behavior: allow-discrete so display: none can hold
+               long enough for the closing animation to play
+             • @starting-style so the opening transition starts from height 0 */
+        :root { interpolate-size: allow-keywords; }
+
+        details.review-section::details-content {
+          block-size: 0;
+          opacity: 0;
+          overflow: clip;
+          transition:
+            content-visibility 280ms cubic-bezier(0.16, 1, 0.3, 1) allow-discrete,
+            display              280ms cubic-bezier(0.16, 1, 0.3, 1) allow-discrete,
+            opacity              200ms cubic-bezier(0.16, 1, 0.3, 1),
+            block-size           280ms cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        details.review-section[open]::details-content {
+          block-size: auto;
+          opacity: 1;
+        }
+        /* When opening, start from collapsed state so the height transition runs. */
+        @starting-style {
+          details.review-section[open]::details-content {
+            block-size: 0;
+            opacity: 0;
+          }
+        }
+      `}</style>
+
+      {/* ─── Hero summary — boarding-pass style itinerary card ─── */}
+      <HeroSummary
+        eta={eta}
+        origin={origin}
+        destination={destination}
+        departureDate={schedule.departureDate}
+        departureTime={schedule.departureTime}
+        recurrence={schedule.recurrence}
+        tripsTotal={tripsTotal}
+        distanceNm={routes.distanceNm}
+        durationLow={routes.durationLowHrs}
+        durationHigh={routes.durationHighHrs}
+        vesselName={vesselName}
+      />
+
+      {/* ─── Single-column timeline ───
+         Four sections stack vertically with hairline dividers between them.
+         Reads like a printed itinerary — one fact per row, top to bottom. */}
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white divide-y divide-slate-100 [&>*]:[animation:review-fade-in_360ms_cubic-bezier(0.16,1,0.3,1)_both] [&>*:nth-child(1)]:[animation-delay:120ms] [&>*:nth-child(2)]:[animation-delay:180ms] [&>*:nth-child(3)]:[animation-delay:240ms] [&>*:nth-child(4)]:[animation-delay:300ms]">
+        {/* Schedule */}
+        <ReviewCard
+          title="Schedule"
+          subtitle={schedule.recurrence === "once" ? "Single voyage" : `Recurring for ${spanDays} days`}
+          icon={
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+              <rect x="3.5" y="5" width="17" height="16" rx="2" />
+              <path d="M8 3v4M16 3v4M3.5 10h17" />
+            </svg>
+          }
+          onEdit={() => onEdit(0)}
+        >
+          <DefList>
+            <DefRow
+              label="Recurrence"
+              value={
+                <span className="inline-flex items-center gap-1.5">
+                  <span>{schedule.recurrence === "once" ? "One-time trip" : "Recurring weekly"}</span>
+                  <span className={"inline-flex h-1.5 w-1.5 rounded-full " + (schedule.recurrence === "weekly" ? "bg-brand-500" : "bg-slate-300")} />
+                </span>
+              }
+            />
+            <DefRow label="Departs" value={formatDate(schedule.departureDate)} />
+            <DefRow label="Time" value={<Mono>{formatTime(schedule.departureTime)}</Mono>} />
+            {schedule.recurrence === "weekly" && (
+              <>
+                <DefRow
+                  label="Runs on"
+                  value={<WeekdayChips active={schedule.runsOn} />}
+                />
+                <DefRow label="Ends on" value={formatDate(schedule.endDate)} />
+                <DefRow
+                  label="Voyages"
+                  value={
+                    <span>
+                      <span className="font-mono font-semibold tabular-nums text-slate-900">{tripsTotal}</span>
+                      <span className="ml-1 text-[10.5px] text-slate-400">over {spanDays} days</span>
+                    </span>
+                  }
+                />
+              </>
+            )}
+          </DefList>
+        </ReviewCard>
+
+        {/* Route */}
+        <ReviewCard
+          title="Route"
+          subtitle={routes.createReturn ? "Both directions" : "One-way"}
+          icon={
+            // Map pin — universally legible "place / route" glyph.
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+              <path d="M12 21s-7-7.5-7-12a7 7 0 1 1 14 0c0 4.5-7 12-7 12Z" />
+              <circle cx="12" cy="9" r="2.5" />
+            </svg>
+          }
+          onEdit={() => onEdit(1)}
+        >
+          <DefList>
+            <DefRow label="Origin" value={origin ? <PortLine port={origin} /> : <Empty />} />
+            <DefRow label="Destination" value={destination ? <PortLine port={destination} /> : <Empty />} />
+            <DefRow label="Distance" value={routes.distanceNm ? <Stat value={routes.distanceNm} unit="nm" /> : <Empty />} />
+            <DefRow
+              label="Crossing"
+              value={
+                routes.durationLowHrs && routes.durationHighHrs ? (
+                  <Stat value={`${routes.durationLowHrs}–${routes.durationHighHrs}`} unit="hrs" />
+                ) : (
+                  <Empty />
+                )
+              }
+            />
+            {routes.createReturn && (
+              <DefRow
+                label="Return leg"
+                value={
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2 py-0.5 text-[10.5px] font-medium text-brand-700 ring-1 ring-brand-100">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
+                      <path d="M17 4l4 4-4 4M3 8h18M7 20l-4-4 4-4M21 16H3" />
+                    </svg>
+                    Will be created
+                  </span>
+                }
+              />
+            )}
+          </DefList>
+        </ReviewCard>
+
+        {/* Vessel — collapsed by default; subtitle carries the headline at a glance. */}
+        <ReviewCard
+          title="Vessel"
+          defaultOpen={false}
+          subtitle={
+            vesselName
+              ? `${vesselName} · ${prettyType(vesselType ?? "")} · ${vesselPax.toLocaleString()} pax`
+              : vessel.mode === "fleet"
+                ? "From your fleet"
+                : "New registration"
+          }
+          icon={
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+              <path d="M3 17h18l-2 3H5l-2-3Z" />
+              <rect x="5" y="11" width="14" height="6" rx="1" />
+              <path d="M8 11V7h8v4" />
+            </svg>
+          }
+          onEdit={() => onEdit(2)}
+          badge={
+            vessel.mode === "new" ? (
+              <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.1em] text-brand-700 ring-1 ring-brand-100">
+                New
+              </span>
+            ) : null
+          }
+        >
+          {vesselName ? (
+            <DefList>
+              <DefRow label="Name" value={<span className="font-semibold text-slate-900">{vesselName}</span>} />
+              {vesselType && <DefRow label="Type" value={prettyType(vesselType)} />}
+              <DefRow label="Passengers" value={<Stat value={vesselPax.toLocaleString()} unit="pax" />} />
+              {vesselSlots > 0 && <DefRow label="Vehicle deck" value={<Stat value={vesselSlots} unit="slots" />} />}
+              {vesselImo && <DefRow label="IMO no." value={<Mono>{vesselImo}</Mono>} />}
+            </DefList>
+          ) : (
+            <EmptyState message="No vessel selected yet." />
+          )}
+        </ReviewCard>
+
+        {/* Fares — collapsed by default. */}
+        <ReviewCard
+          title="Fares"
+          defaultOpen={false}
+          subtitle={
+            passengerLines.length === 0
+              ? "Not configured"
+              : `${passengerLines.length} ${passengerLines.length === 1 ? "tier" : "tiers"}${addOnLines.length ? ` · ${addOnLines.length} add-${addOnLines.length === 1 ? "on" : "ons"}` : ""} · Sample ₱${sampleBasket.toLocaleString()}`
+          }
+          icon={
+            // Ticket / tag — clearer "fare" semantics than the peso glyph.
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+              <path d="M3 8a2 2 0 0 1 2-2h11l5 5v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z" />
+              <path d="M16 6v4a1 1 0 0 0 1 1h4" />
+              <path d="M7 13h6M7 16h4" />
+            </svg>
+          }
+          onEdit={() => onEdit(3)}
+        >
+          {passengerLines.length === 0 ? (
+            <EmptyState message="No passenger fares enabled." />
+          ) : (
+            <div className="space-y-2">
+              {/* Passenger lines */}
+              <div className="space-y-1">
+                {passengerLines.map((l) => (
+                  <FareLineRow key={l.key} label={l.label} sublabel={l.sublabel} amount={l.amount} free={l.free} />
+                ))}
+              </div>
+
+              {/* Vehicle fares — only when the selected vessel has a car deck. */}
+              {vehicleLines.length > 0 && (
+                <>
+                  <div className="my-1.5 flex items-center gap-2">
+                    <div className="h-px flex-1 bg-slate-100" />
+                    <span className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Vehicle fares</span>
+                    <div className="h-px flex-1 bg-slate-100" />
+                  </div>
+                  <div className="space-y-1">
+                    {vehicleLines.map((l) => (
+                      <FareLineRow key={l.key} label={l.label} amount={l.amount} />
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Add-ons */}
+              {addOnLines.length > 0 && (
+                <>
+                  <div className="my-1.5 flex items-center gap-2">
+                    <div className="h-px flex-1 bg-slate-100" />
+                    <span className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Add-ons</span>
+                    <div className="h-px flex-1 bg-slate-100" />
+                  </div>
+                  <div className="space-y-1">
+                    {addOnLines.map((l) => (
+                      <FareLineRow key={l.key} label={l.label} sublabel={l.sublabel} amount={l.amount} />
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Subtotals + sample basket */}
+              <div className="mt-2 space-y-0.5 rounded-md bg-slate-50/80 px-2.5 py-2 ring-1 ring-slate-100">
+                <div className="flex items-center justify-between text-[10.5px] text-slate-500">
+                  <span>Passenger subtotal</span>
+                  <Mono className="text-[11px] text-slate-700">₱{passengerSubtotal.toLocaleString()}</Mono>
+                </div>
+                {vehicleLines.length > 0 && (
+                  <div className="flex items-center justify-between text-[10.5px] text-slate-500">
+                    <span>Vehicle subtotal</span>
+                    <Mono className="text-[11px] text-slate-700">₱{vehicleSubtotal.toLocaleString()}</Mono>
+                  </div>
+                )}
+                {addOnLines.length > 0 && (
+                  <div className="flex items-center justify-between text-[10.5px] text-slate-500">
+                    <span>Add-on subtotal</span>
+                    <Mono className="text-[11px] text-slate-700">₱{addOnSubtotal.toLocaleString()}</Mono>
+                  </div>
+                )}
+                <div className="mt-1 flex items-center justify-between border-t border-slate-200/70 pt-1.5">
+                  <span className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-brand-700">Sample basket</span>
+                  <span className="font-mono text-[14px] font-bold tabular-nums tracking-tight text-slate-900">
+                    ₱{sampleBasket.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Range hint */}
+              {cheapest && priciest && cheapest.key !== priciest.key && (
+                <div className="text-[10.5px] text-slate-500">
+                  Per-passenger range:{" "}
+                  <Mono className="text-slate-700">₱{cheapest.amount.toLocaleString()}</Mono>{" "}
+                  <span className="text-slate-400">({cheapest.label})</span>
+                  {" → "}
+                  <Mono className="text-slate-700">₱{priciest.amount.toLocaleString()}</Mono>{" "}
+                  <span className="text-slate-400">({priciest.label})</span>
+                </div>
+              )}
+            </div>
+          )}
+        </ReviewCard>
+      </div>
+
+      {/* ─── Ready-to-create confirmation panel ─── */}
+      <ReadyToCreate
+        recurrence={schedule.recurrence}
+        tripsTotal={tripsTotal}
+      />
+    </div>
+  );
+}
+
+// ─────────── Hero summary — boarding-pass style ───────────
+function HeroSummary({
+  origin, destination, departureTime, recurrence, tripsTotal,
+  durationLow, durationHigh, eta, vesselName,
+}: {
+  origin: Port | null;
+  destination: Port | null;
+  departureDate: string;
+  departureTime: string;
+  recurrence: "once" | "weekly";
+  tripsTotal: number;
+  distanceNm: string;
+  durationLow: string;
+  durationHigh: string;
+  eta: string | null;
+  vesselName: string | null;
+}) {
+  const haveRoute = !!origin && !!destination;
+  const refCode = haveRoute ? `${origin!.code}${destination!.code}-V1` : "—";
+  return (
+    // Bold orange wrapper bezel — the "showpiece" treatment, modelled on the
+    // EN ROUTE departure card. Outer is solid brand-500; inner is white so the
+    // detail content stays calm and legible inside the saturated bezel.
+    <div className="overflow-hidden rounded-2xl bg-brand-500 p-1.5">
+      {/* Wrapper header — eyebrow on left, reference code on right */}
+      <div className="flex items-center justify-between px-2.5 py-1.5">
+        <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-white">
+          {recurrence === "once" ? "One-time schedule" : "Weekly schedule"}
+        </span>
+        <span className="font-mono text-[10.5px] tabular-nums tracking-[0.08em] text-white/85">
+          #{refCode}
+        </span>
+      </div>
+
+      {/* Inner white card */}
+      <div className="overflow-hidden rounded-xl bg-white">
+        {/* Top zone — origin/destination with a stop-list rail on the left */}
+        <div className="px-5 py-4">
+          {haveRoute ? (
+            <div className="space-y-3">
+              <StopRow
+                kind="origin"
+                city={origin!.city}
+                code={origin!.code}
+                caption={`Departs ${formatTime(departureTime)}`}
+              />
+              <StopRow
+                kind="destination"
+                city={destination!.city}
+                code={destination!.code}
+                caption={eta ? `ETA ${eta}` : "Arrival on completion"}
+              />
+            </div>
+          ) : (
+            <div className="grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50/40 py-6 text-[12.5px] font-medium text-slate-400">
+              Route not set yet
+            </div>
+          )}
+        </div>
+
+        {/* Divider */}
+        <div className="border-t border-slate-100" />
+
+        {/* Bottom zone — two key stats in a 2-column split */}
+        <div className="grid grid-cols-2 divide-x divide-slate-100">
+          <KeyStat label="Vessel" value={vesselName ?? "—"} />
+          <KeyStat
+            label={recurrence === "weekly" ? "Voyages queued" : "Crossing"}
+            value={
+              recurrence === "weekly" && tripsTotal > 0
+                ? `${tripsTotal}`
+                : durationLow && durationHigh
+                  ? `${durationLow}–${durationHigh}h`
+                  : "—"
+            }
+            accent
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────── StopRow — used by the hero for origin & destination ───────────
+function StopRow({
+  kind, city, code, caption,
+}: { kind: "origin" | "destination"; city: string; code: string; caption: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      {/* Dot rail — filled for origin, ring-only for destination */}
+      <span
+        className={
+          "grid h-3 w-3 shrink-0 place-items-center rounded-full " +
+          (kind === "origin" ? "bg-brand-500 ring-2 ring-brand-100" : "border-2 border-brand-500 bg-white")
+        }
+      />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[15px] font-semibold tracking-tight text-slate-900">{city}</div>
+        <div className="font-mono text-[11.5px] tabular-nums text-slate-500">{caption}</div>
+      </div>
+      <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[10.5px] font-semibold tabular-nums tracking-[0.08em] text-slate-600 ring-1 ring-slate-200/60">
+        {code}
+      </span>
+    </div>
+  );
+}
+
+// ─────────── KeyStat — bottom-of-hero two-up footer ───────────
+function KeyStat({ label, value, accent }: { label: string; value: React.ReactNode; accent?: boolean }) {
+  return (
+    <div className="px-4 py-3">
+      <div className="text-[9.5px] font-semibold uppercase tracking-[0.16em] text-slate-400">{label}</div>
+      <div className={"mt-1 truncate font-mono text-[15px] font-bold tabular-nums tracking-tight " + (accent ? "text-brand-600" : "text-slate-900")}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function StatBlock({
+  label, value, sublabel, accent,
+}: { label: string; value: string; sublabel: string; accent?: boolean }) {
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</div>
+      <div
+        className={
+          "mt-1 truncate font-mono text-[14px] font-bold tabular-nums leading-tight tracking-tight " +
+          (accent ? "text-brand-600" : "text-slate-900")
+        }
+      >
+        {value}
+      </div>
+      <div className="mt-0.5 truncate text-[10.5px] font-medium text-slate-400">{sublabel}</div>
+    </div>
+  );
+}
+
+// ─────────── ReadyToCreate — flat, minimal confirmation row ───────────
+function ReadyToCreate({
+  recurrence,
+  tripsTotal,
+}: {
+  recurrence: "once" | "weekly";
+  tripsTotal: number;
+}) {
+  const queued =
+    recurrence === "weekly" && tripsTotal > 0
+      ? `${tripsTotal} ${tripsTotal === 1 ? "voyage" : "voyages"} will be queued`
+      : "1 voyage will be queued";
+
+  return (
+    <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 text-emerald-600">
+        <path d="M5 12l5 5L20 7" />
+      </svg>
+      <span className="text-[12.5px] tracking-tight text-slate-700">
+        <span className="font-semibold text-slate-900">Ready to create.</span>{" "}
+        <span className="text-slate-500">{queued}.</span>
+      </span>
+    </div>
+  );
+}
+
+// ─────────── Review card shell ───────────
+// Uses native <details> so each section can collapse independently — keeps the
+// review page short while still letting operators expand any section to
+// inspect specifics. Schedule + Route default to open (the most-checked
+// surfaces); Vessel + Fares default to closed and lead with a one-line summary.
+function ReviewCard({
+  title, subtitle, icon, onEdit, badge, defaultOpen = true, children,
+}: {
+  title: string;
+  subtitle?: string;
+  icon: React.ReactNode;
+  onEdit: () => void;
+  badge?: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  void icon; // API stability — header alone is enough hierarchy.
+  return (
+    <details open={defaultOpen} className="review-section group/card [&[open]_.chevron]:rotate-180">
+      <summary className="flex cursor-pointer items-baseline justify-between gap-3 px-5 py-3 transition-colors hover:bg-slate-50/60 [&::-webkit-details-marker]:hidden">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className="chevron h-3 w-3 shrink-0 text-slate-400 transition-transform duration-[280ms] ease-[cubic-bezier(0.16,1,0.3,1)]">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+            <h4 className="text-[13.5px] font-semibold tracking-tight text-slate-900">{title}</h4>
+            {badge}
+          </div>
+          {subtitle && (
+            <div className="mt-0.5 truncate pl-[18px] text-[11.5px] text-slate-500">{subtitle}</div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onEdit(); }}
+          aria-label={`Edit ${title.toLowerCase()}`}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] font-medium text-brand-700 transition-colors duration-150 ease-out hover:bg-brand-50 active:scale-[0.97]"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+          Edit
+        </button>
+      </summary>
+      <div className="px-5 pb-4 pl-[34px]">{children}</div>
+    </details>
+  );
+}
+
+// ─────────── Definition-list primitives ───────────
+// Rows now sit on a flat label/value baseline with sentence-case labels and a
+// hairline divider between entries. Easier to scan top-down than the previous
+// uppercase-mono variant which competed with the hero card.
+function DefList({ children }: { children: React.ReactNode }) {
+  return <dl className="divide-y divide-slate-100">{children}</dl>;
+}
+
+function DefRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-2 first:pt-0 last:pb-0">
+      <dt className="shrink-0 text-[12px] text-slate-500">{label}</dt>
+      <dd className="min-w-0 flex-1 text-right text-[12.5px] font-medium tracking-tight text-slate-900">{value}</dd>
+    </div>
+  );
+}
+
+function WeekdayChips({ active }: { active: DayKey[] }) {
+  const set = new Set(active);
+  const allKeys: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {allKeys.map((k) => (
+        <span
+          key={k}
+          className={
+            "grid h-5 w-5 place-items-center rounded text-[10px] font-semibold tabular-nums " +
+            (set.has(k) ? "bg-brand-500 text-white" : "bg-slate-100 text-slate-400")
+          }
+          title={DAY_LONG[k]}
+        >
+          {DAY_SHORT[k]}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function PortLine({ port }: { port: Port }) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      <span className="font-medium text-slate-900">{port.city}</span>
+      <span className="font-mono text-[10.5px] tabular-nums text-slate-400">({port.code})</span>
+    </span>
+  );
+}
+
+function Stat({ value, unit }: { value: string | number; unit: string }) {
+  return (
+    <span>
+      <span className="font-mono font-semibold tabular-nums text-slate-900">{value}</span>
+      <span className="ml-1 text-[10.5px] text-slate-400">{unit}</span>
+    </span>
+  );
+}
+
+function Mono({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <span className={"font-mono font-semibold tabular-nums " + (className ?? "text-slate-900")}>
+      {children}
+    </span>
+  );
+}
+
+function Empty() {
+  return <span className="text-slate-400">—</span>;
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-slate-200 bg-slate-50/40 px-3 py-3 text-center text-[11.5px] text-slate-500">
+      {message}
+    </div>
+  );
+}
+
+function FareLineRow({ label, sublabel, amount, free }: { label: string; sublabel?: string; amount: number; free?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="truncate text-[12px] font-medium text-slate-800">{label}</div>
+        {sublabel && <div className="truncate text-[10.5px] text-slate-400">{sublabel}</div>}
+      </div>
+      <div className="shrink-0">
+        {free ? (
+          <span className="text-[11.5px] font-semibold text-emerald-600">Free</span>
+        ) : (
+          <span className="font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">₱{amount.toLocaleString()}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────── Date / time helpers ───────────
+function formatDate(iso: string, variant: "full" | "short" | "weekday" = "full"): string {
+  if (!iso) return "—";
+  const d = new Date(iso + "T00:00:00");
+  if (isNaN(d.getTime())) return "—";
+  if (variant === "short")   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  if (variant === "weekday") return d.toLocaleDateString("en-US", { weekday: "long" });
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+function formatTime(hhmm: string): string {
+  const m = hhmm?.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return "—";
+  const h24 = parseInt(m[1], 10);
+  const period = h24 < 12 ? "AM" : "PM";
+  const h12 = ((h24 + 11) % 12) + 1;
+  return `${h12}:${m[2]} ${period}`;
+}
+function prettyType(t: string): string {
+  // Mirrors VesselFormBody.typeOptions so review reads identically to the form.
+  if (t === "RoRo") return "RoRo (Roll-on / Roll-off)";
+  if (t === "Fast Craft") return "Fast Craft (Passenger only)";
+  if (t === "Passenger Ship") return "Passenger Ship (Passenger only)";
+  return t;
+}

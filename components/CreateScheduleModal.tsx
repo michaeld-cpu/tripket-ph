@@ -5,6 +5,42 @@ import Stepper from "@/components/Stepper";
 import WizardHeader from "@/components/wizard/WizardHeader";
 import WizardFooter from "@/components/wizard/WizardFooter";
 import ScheduleStep, { type ScheduleValue } from "@/components/schedule-steps/ScheduleStep";
+import RoutesStep, { type RoutesValue } from "@/components/schedule-steps/RoutesStep";
+import VesselStep, { type VesselValue, MOCK_FLEET } from "@/components/schedule-steps/VesselStep";
+import { defaultVehicleClasses, defaultPassengerTypes } from "@/components/AddVesselModal";
+import { defaultAddOns } from "@/components/vessel-extras/AddOnsSection";
+import FaresStep, { type FaresValue, initialFaresValue } from "@/components/schedule-steps/FaresStep";
+import ReviewStep from "@/components/schedule-steps/ReviewStep";
+
+function initialVesselValue(): VesselValue {
+  return {
+    mode: "fleet",
+    fleetVesselId: "",
+    name: "",
+    type: "RoRo",
+    imoNumber: "",
+    passengerCapacity: "",
+    vehicleSlots: "",
+    status: "Active",
+    // lineId is hydrated from the active shipping line at modal-open time.
+    lineId: "",
+    vehicleClasses: defaultVehicleClasses,
+    passengerTypes: defaultPassengerTypes,
+    addOns: defaultAddOns,
+    newSubStep: 1,
+  };
+}
+
+function initialRoutesValue(): RoutesValue {
+  return {
+    originCode: "",
+    destinationCode: "",
+    distanceNm: "",
+    durationLowHrs: "",
+    durationHighHrs: "",
+    createReturn: false,
+  };
+}
 
 // Reasonable initial defaults — today's date, 4 AM, weekday picker empty.
 function initialScheduleValue(): ScheduleValue {
@@ -57,10 +93,24 @@ export default function CreateScheduleModal({
 }) {
   const [stepIdx, setStepIdx] = useState(0);
   const [schedule, setSchedule] = useState<ScheduleValue>(initialScheduleValue);
+  const [routes, setRoutes] = useState<RoutesValue>(initialRoutesValue);
+  const [vessel, setVessel] = useState<VesselValue>(initialVesselValue);
+  const [fares, setFares] = useState<FaresValue>(initialFaresValue);
   const step = STEPS[stepIdx];
   const isLast = stepIdx === STEPS.length - 1;
 
+
+  // When the operator is registering a new vessel inline (step 3, mode === "new"),
+  // intercept the outer wizard's Continue/Back to first walk through the embedded
+  // sub-wizard (Identity → Classes & fares → Review). Only after sub-step 3 does
+  // Continue advance to the outer step 4.
+  const inNewVesselFlow = step.id === "vessel" && vessel.mode === "new";
+  const subStep: 1 | 2 | 3 = vessel.newSubStep ?? 1;
   const goNext = () => {
+    if (inNewVesselFlow && subStep < 3) {
+      setVessel({ ...vessel, newSubStep: (subStep + 1) as 1 | 2 | 3 });
+      return;
+    }
     if (isLast) {
       onCreate?.();
       onClose();
@@ -69,7 +119,13 @@ export default function CreateScheduleModal({
     }
     setStepIdx((i) => Math.min(STEPS.length - 1, i + 1));
   };
-  const goBack = () => setStepIdx((i) => Math.max(0, i - 1));
+  const goBack = () => {
+    if (inNewVesselFlow && subStep > 1) {
+      setVessel({ ...vessel, newSubStep: (subStep - 1) as 1 | 2 | 3 });
+      return;
+    }
+    setStepIdx((i) => Math.max(0, i - 1));
+  };
 
   return (
     <Modal open={open} onClose={onClose} maxWidth="max-w-3xl">
@@ -112,18 +168,21 @@ export default function CreateScheduleModal({
         >
           {step.id === "schedule" ? (
             <ScheduleStep value={schedule} onChange={setSchedule} />
+          ) : step.id === "routes" ? (
+            <RoutesStep value={routes} onChange={setRoutes} />
+          ) : step.id === "vessel" ? (
+            <VesselStep value={vessel} onChange={setVessel} />
+          ) : step.id === "fares" ? (
+            <FaresStep value={fares} onChange={setFares} vessel={vessel} />
           ) : (
-            <div className="grid h-full place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50/40 p-8 text-center">
-              <div>
-                <div className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                  Step {stepIdx + 1}
-                </div>
-                <div className="mt-1.5 text-[15px] font-semibold tracking-tight text-slate-900">{step.label}</div>
-                <p className="mx-auto mt-2 max-w-sm text-[12.5px] leading-relaxed text-slate-500">
-                  {step.description} The form for this step will live here.
-                </p>
-              </div>
-            </div>
+            <ReviewStep
+              schedule={schedule}
+              routes={routes}
+              vessel={vessel}
+              fares={fares}
+              fleet={MOCK_FLEET}
+              onEdit={setStepIdx}
+            />
           )}
         </div>
 

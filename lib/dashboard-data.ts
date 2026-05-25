@@ -66,6 +66,18 @@ export type PassengerType = {
   isInfant?: boolean;
 };
 
+// Optional extras a vessel can sell on top of the base ticket (e.g. cabin meal,
+// priority boarding). Defined at vessel-creation time so every schedule that
+// uses the vessel inherits the same catalog.
+export type AddOn = {
+  key: string;
+  label: string;
+  descriptor: string;
+  /** Suggested default price in PHP. Operators can override per-schedule. */
+  defaultPrice: number;
+  enabled: boolean;
+};
+
 export type Vessel = {
   id: string;
   imo: string;

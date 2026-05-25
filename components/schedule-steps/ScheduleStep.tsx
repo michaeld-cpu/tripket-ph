@@ -180,7 +180,7 @@ export default function ScheduleStep({
       >
         <div className="min-h-0 overflow-hidden">
           {/* Single REPEATS row — weekday pills on the left, "until <date>" on the right.
-              Reads as one sentence: "Repeats M·W·F until Thu, May 28". The hint moves
+              Reads as onea sentence: "Repeats M·W·F until Thu, May 28". The hint moves
               into the section header so the inputs stay clean. */}
           <div className="border-t border-slate-100 pt-5">
             <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -189,7 +189,7 @@ export default function ScheduleStep({
               </label>
               <span className="text-[11px] text-slate-400">
                 {value.runsOn.length === 0
-                  ? "Pick at least one day."
+                  ? "Up to 30 days from departure."
                   : `Up to ${MAX_RANGE_DAYS} days from departure.`}
               </span>
             </div>
@@ -261,14 +261,18 @@ export default function ScheduleStep({
       </div>
 
       {/* ─── Live schedule summary — textual readback only ─── */}
-      <div className="rounded-xl bg-gradient-to-br from-white to-slate-50/60 px-4 py-3.5 ring-1 ring-slate-200">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Summary</span>
-          {summary.tripCount === null && (
-            <span className="text-[10px] font-medium text-slate-400">· incomplete</span>
-          )}
-        </div>
-        <p className="mt-1 text-[13px] leading-relaxed text-slate-800">{summary.body}</p>
+      <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={"h-4 w-4 shrink-0 " + (summary.tripCount === null ? "text-slate-400" : "text-emerald-600")}>
+          {summary.tripCount === null
+            ? <><circle cx="12" cy="12" r="9" /><path d="M12 8v4M12 16v.01" /></>
+            : <path d="M5 12l5 5L20 7" />}
+        </svg>
+        <span className="text-[12.5px] tracking-tight text-slate-700">
+          <span className="font-semibold text-slate-900">
+            {summary.tripCount === null ? "Schedule incomplete." : "Schedule set."}
+          </span>{" "}
+          <span className="text-slate-500">{summary.body}</span>
+        </span>
       </div>
     </div>
   );

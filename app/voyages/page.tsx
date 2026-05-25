@@ -53,6 +53,7 @@ export default function VoyagesPage() {
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(TODAY));
   const [vesselFilter, setVesselFilter] = useState<string>("all");
   const [routeFilter, setRouteFilter] = useState<string>("all");
+  const [portFilter, setPortFilter] = useState<string>("all");
   const [query, setQuery] = useState("");
 
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
@@ -160,6 +161,15 @@ export default function VoyagesPage() {
                 className="w-52 bg-transparent placeholder:text-slate-400 focus:outline-none"
               />
             </div>
+
+            <Select
+              size="sm"
+              value={portFilter}
+              onChange={setPortFilter}
+              ariaLabel="Filter by port"
+              className="w-36"
+              options={[{ value: "all", label: "All ports" }]}
+            />
 
             <Select
               size="sm"

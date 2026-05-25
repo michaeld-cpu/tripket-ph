@@ -5,7 +5,8 @@ import Modal from "./Modal";
 import { useToast } from "./ToastContext";
 import { useShippingLine } from "./ShippingLineContext";
 import VesselFormBody, { passengerOnlyTypes, typeOptions } from "./VesselFormBody";
-import type { Vessel, VehicleClass, PassengerType } from "@/lib/dashboard-data";
+import AddOnsSection, { defaultAddOns } from "./vessel-extras/AddOnsSection";
+import type { Vessel, VehicleClass, PassengerType, AddOn } from "@/lib/dashboard-data";
 
 type Props = {
   open: boolean;
@@ -50,11 +51,13 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
     passengers: "",
     vehicleSlots: "",
     status: "Active" as Vessel["status"],
+    lineId: active.id,
   });
 
-  // Step 2 — Vehicle classes + Passenger types
+  // Step 2 — Vehicle classes + Passenger types + Add-ons
   const [vehicleClasses, setVehicleClasses] = useState<VehicleClass[]>(defaultVehicleClasses);
   const [passengerTypes, setPassengerTypes] = useState<PassengerType[]>(defaultPassengerTypes);
+  const [addOns, setAddOns] = useState<AddOn[]>(defaultAddOns);
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -63,9 +66,10 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
   const resetAll = () => {
     setStep(1);
     setReachedReview(false);
-    setValues({ name: "", type: "RoRo", imo: "", passengers: "", vehicleSlots: "", status: "Active" });
+    setValues({ name: "", type: "RoRo", imo: "", passengers: "", vehicleSlots: "", status: "Active", lineId: active.id });
     setVehicleClasses(defaultVehicleClasses);
     setPassengerTypes(defaultPassengerTypes);
+    setAddOns(defaultAddOns);
   };
 
   const handleClose = () => {
@@ -211,6 +215,9 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
                   passengerTypes={passengerTypes}
                   setPassengerTypes={setPassengerTypes}
                 />
+                <div className="border-t border-slate-100">
+                  <AddOnsSection addOns={addOns} setAddOns={setAddOns} />
+                </div>
               </motion.div>
             )}
             {step === 3 && (
@@ -226,6 +233,7 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
                   isPassengerOnly={isPassengerOnly}
                   vehicleClasses={vehicleClasses}
                   passengerTypes={passengerTypes}
+                  addOns={addOns}
                   onEditStep={(s) => setStep(s)}
                 />
               </motion.div>
@@ -750,12 +758,15 @@ function NewPassengerRow({
 /* ─────────────────────────  STEP 3 — REVIEW  ───────────────────────── */
 
 export function Step3Review({
-  values, isPassengerOnly, vehicleClasses, passengerTypes, onEditStep,
+  values, isPassengerOnly, vehicleClasses, passengerTypes, addOns, onEditStep,
 }: {
   values: { name: string; type: Vessel["type"]; imo: string; passengers: string; vehicleSlots: string; status: Vessel["status"] };
   isPassengerOnly: boolean;
   vehicleClasses: VehicleClass[];
   passengerTypes: PassengerType[];
+  /** Optional — only shown when supplied. Standalone AddVesselModal currently
+   *  omits this; the wizard's embedded sub-step provides it. */
+  addOns?: import("@/lib/dashboard-data").AddOn[];
   onEditStep: (s: 1 | 2) => void;
 }) {
   const typeLabel = typeOptions.find(o => o.value === values.type)?.label ?? values.type;
@@ -843,6 +854,33 @@ export function Step3Review({
           ))}
         </div>
       </ReviewSection>
+
+      {/* Add-ons — only when caller passes the catalog. */}
+      {addOns && (
+        <ReviewSection
+          title="Add-ons"
+          meta={`${addOns.filter(a => a.enabled).length} of ${addOns.length} included`}
+          onEdit={() => onEditStep(2)}
+        >
+          {addOns.filter(a => a.enabled).length === 0 ? (
+            <p className="py-2 text-[12px] text-slate-500">No add-ons included.</p>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {addOns.filter(a => a.enabled).map(a => (
+                <div key={a.key} className="grid grid-cols-[1fr_auto] items-center gap-3 py-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-[13px] font-medium tracking-tight text-slate-900">{a.label}</div>
+                    <div className="truncate text-[11px] text-slate-500">{a.descriptor}</div>
+                  </div>
+                  <span className="font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">
+                    ₱{a.defaultPrice.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </ReviewSection>
+      )}
     </div>
   );
 }
