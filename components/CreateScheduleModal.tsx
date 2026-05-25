@@ -43,15 +43,16 @@ function initialRoutesValue(): RoutesValue {
 }
 
 // Reasonable initial defaults — today's date, 4 AM, weekday picker empty.
-function initialScheduleValue(): ScheduleValue {
-  const today = new Date();
-  const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  const end = new Date(today); end.setDate(end.getDate() + 7);
+function initialScheduleValue(seed?: { date?: Date; hour?: number }): ScheduleValue {
+  const base = seed?.date ?? new Date();
+  const iso = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
+  const end = new Date(base); end.setDate(end.getDate() + 7);
   const endIso = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
+  const hh = seed?.hour != null ? String(seed.hour).padStart(2, "0") : "04";
   return {
     recurrence: "once",
     departureDate: iso,
-    departureTime: "04:00",
+    departureTime: `${hh}:00`,
     runsOn: [],
     endDate: endIso,
   };
@@ -98,10 +99,15 @@ export default function CreateScheduleModal({
   open,
   onClose,
   onCreate,
+  prefill,
 }: {
   open: boolean;
   onClose: () => void;
   onCreate?: (payload: CreatedSchedule) => void;
+  /** Seed the Schedule step with a specific date/hour when an operator clicks
+   *  an empty calendar slot. Weekly recurrence still works — the clicked day
+   *  becomes the start date, the operator can pick the runs-on weekdays. */
+  prefill?: { date: Date; hour: number };
 }) {
   const [stepIdx, setStepIdx] = useState(0);
   const [schedule, setSchedule] = useState<ScheduleValue>(initialScheduleValue);
@@ -111,19 +117,20 @@ export default function CreateScheduleModal({
   const step = STEPS[stepIdx];
   const isLast = stepIdx === STEPS.length - 1;
 
-  // Every time the modal opens, reset the wizard back to fresh defaults — and
-  // critically, recompute `initialScheduleValue()` so the departure date is
-  // today, not whatever today was when the page first mounted. Without this,
-  // the modal would keep stamping schedules with the date of the very first
-  // page load until the operator manually changed it.
+  // Reset every time the modal opens. If a prefill came in (slot click), seed
+  // the Schedule step with its date/hour; otherwise use the default of today
+  // at 04:00. Stringify the prefill so a new object identity isn't required
+  // for the effect to re-seed.
+  const prefillKey = prefill ? `${prefill.date.toISOString()}|${prefill.hour}` : "";
   useEffect(() => {
     if (!open) return;
     setStepIdx(0);
-    setSchedule(initialScheduleValue());
+    setSchedule(initialScheduleValue(prefill));
     setRoutes(initialRoutesValue());
     setVessel(initialVesselValue());
     setFares(initialFaresValue());
-  }, [open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, prefillKey]);
 
 
   // When the operator is registering a new vessel inline (step 3, mode === "new"),

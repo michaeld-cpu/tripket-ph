@@ -294,6 +294,9 @@ export default function VoyagesPage() {
   // is used.
   const [usedCustom, setUsedCustom] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  // Slot the operator clicked to seed the wizard's Schedule step. Cleared on
+  // close so the next plain-button create starts fresh.
+  const [createPrefill, setCreatePrefill] = useState<{ date: Date; hour: number } | null>(null);
   const activePresetLabel = useMemo(() => {
     if (usedCustom) return "Custom range";
     const hit = presets.find((p) => sameDay(p.start, weekStart));
@@ -658,9 +661,12 @@ export default function VoyagesPage() {
               {HOURS.map((h, rowIdx) => (
                 <div
                   key={h}
+                  // Inset shadow instead of border-top so the row's box-model
+                  // stays exactly 56px tall — keeps the voyage overlay's math
+                  // (hour × 56) accurate regardless of how many rows precede.
                   className={
                     "grid grid-cols-[120px_repeat(7,minmax(0,1fr))] " +
-                    (rowIdx !== 0 ? "border-t border-slate-200/70" : "")
+                    (rowIdx !== 0 ? "shadow-[inset_0_1px_0_rgba(226,232,240,0.7)]" : "")
                   }
                 >
                   {/* Time axis label — full clock, left-aligned, single-line.
@@ -696,6 +702,10 @@ export default function VoyagesPage() {
                       >
                         <button
                           type="button"
+                          onClick={() => {
+                            setCreatePrefill({ date: d, hour: h });
+                            setCreateOpen(true);
+                          }}
                           aria-label={`Add schedule on ${d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} at ${fmtHour(h)}`}
                           className={
                             "group relative h-14 w-full border-l border-slate-200 transition-colors duration-100 " +
@@ -730,26 +740,51 @@ export default function VoyagesPage() {
           </div>
         </div>
 
-        {/* ─── Empty hint footer ─── */}
-        <div className="flex items-center justify-between border-t border-slate-100 px-5 py-2.5">
-          <p className="text-[11.5px] text-slate-500">
-            No voyages scheduled in this view.
-          </p>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-[11.5px] font-medium text-brand-600 transition-opacity duration-150 hover:opacity-80"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            Create the first one
-          </button>
-        </div>
+        {/* ─── Footer — voyage tally + create CTA. Copy adapts to whether
+             the operator has any voyages at all, none in this week, or
+             some in view. ─── */}
+        {(() => {
+          const visibleCount = voyages.filter((v) => v.date >= weekStart && v.date <= weekEnd).length;
+          const totalCount = voyages.length;
+          let primary: string;
+          let secondary: string | null = null;
+          if (totalCount === 0) {
+            primary = "No voyages yet.";
+            secondary = "Get started with your first schedule.";
+          } else if (visibleCount === 0) {
+            primary = `Nothing this week.`;
+            secondary = `${totalCount.toLocaleString()} voyage${totalCount === 1 ? "" : "s"} on other weeks — use the navigator to find them.`;
+          } else {
+            primary = `${visibleCount.toLocaleString()} voyage${visibleCount === 1 ? "" : "s"} this week.`;
+            if (totalCount > visibleCount) {
+              secondary = `${(totalCount - visibleCount).toLocaleString()} more on other weeks.`;
+            }
+          }
+          return (
+            <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-2.5">
+              <p className="min-w-0 truncate text-[11.5px] text-slate-500">
+                <span className="font-medium text-slate-700">{primary}</span>
+                {secondary && <span className="ml-1.5 text-slate-400">{secondary}</span>}
+              </p>
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="inline-flex shrink-0 items-center gap-1 text-[11.5px] font-medium text-brand-600 transition-opacity duration-150 hover:opacity-80"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                {totalCount === 0 ? "Create your first schedule" : "New schedule"}
+              </button>
+            </div>
+          );
+        })()}
       </section>
 
       <CreateScheduleModal
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => { setCreateOpen(false); setCreatePrefill(null); }}
+        prefill={createPrefill ?? undefined}
         onCreate={(payload) => {
           // Append voyages to whatever's already on the calendar. We only
           // jump the visible week if the new voyage falls *outside* the
@@ -1108,10 +1143,17 @@ function VoyageOverlay({
   );
 }
 
+type StatusCardToneKey = VoyageStatus | "ScheduledFuture";
+
 // Card palette per voyage status. Stays in sync with the dialog's chip tones
 // so a glance at any cell signals the same lifecycle state.
-const STATUS_CARD_TONE: Record<VoyageStatus, {
+//   - Scheduled (today / now)        → brand-orange (today's anchor)
+//   - ScheduledFuture (not today)    → sky-blue (upcoming, not today)
+//   - Departed / Arrived / Cancelled → matching dialog chip palette
+// Each tone carries a solid accent class for the 3px left edge of the card.
+const STATUS_CARD_TONE: Record<StatusCardToneKey, {
   bg: string;
+  accent: string;
   hoverShadow: string;
   routeText: string;
   arrow: string;
@@ -1120,14 +1162,25 @@ const STATUS_CARD_TONE: Record<VoyageStatus, {
 }> = {
   Scheduled: {
     bg: "bg-brand-50",
+    accent: "bg-brand-500",
     hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(249,115,22,0.3)]",
     routeText: "text-brand-800",
     arrow: "text-brand-500",
     vesselText: "text-slate-700",
     strike: false,
   },
+  ScheduledFuture: {
+    bg: "bg-sky-50",
+    accent: "bg-sky-500",
+    hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(2,132,199,0.3)]",
+    routeText: "text-sky-800",
+    arrow: "text-sky-500",
+    vesselText: "text-slate-700",
+    strike: false,
+  },
   Departed: {
     bg: "bg-sky-50",
+    accent: "bg-sky-600",
     hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(2,132,199,0.3)]",
     routeText: "text-sky-800",
     arrow: "text-sky-500",
@@ -1136,6 +1189,7 @@ const STATUS_CARD_TONE: Record<VoyageStatus, {
   },
   Arrived: {
     bg: "bg-emerald-50",
+    accent: "bg-emerald-600",
     hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(5,150,105,0.3)]",
     routeText: "text-emerald-800",
     arrow: "text-emerald-500",
@@ -1144,6 +1198,7 @@ const STATUS_CARD_TONE: Record<VoyageStatus, {
   },
   Cancelled: {
     bg: "bg-rose-50",
+    accent: "bg-rose-500",
     hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(225,29,72,0.25)]",
     routeText: "text-rose-700",
     arrow: "text-rose-400",
@@ -1163,46 +1218,61 @@ function VoyageBlock({
   rowHeight: number;
   onOpen: () => void;
 }) {
-  // 4px gutter top/bottom so the card sits inset within its hour cell.
-  const cardHeight = rowHeight - 8;
+  // The card sits inside the hour cell with a 2px gutter so it doesn't kiss
+  // the cell border (and 4px horizontal so it doesn't cover the day divider).
+  const cardHeight = rowHeight - 4;
 
-  // ── Past-voyage detection ──
-  // Past voyages always ghost, regardless of status. The status palette only
-  // applies to upcoming/current voyages — once the departure time passes, the
-  // card desaturates to slate so the calendar communicates "this already
-  // happened" at a glance.
+  // ── Past / today / future classification ──
+  // Past voyages always ghost regardless of status. For `Scheduled` voyages
+  // we further split today vs. future so the today column anchors in brand
+  // orange while the rest of the week reads in sky blue.
   const nowMinutes = TODAY.getTime() / 60000 + NOW_HOUR * 60;
   const voyageMinutes =
     new Date(voyage.date.getFullYear(), voyage.date.getMonth(), voyage.date.getDate()).getTime() / 60000 +
     voyage.hour * 60 +
     voyage.minute;
   const isPast = voyageMinutes < nowMinutes;
-
-  const tone = STATUS_CARD_TONE[voyage.status];
+  const isToday = sameDay(voyage.date, TODAY);
+  const toneKey: StatusCardToneKey =
+    voyage.status === "Scheduled" && !isToday ? "ScheduledFuture" : voyage.status;
+  const tone = STATUS_CARD_TONE[toneKey];
 
   return (
     <div
-      className="pointer-events-auto absolute left-1 right-1"
-      style={{ top: top + 4, height: cardHeight }}
+      className="pointer-events-auto absolute left-0.5 right-0.5"
+      style={{ top: top + 2, height: cardHeight }}
     >
       <button
         type="button"
         onClick={onOpen}
         aria-label={`Open ${voyage.originCode} to ${voyage.destinationCode} on ${voyage.vesselName} — ${voyage.status.toLowerCase()}${isPast ? " (past)" : ""}`}
         className={
-          "group/voyage relative flex h-full w-full flex-col justify-center overflow-hidden rounded-lg px-2.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[box-shadow,transform,opacity] duration-150 ease-out " +
+          // Past voyages use a solid muted slate fill — no opacity, no
+          // grayscale. Those filters caused sub-pixel double-rendering on the
+          // text and let the cell border bleed through behind the card.
+          "group/voyage relative flex h-full w-full flex-col justify-center overflow-hidden rounded-lg pl-3 pr-2.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[box-shadow,transform] duration-150 ease-out " +
           (isPast
-            ? "bg-slate-100 opacity-55 grayscale hover:opacity-80 "
+            ? "bg-slate-50 hover:bg-slate-100 "
             : `${tone.bg} hover:-translate-y-px ${tone.hoverShadow} `) +
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
         }
       >
+        {/* Solid left accent stripe — colored per status (brand / sky /
+            emerald / rose). Ghosted past voyages get a slate accent to keep
+            the silhouette consistent without competing for attention. */}
+        <span
+          aria-hidden
+          className={
+            "pointer-events-none absolute inset-y-0 left-0 w-[3px] " +
+            (isPast ? "bg-slate-300" : tone.accent)
+          }
+        />
         {/* Route — headline. */}
         <span
           className={
             "truncate font-mono text-[11.5px] font-bold uppercase tabular-nums tracking-[0.08em] " +
             (isPast
-              ? "text-slate-500 line-through decoration-slate-400/60 "
+              ? "text-slate-500 "
               : `${tone.routeText} ${tone.strike ? "line-through decoration-rose-400/70 " : ""}`)
           }
         >
