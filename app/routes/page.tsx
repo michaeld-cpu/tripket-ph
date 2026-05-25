@@ -7,6 +7,8 @@ import { TableSkeleton } from "@/components/Skeleton";
 import Select from "@/components/Select";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
+import CreateRouteModal from "@/components/CreateRouteModal";
+import { PORTS } from "@/components/schedule-steps/RoutesStep";
 
 // ─────────── Route catalog ───────────
 // Each route is a directional origin → destination pair with a nautical-mile distance
@@ -101,6 +103,7 @@ function SortIcon() {
 export default function RoutesPage() {
   const { active } = useShippingLine();
   const [routes, setRoutes] = useState<Route[] | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [locationFilter, setLocationFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | RouteStatus>("all");
@@ -188,7 +191,7 @@ export default function RoutesPage() {
         subtitle={active.name}
         showDateFilter={false}
         right={
-          <button className="btn-primary">
+          <button type="button" onClick={() => setCreateOpen(true)} className="btn-primary">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
               <path d="M12 5v14M5 12h14" />
             </svg>
@@ -565,6 +568,40 @@ export default function RoutesPage() {
           />
         </section>
       )}
+
+      {/* ── Create-route dialog ── */}
+      <CreateRouteModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreate={(payload) => {
+          // Convert the wizard-shaped RoutesValue into the page's Route shape
+          // and prepend it so the new entry sits at the top of the table.
+          const origin = PORTS.find((p) => p.code === payload.originCode);
+          const destination = PORTS.find((p) => p.code === payload.destinationCode);
+          if (!origin || !destination) return;
+          const lo = Number(payload.durationLowHrs) || 0;
+          const hi = Number(payload.durationHighHrs) || lo;
+          const newRoute: Route = {
+            id: `r-${Date.now()}`,
+            origin,
+            destination,
+            distanceNm: Number(payload.distanceNm) || 0,
+            durationHrs: [lo, hi],
+            status: "Active",
+          };
+          setRoutes((prev) => prev ? [newRoute, ...prev] : [newRoute]);
+          // If the operator opted in to a return leg, mirror the route.
+          if (payload.createReturn) {
+            const returnLeg: Route = {
+              ...newRoute,
+              id: `r-${Date.now() + 1}`,
+              origin: destination,
+              destination: origin,
+            };
+            setRoutes((prev) => prev ? [returnLeg, newRoute, ...prev.filter((r) => r.id !== newRoute.id)] : [returnLeg, newRoute]);
+          }
+        }}
+      />
     </div>
   );
 }
