@@ -235,11 +235,15 @@ function NavLink({
   indent?: boolean;
 }) {
   const { href, label, Icon } = leaf;
+  // cascadeIdx of -1 means "no entrance stagger" — used when this NavLink
+  // is rendered inside an already-animating container (e.g. the expanded
+  // Security group) so it doesn't compound the delay.
+  const useStagger = cascadeIdx >= 0;
   return (
     <motion.div
-      initial={{ opacity: 0, x: -4 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ type: "spring", stiffness: 240, damping: 26, mass: 0.7, delay: 0.1 + cascadeIdx * 0.035 }}
+      initial={useStagger ? { opacity: 0, x: -4 } : false}
+      animate={useStagger ? { opacity: 1, x: 0 } : undefined}
+      transition={useStagger ? { type: "spring", stiffness: 240, damping: 26, mass: 0.7, delay: 0.1 + cascadeIdx * 0.035 } : undefined}
     >
       <Link
         href={href}
@@ -327,17 +331,23 @@ function NavGroupItem({
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            // Snappy expand — Emil-ish curve, 140ms in / 100ms out. The
+            // children inside skip their own cascade entrance (cascadeIdx=-1
+            // → delay clamped to 0) so the whole group reveals together.
+            transition={{
+              height: { duration: 0.14, ease: [0.16, 1, 0.3, 1] },
+              opacity: { duration: 0.1, ease: "linear" },
+            }}
             className="overflow-hidden"
           >
             <div className="mt-0.5 flex flex-col gap-px">
-              {group.children.map((leaf, i) => (
+              {group.children.map((leaf) => (
                 <NavLink
                   key={leaf.href}
                   leaf={leaf}
                   active={isActive(leaf.href, path)}
                   collapsed={collapsed}
-                  cascadeIdx={cascadeIdx + i + 1}
+                  cascadeIdx={-1}
                   indent
                 />
               ))}

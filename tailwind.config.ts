@@ -14,7 +14,11 @@ const config: Config = {
         },
       },
       fontFamily: {
+        // Single typeface across the whole app. `font-mono` is aliased to the
+        // same sans stack so existing `font-mono tabular-nums` callsites keep
+        // their column alignment without rendering in a different family.
         sans: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica", "Arial"],
+        mono: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica", "Arial"],
       },
     },
   },

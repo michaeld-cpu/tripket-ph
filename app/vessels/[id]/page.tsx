@@ -27,11 +27,12 @@ function vesselInitials(name: string): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-const statusTone: Record<Vessel["status"], { pill: string; dot: string }> = {
-  Active:      { pill: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60", dot: "bg-emerald-500" },
-  Inactive:    { pill: "bg-slate-100 text-slate-600 ring-1 ring-slate-200/60",      dot: "bg-slate-400"   },
-  Maintenance: { pill: "bg-amber-50 text-amber-700 ring-1 ring-amber-200/60",       dot: "bg-amber-500"   },
-  Retired:     { pill: "bg-rose-50 text-rose-700 ring-1 ring-rose-200/60",          dot: "bg-rose-500"    },
+// Unified status palette — uppercase labels, no dots, restrained tones.
+const statusTone: Record<Vessel["status"], string> = {
+  Active:      "bg-emerald-100 text-emerald-800",
+  Inactive:    "bg-slate-50 text-slate-400 line-through decoration-slate-300",
+  Maintenance: "bg-brand-50 text-brand-700",
+  Retired:     "bg-slate-50 text-slate-400 line-through decoration-slate-300",
 };
 
 // Live voyage mock — anchored to today's wall clock, deterministic per vessel id.
@@ -654,8 +655,7 @@ export default function VesselDetailPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h3 className="truncate text-[15px] font-semibold leading-tight tracking-tight text-slate-900">{vessel.name}</h3>
-                      <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${statusTone[vessel.status].pill}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${statusTone[vessel.status].dot}`} />
+                      <span className={`inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[vessel.status]}`}>
                         {vessel.status}
                       </span>
                     </div>
