@@ -12,11 +12,34 @@
 }
 
 html, body { height: 100%; }
+html {
+  /* Lift the root font-size by ~6.25% so any rem-based sizing scales up.
+     Arbitrary `text-[Npx]` declarations don't follow this (they're pixel-
+     fixed), so the type-scale layer below handles those. */
+  font-size: 17px;
+}
 body {
   background: var(--background);
   color: var(--foreground);
   font-feature-settings: "cv02","cv03","cv04","cv11";
 }
+
+/* ── Global type-scale lift ──
+   Every arbitrary `text-[Npx]` value in the codebase gets bumped ~1px so the
+   UI breathes without touching component files. Targeted at the most-common
+   sizes used across pages (10.5 → 11.5 / 11 → 12 / 11.5 → 12.5 / 12 → 13 etc.). */
+.text-\[9\.5px\]   { font-size: 10.5px !important; }
+.text-\[10px\]     { font-size: 11px   !important; }
+.text-\[10\.5px\]  { font-size: 11.5px !important; }
+.text-\[11px\]     { font-size: 12px   !important; }
+.text-\[11\.5px\]  { font-size: 12.5px !important; }
+.text-\[12px\]     { font-size: 13px   !important; }
+.text-\[12\.5px\]  { font-size: 13.5px !important; }
+.text-\[13px\]     { font-size: 14px   !important; }
+.text-\[13\.5px\]  { font-size: 14.5px !important; }
+.text-\[14px\]     { font-size: 15px   !important; }
+.text-\[15px\]     { font-size: 16px   !important; }
+.text-\[17px\]     { font-size: 18px   !important; }
 
 /* ─── Easing tokens (Emil Kowalski-derived custom curves) ─── */
 :root {

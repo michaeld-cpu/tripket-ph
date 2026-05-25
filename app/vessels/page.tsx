@@ -27,11 +27,14 @@ const typeTone: Record<Vessel["type"], string> = {
   "Passenger Ship": "border border-gray-200 text-gray-600",
 };
 
-const statusTone: Record<Vessel["status"], { pill: string; dot: string }> = {
-  Active:      { pill: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60", dot: "bg-emerald-500" },
-  Inactive:    { pill: "bg-slate-100 text-slate-600 ring-1 ring-slate-200/60",      dot: "bg-slate-400"   },
-  Maintenance: { pill: "bg-amber-50 text-amber-700 ring-1 ring-amber-200/60",       dot: "bg-amber-500"   },
-  Retired:     { pill: "bg-rose-50 text-rose-700 ring-1 ring-rose-200/60",          dot: "bg-rose-500"    },
+// Unified status palette — uppercase labels, no dots, restrained tones.
+// Active uses opaque emerald (the only "healthy / running" signal); attention
+// states use brand-orange; off-the-table states get a struck slate.
+const statusTone: Record<Vessel["status"], string> = {
+  Active:      "bg-emerald-100 text-emerald-800",
+  Inactive:    "bg-slate-50 text-slate-400 line-through decoration-slate-300",
+  Maintenance: "bg-brand-50 text-brand-700",
+  Retired:     "bg-slate-50 text-slate-400 line-through decoration-slate-300",
 };
 
 // Mock voyage history per vessel — deterministic, stable across renders.
@@ -292,10 +295,12 @@ export default function VesselsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-y border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
+                  <th className="whitespace-nowrap px-5 py-2.5 text-center font-medium">#</th>
+                  <th className="px-5 py-2.5 font-medium">IMO</th>
+                  <th className="px-5 py-2.5 font-medium">Status</th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Vessel <SortIcon /></button>
                   </th>
-                  <th className="px-5 py-2.5 font-medium">IMO</th>
                   <th className="px-5 py-2.5 font-medium">Type</th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Passengers <SortIcon /></button>
@@ -304,7 +309,6 @@ export default function VesselsPage() {
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Vehicle slots <SortIcon /></button>
                   </th>
                   <th className="px-5 py-2.5 font-medium">Voyages</th>
-                  <th className="px-5 py-2.5 font-medium">Status</th>
                   <th className="w-10 px-5 py-2.5 font-medium" />
                 </tr>
               </thead>
@@ -318,6 +322,7 @@ export default function VesselsPage() {
                 )}
                 {filtered.map((v, i) => {
                   const tone = statusTone[v.status];
+                  const rowNo = i + 1;
                   return (
                     <motion.tr
                       key={v.id}
@@ -332,22 +337,13 @@ export default function VesselsPage() {
                       onClick={() => router.push(`/vessels/${v.id}`)}
                       className="group relative cursor-pointer transition-colors duration-150 ease-out hover:bg-slate-50/60"
                     >
-                      <td className="relative px-5 py-3.5 align-middle">
+                      <td className="relative whitespace-nowrap px-5 py-3.5 align-middle text-center font-mono text-[12px] tabular-nums text-slate-400">
                         <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
-                        <div className="flex items-center gap-3">
-                          <VesselAvatar vessel={v} />
-                          <div className="min-w-0">
-                            <Tooltip content={v.name} onlyWhenTruncated>
-                              <div className="truncate font-medium tracking-tight text-slate-900">
-                                {v.name}
-                              </div>
-                            </Tooltip>
-                          </div>
-                        </div>
+                        {rowNo}
                       </td>
                       <td className="px-5 py-3.5 align-middle" onClick={(e) => e.stopPropagation()}>
                         <div className="inline-flex items-center gap-1.5">
-                          <span className="font-mono text-[12px] tabular-nums text-slate-700">{v.imo}</span>
+                          <span className="font-mono text-[13px] font-semibold tabular-nums text-slate-900">{v.imo}</span>
                           {copiedImo === v.imo ? (
                             <span aria-label="Copied" className="grid h-5 w-5 place-items-center rounded text-emerald-600">
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
@@ -367,6 +363,25 @@ export default function VesselsPage() {
                               </svg>
                             </button>
                           )}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5 align-middle">
+                        <Tooltip content={statusDescription[v.status]}>
+                          <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${tone}`}>
+                            {v.status}
+                          </span>
+                        </Tooltip>
+                      </td>
+                      <td className="px-5 py-3.5 align-middle">
+                        <div className="flex items-center gap-3">
+                          <VesselAvatar vessel={v} />
+                          <div className="min-w-0">
+                            <Tooltip content={v.name} onlyWhenTruncated>
+                              <div className="truncate font-medium tracking-tight text-slate-900">
+                                {v.name}
+                              </div>
+                            </Tooltip>
+                          </div>
                         </div>
                       </td>
                       <td className="px-5 py-3.5 align-middle">
@@ -414,14 +429,6 @@ export default function VesselsPage() {
                             </div>
                           );
                         })()}
-                      </td>
-                      <td className="px-5 py-3.5 align-middle">
-                        <Tooltip content={statusDescription[v.status]}>
-                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${tone.pill}`}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
-                            {v.status}
-                          </span>
-                        </Tooltip>
                       </td>
                       <td className="px-5 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
                         <RowMenu

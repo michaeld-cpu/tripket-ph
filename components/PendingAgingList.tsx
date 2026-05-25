@@ -22,10 +22,11 @@ type Pending = {
   ageMinutes: number;
 };
 
-const statusTone: Record<Pending["status"], { pill: string; dot: string }> = {
-  Pending:   { pill: "bg-amber-50 text-amber-700 ring-1 ring-amber-200/60",   dot: "bg-amber-500" },
-  Confirmed: { pill: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60", dot: "bg-emerald-500" },
-  Cancelled: { pill: "bg-rose-50 text-rose-700 ring-1 ring-rose-200/60",      dot: "bg-rose-500" },
+// Unified status palette — matches the bookings table sitewide.
+const statusTone: Record<Pending["status"], string> = {
+  Pending:   "bg-brand-50 text-brand-700",
+  Confirmed: "bg-emerald-100 text-emerald-800",
+  Cancelled: "bg-slate-50 text-slate-400 line-through decoration-slate-300",
 };
 
 function relativeAge(mins: number): string {
@@ -60,11 +61,7 @@ export default function PendingAgingList({ data }: { data: Pending[] }) {
         <div>
           <div className="flex items-center gap-2.5">
             <h2 className="text-base font-semibold tracking-tight text-slate-900">Pending bookings</h2>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200/60">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-60" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-500" />
-              </span>
+            <span className="inline-flex items-center rounded-md bg-brand-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-brand-700">
               {sorted.length} awaiting action
             </span>
           </div>
@@ -85,11 +82,11 @@ export default function PendingAgingList({ data }: { data: Pending[] }) {
         <thead>
           <tr className="border-y border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
             <th className="px-6 py-2.5 font-medium">Ref</th>
+            <th className="px-2 py-2.5 font-medium">Status</th>
             <th className="px-2 py-2.5 font-medium">Ticketholder</th>
             <th className="px-2 py-2.5 font-medium">Route &amp; vessel</th>
             <th className="px-2 py-2.5 font-medium">Departure</th>
             <th className="px-2 py-2.5 font-medium">Amount</th>
-            <th className="px-2 py-2.5 font-medium">Status</th>
             <th className="px-2 py-2.5 font-medium">Booked</th>
             <th className="w-10 px-6 py-2.5 font-medium" />
           </tr>
@@ -129,6 +126,13 @@ export default function PendingAgingList({ data }: { data: Pending[] }) {
                   </div>
                 </td>
 
+                {/* Status */}
+                <td className="px-2 py-3.5 align-middle">
+                  <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${tone}`}>
+                    {d.status}
+                  </span>
+                </td>
+
                 {/* Ticketholder */}
                 <td className="px-2 py-3.5 align-middle">
                   <div className="font-medium tracking-tight text-slate-900">{d.passenger}</div>
@@ -165,14 +169,6 @@ export default function PendingAgingList({ data }: { data: Pending[] }) {
                 {/* Amount */}
                 <td className="px-2 py-3.5 align-middle">
                   <span className="font-semibold tabular-nums text-slate-900">₱{d.amount.toLocaleString()}</span>
-                </td>
-
-                {/* Status */}
-                <td className="px-2 py-3.5 align-middle">
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${tone.pill}`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
-                    {d.status}
-                  </span>
                 </td>
 
                 {/* Booked + age */}

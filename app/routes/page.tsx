@@ -25,9 +25,11 @@ type Route = {
   status: RouteStatus;
 };
 
-const statusTone: Record<RouteStatus, { pill: string; dot: string }> = {
-  Active:   { pill: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60", dot: "bg-emerald-500" },
-  Inactive: { pill: "bg-slate-100 text-slate-600 ring-1 ring-slate-200/60",     dot: "bg-slate-400"   },
+// Unified status palette — uppercase labels, no dots, restrained tones.
+// Active uses opaque emerald (running / healthy); Inactive is struck slate.
+const statusTone: Record<RouteStatus, string> = {
+  Active:   "bg-emerald-100 text-emerald-800",
+  Inactive: "bg-slate-50 text-slate-400 line-through decoration-slate-300",
 };
 
 // Mock catalog — mirrors the reference, both directions of each pair so dispatchers see
@@ -462,31 +464,34 @@ export default function RoutesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
+                  <th className="whitespace-nowrap px-5 py-2.5 text-center font-medium">#</th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Origin <SortIcon /></button>
                   </th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Destination <SortIcon /></button>
                   </th>
+                  <th className="px-5 py-2.5 font-medium">Status</th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Distance <SortIcon /></button>
                   </th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Duration <SortIcon /></button>
                   </th>
-                  <th className="px-5 py-2.5 font-medium">Status</th>
-                  <th className="w-10 px-5 py-2.5 font-medium" />
+                  <th className="sticky right-0 z-10 w-10 bg-slate-50 px-5 py-2.5 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)]" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-400">
                       No routes match your filters.
                     </td>
                   </tr>
                 )}
-                {pageRows.map((r, i) => (
+                {pageRows.map((r, i) => {
+                  const rowNo = (page - 1) * PAGE_SIZE + i + 1;
+                  return (
                   <motion.tr
                     key={r.id}
                     initial={{ opacity: 0, y: 4 }}
@@ -494,6 +499,10 @@ export default function RoutesPage() {
                     transition={{ duration: 0.18, delay: i * 0.02, ease: "easeOut" }}
                     className="group transition-colors duration-150 hover:bg-slate-50/60"
                   >
+                    <td className="relative whitespace-nowrap px-6 py-4 align-middle text-center font-mono text-[12px] tabular-nums text-slate-400">
+                      <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
+                      {rowNo}
+                    </td>
                     <td className="px-5 py-3.5"><PortCell {...r.origin} /></td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-2">
@@ -503,6 +512,11 @@ export default function RoutesPage() {
                         <PortCell {...r.destination} />
                       </div>
                     </td>
+                    <td className="px-5 py-3.5">
+                      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[r.status]}`}>
+                        {r.status}
+                      </span>
+                    </td>
                     <td className="px-5 py-3.5 align-middle tabular-nums">
                       <span className="font-semibold text-slate-900">{r.distanceNm}</span>
                       <span className="ml-1 text-[11px] text-slate-400">nm</span>
@@ -511,13 +525,10 @@ export default function RoutesPage() {
                       <span className="font-semibold text-slate-900">{r.durationHrs[0]}–{r.durationHrs[1]}</span>
                       <span className="ml-1 text-[11px] text-slate-400">hrs</span>
                     </td>
-                    <td className="px-5 py-3.5">
-                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusTone[r.status].pill}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${statusTone[r.status].dot}`} />
-                        {r.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
+                    <td
+                      className="sticky right-0 z-10 bg-white px-5 py-3 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] transition-colors duration-150 group-hover:bg-slate-50"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <RowMenu
                         ariaLabel={`Actions for ${r.origin.code} → ${r.destination.code}`}
                         items={[
@@ -554,7 +565,8 @@ export default function RoutesPage() {
                       />
                     </td>
                   </motion.tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
