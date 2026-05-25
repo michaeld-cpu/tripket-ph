@@ -5,15 +5,164 @@ import { useShippingLine } from "@/components/ShippingLineContext";
 import Select from "@/components/Select";
 import Tooltip from "@/components/Tooltip";
 import CreateScheduleModal from "@/components/CreateScheduleModal";
+import { MOCK_FLEET, type VesselType } from "@/components/schedule-steps/VesselStep";
+import { PORTS } from "@/components/schedule-steps/RoutesStep";
+import Modal from "@/components/Modal";
+import { lines as allLines } from "@/lib/shipping-lines";
+import { LogoTile } from "@/components/ShippingLineSwitcher";
 
-// Today is fixed in the mock universe so date math is deterministic across renders.
-const TODAY = new Date("2026-05-20");
-// Current hour in the mock universe — anchors the "Now" pill in the time axis.
-const NOW_HOUR = 10;
+// Real "now" — drives the TODAY column highlight, the NOW pill on the time
+// axis, and the past-voyage ghosting. Computed once per page load so all the
+// date math inside the same render is consistent.
+const TODAY = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
+const NOW_HOUR = new Date().getHours();
 
 // 24h × 7-day calendar. Hours run 04:00 → 23:00 (operating window for ferries).
 const HOURS = Array.from({ length: 20 }, (_, i) => i + 4); // 4..23
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// ── Single voyage occurrence rendered on the calendar grid. ──
+// Weekly schedules expand into many of these (one per matching weekday between
+// departureDate and endDate); one-time schedules produce a single block.
+// ── Voyage lifecycle status ──
+type VoyageStatus = "Scheduled" | "Departed" | "Arrived" | "Cancelled";
+
+type Voyage = {
+  id: string;
+  /** Calendar day this block sits on. */
+  date: Date;
+  /** Hour offset from midnight, e.g. 4 for 04:00, 14.5 for 14:30 — used to
+   *  position the block on the time axis. */
+  hour: number;
+  minute: number;
+  /** How long the crossing takes; drives block height. */
+  durationHours: number;
+  /** Display label for the block. */
+  vesselName: string;
+  vesselType: VesselType | null;
+  originCode: string;
+  destinationCode: string;
+  originCity: string;
+  destinationCity: string;
+  paxCapacity: number;
+  /** Owning shipping line — surfaces in the dialog header. */
+  lineId: string;
+  /** Sample fare snapshot for the detail dialog. */
+  cheapestFare: number;
+  priciestFare: number;
+  /** Itemized fare lines for the dialog — passenger tiers + add-ons. */
+  fareLines: { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon"; free?: boolean }[];
+  /** Confirmed bookings count — defaults to 0 until a booking system lands. */
+  paxConfirmed: number;
+  status: VoyageStatus;
+};
+
+// Helper — turn a CreatedSchedule payload into one-or-many calendar Voyages.
+function expandSchedulePayload(payload: import("@/components/CreateScheduleModal").CreatedSchedule): Voyage[] {
+  const { schedule, routes, vessel, fares } = payload;
+
+  // Resolve vessel display info (name + capacity + type) from either the
+  // fleet or the inline-registered values.
+  const fromFleet = MOCK_FLEET.find((v) => v.id === vessel.fleetVesselId);
+  const vesselName =
+    vessel.mode === "fleet" ? fromFleet?.name ?? "Unnamed vessel" : vessel.name.trim() || "New vessel";
+  const vesselType: VesselType | null =
+    vessel.mode === "fleet" ? fromFleet?.type ?? null : vessel.type;
+  const paxCapacity =
+    vessel.mode === "fleet" ? fromFleet?.passengerCapacity ?? 0 : Number(vessel.passengerCapacity) || 0;
+
+  const origin = PORTS.find((p) => p.code === routes.originCode);
+  const destination = PORTS.find((p) => p.code === routes.destinationCode);
+
+  // ── Derive cheapest / priciest passenger fares from the catalog + prices ──
+  const base = Number(fares.baseFare) || 0;
+  const enabledPrices = vessel.passengerTypes
+    .filter((p) => fares.passengerPrices[p.key]?.enabled && !p.isInfant)
+    .map((p) => {
+      const row = fares.passengerPrices[p.key];
+      if (row.price) return Number(row.price) || 0;
+      return p.discountPct > 0 ? Math.round(base * (1 - p.discountPct / 100)) : base;
+    })
+    .filter((n) => n > 0);
+  const cheapestFare = enabledPrices.length > 0 ? Math.min(...enabledPrices) : base;
+  const priciestFare = enabledPrices.length > 0 ? Math.max(...enabledPrices) : base;
+
+  // ── Itemized fare breakdown for the detail dialog. ──
+  // Passenger tiers come from the vessel's catalog (with per-schedule price
+  // overrides applied), vehicle classes from the same source, add-ons last.
+  type FareLine = { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon"; free?: boolean };
+  const fareLines: FareLine[] = [];
+  vessel.passengerTypes
+    .filter((p) => fares.passengerPrices[p.key]?.enabled)
+    .forEach((p) => {
+      const row = fares.passengerPrices[p.key];
+      if (p.isInfant) {
+        fareLines.push({ key: `pax-${p.key}`, label: p.label, sublabel: p.requiredDoc, amount: 0, group: "passenger", free: true });
+        return;
+      }
+      const computed = p.discountPct > 0 ? Math.round(base * (1 - p.discountPct / 100)) : base;
+      const amount = row.price ? Number(row.price) || 0 : computed;
+      const sublabel = p.discountPct > 0 ? `${p.discountPct}% off base · ${p.requiredDoc}` : p.requiredDoc;
+      fareLines.push({ key: `pax-${p.key}`, label: p.label, sublabel, amount, group: "passenger" });
+    });
+  vessel.vehicleClasses
+    .filter((c) => c.enabled && fares.vehiclePrices[c.key]?.enabled)
+    .forEach((c) => {
+      const row = fares.vehiclePrices[c.key];
+      fareLines.push({ key: `veh-${c.key}`, label: c.label, sublabel: c.descriptor, amount: Number(row.price) || 0, group: "vehicle" });
+    });
+  vessel.addOns
+    .filter((a) => fares.addOnPrices[a.key]?.enabled)
+    .forEach((a) => {
+      const row = fares.addOnPrices[a.key];
+      fareLines.push({ key: `addon-${a.key}`, label: a.label, sublabel: a.descriptor, amount: Number(row?.price) || a.defaultPrice, group: "addon" });
+    });
+
+  const [hh, mm] = schedule.departureTime.split(":").map(Number);
+  const avgDuration =
+    (Number(routes.durationLowHrs) + Number(routes.durationHighHrs)) / 2 || 1.5;
+
+  const baseDate = new Date(schedule.departureDate + "T00:00:00");
+  if (isNaN(baseDate.getTime())) return [];
+
+  // Build the list of dates this schedule actually runs.
+  const dates: Date[] = [];
+  if (schedule.recurrence === "once") {
+    dates.push(baseDate);
+  } else {
+    const end = new Date(schedule.endDate + "T00:00:00");
+    if (isNaN(end.getTime())) return [];
+    const runsKey = new Set(schedule.runsOn);
+    const cursor = new Date(baseDate);
+    while (cursor <= end) {
+      const dow = (cursor.getDay() + 6) % 7;
+      const key = (["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const)[dow];
+      if (runsKey.has(key)) dates.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+
+  return dates.map((d, i) => ({
+    id: `vy-${Date.now()}-${i}`,
+    date: d,
+    hour: hh,
+    minute: mm,
+    durationHours: avgDuration,
+    vesselName,
+    vesselType,
+    originCode: origin?.code ?? routes.originCode,
+    destinationCode: destination?.code ?? routes.destinationCode,
+    originCity: origin?.city ?? routes.originCode,
+    destinationCity: destination?.city ?? routes.destinationCode,
+    paxCapacity,
+    lineId: vessel.lineId,
+    cheapestFare,
+    priciestFare,
+    fareLines,
+    paxConfirmed: 0,
+    status: "Scheduled" as const,
+  }));
+}
 
 function startOfWeek(d: Date): Date {
   const out = new Date(d);
@@ -55,6 +204,68 @@ export default function VoyagesPage() {
   const [routeFilter, setRouteFilter] = useState<string>("all");
   const [portFilter, setPortFilter] = useState<string>("all");
   const [query, setQuery] = useState("");
+  // Voyages persisted in localStorage. SSR-safe sequencing:
+  //  1. Initial state is empty on both server and client → no hydration drift.
+  //  2. After mount, read localStorage and (if anything's stored) push it into
+  //     state via setVoyages. The hasHydrated flag flips to true so writes
+  //     can begin.
+  //  3. Writes are gated on hasHydrated so the initial-render `voyages = []`
+  //     never clobbers the saved payload before we get a chance to read it.
+  const [voyages, setVoyages] = useState<Voyage[]>([]);
+  const [hasHydrated, setHasHydrated] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("tripket.voyages");
+      if (raw) {
+        const parsed: (Omit<Voyage, "date"> & { date: string })[] = JSON.parse(raw);
+        // Defensive backfills for fields that may not exist on older stored
+        // voyages (the schema has grown over time).
+        setVoyages(parsed.map((v) => {
+          const loose = v as Partial<Omit<Voyage, "date">> & { date: string };
+          return {
+            ...v,
+            date: new Date(v.date),
+            fareLines: loose.fareLines ?? [],
+            lineId: loose.lineId ?? "",
+            status: loose.status ?? "Scheduled",
+          };
+        }));
+      }
+    } catch {
+      // Malformed payload — ignore and start fresh.
+    } finally {
+      setHasHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydrated) return;
+    try {
+      window.localStorage.setItem(
+        "tripket.voyages",
+        JSON.stringify(voyages.map((v) => ({ ...v, date: v.date.toISOString() }))),
+      );
+    } catch {
+      // Quota or serialization error — drop silently.
+    }
+  }, [voyages, hasHydrated]);
+  // Which voyage's detail dialog is open (null = closed).
+  const [openVoyageId, setOpenVoyageId] = useState<string | null>(null);
+  const openVoyage = useMemo(
+    () => voyages.find((v) => v.id === openVoyageId) ?? null,
+    [voyages, openVoyageId],
+  );
+
+  // Auto-saves status changes on the voyage in the list.
+  const updateVoyageStatus = (id: string, status: VoyageStatus) =>
+    setVoyages((prev) => prev.map((v) => (v.id === id ? { ...v, status } : v)));
+
+  // Removes a single voyage occurrence (the dialog handles the confirm flow).
+  const removeVoyage = (id: string) => {
+    setVoyages((prev) => prev.filter((v) => v.id !== id));
+    setOpenVoyageId(null);
+  };
 
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
@@ -437,8 +648,13 @@ export default function VoyagesPage() {
               })}
             </div>
 
-            {/* Hour rows — vertically scrollable inside the card */}
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            {/* Hour rows — vertically scrollable inside the card.
+                Voyage blocks render as an absolutely-positioned overlay so
+                they can span fractional hours and sit on top of the cells. */}
+            <div className="relative min-h-0 flex-1 overflow-y-auto">
+              {/* ── Voyage overlay ── */}
+              <VoyageOverlay voyages={voyages} days={days} onOpenVoyage={setOpenVoyageId} />
+
               {HOURS.map((h, rowIdx) => (
                 <div
                   key={h}
@@ -531,7 +747,32 @@ export default function VoyagesPage() {
         </div>
       </section>
 
-      <CreateScheduleModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      <CreateScheduleModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreate={(payload) => {
+          // Append voyages to whatever's already on the calendar. We only
+          // jump the visible week if the new voyage falls *outside* the
+          // current view — otherwise Today stays anchored in place.
+          const newVoyages = expandSchedulePayload(payload);
+          if (newVoyages.length === 0) return;
+          setVoyages((prev) => [...prev, ...newVoyages]);
+          const first = newVoyages[0].date;
+          const currentEnd = addDays(weekStart, 6);
+          if (first < weekStart || first > currentEnd) {
+            setWeekStart(startOfWeek(first));
+            setUsedCustom(false);
+          }
+        }}
+      />
+
+      <VoyageDetailDialog
+        voyage={openVoyage}
+        open={!!openVoyage}
+        onClose={() => setOpenVoyageId(null)}
+        onStatusChange={updateVoyageStatus}
+        onRemove={removeVoyage}
+      />
     </div>
   );
 }
@@ -803,5 +1044,523 @@ function MDYField({
         </svg>
       </div>
     </label>
+  );
+}
+
+
+// ─────────── VoyageOverlay — calendar blocks for created voyages ───────────
+// Absolutely positioned over the hour grid. Each block:
+//  - Sits in the column matching its date (one of the 7 days currently shown)
+//  - Top offset = (voyage.hour + minute/60 - 4) × HOUR_ROW_HEIGHT
+//  - Height    = voyage.durationHours × HOUR_ROW_HEIGHT, with a minimum
+// HOUR_ROW_HEIGHT must match the calendar's row height (h-14 = 56px).
+function VoyageOverlay({
+  voyages,
+  days,
+  onOpenVoyage,
+}: {
+  voyages: Voyage[];
+  days: Date[];
+  onOpenVoyage: (id: string) => void;
+}) {
+  const HOUR_ROW = 56;       // matches h-14 on each hour cell
+  const MIN_HOUR = 4;        // matches HOURS[0]
+  const TIME_AXIS_W = 120;   // matches grid-cols-[120px_repeat(7,…)]
+
+  // Map each visible day to its column index 0..6 for fast lookup.
+  const dayCol = new Map<string, number>();
+  days.forEach((d, i) => dayCol.set(d.toDateString(), i));
+
+  const visible = voyages.filter((v) => dayCol.has(v.date.toDateString()));
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10">
+      <div
+        className="grid h-full"
+        style={{ gridTemplateColumns: `${TIME_AXIS_W}px repeat(7, minmax(0, 1fr))` }}
+      >
+        <div />
+        {days.map((_, i) => (
+          <div key={i} className="relative">
+            {visible
+              .filter((v) => dayCol.get(v.date.toDateString()) === i)
+              .map((v) => {
+                // Each block sits in its **departure hour cell**. Top offset
+                // aligns with the hour row; height is fixed to the row height
+                // so the card always fits inside one slot — never bleeds down.
+                // Duration is represented by the left accent bar's pseudo
+                // length below, not by stretching the card.
+                const top = (v.hour + v.minute / 60 - MIN_HOUR) * HOUR_ROW;
+                return (
+                  <VoyageBlock
+                    key={v.id}
+                    voyage={v}
+                    top={top}
+                    rowHeight={HOUR_ROW}
+                    onOpen={() => onOpenVoyage(v.id)}
+                  />
+                );
+              })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Card palette per voyage status. Stays in sync with the dialog's chip tones
+// so a glance at any cell signals the same lifecycle state.
+const STATUS_CARD_TONE: Record<VoyageStatus, {
+  bg: string;
+  hoverShadow: string;
+  routeText: string;
+  arrow: string;
+  vesselText: string;
+  strike: boolean;
+}> = {
+  Scheduled: {
+    bg: "bg-brand-50",
+    hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(249,115,22,0.3)]",
+    routeText: "text-brand-800",
+    arrow: "text-brand-500",
+    vesselText: "text-slate-700",
+    strike: false,
+  },
+  Departed: {
+    bg: "bg-sky-50",
+    hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(2,132,199,0.3)]",
+    routeText: "text-sky-800",
+    arrow: "text-sky-500",
+    vesselText: "text-slate-700",
+    strike: false,
+  },
+  Arrived: {
+    bg: "bg-emerald-50",
+    hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(5,150,105,0.3)]",
+    routeText: "text-emerald-800",
+    arrow: "text-emerald-500",
+    vesselText: "text-slate-700",
+    strike: false,
+  },
+  Cancelled: {
+    bg: "bg-rose-50",
+    hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(225,29,72,0.25)]",
+    routeText: "text-rose-700",
+    arrow: "text-rose-400",
+    vesselText: "text-rose-500",
+    strike: true,
+  },
+};
+
+function VoyageBlock({
+  voyage,
+  top,
+  rowHeight,
+  onOpen,
+}: {
+  voyage: Voyage;
+  top: number;
+  rowHeight: number;
+  onOpen: () => void;
+}) {
+  // 4px gutter top/bottom so the card sits inset within its hour cell.
+  const cardHeight = rowHeight - 8;
+
+  // ── Past-voyage detection ──
+  // Past voyages always ghost, regardless of status. The status palette only
+  // applies to upcoming/current voyages — once the departure time passes, the
+  // card desaturates to slate so the calendar communicates "this already
+  // happened" at a glance.
+  const nowMinutes = TODAY.getTime() / 60000 + NOW_HOUR * 60;
+  const voyageMinutes =
+    new Date(voyage.date.getFullYear(), voyage.date.getMonth(), voyage.date.getDate()).getTime() / 60000 +
+    voyage.hour * 60 +
+    voyage.minute;
+  const isPast = voyageMinutes < nowMinutes;
+
+  const tone = STATUS_CARD_TONE[voyage.status];
+
+  return (
+    <div
+      className="pointer-events-auto absolute left-1 right-1"
+      style={{ top: top + 4, height: cardHeight }}
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Open ${voyage.originCode} to ${voyage.destinationCode} on ${voyage.vesselName} — ${voyage.status.toLowerCase()}${isPast ? " (past)" : ""}`}
+        className={
+          "group/voyage relative flex h-full w-full flex-col justify-center overflow-hidden rounded-lg px-2.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[box-shadow,transform,opacity] duration-150 ease-out " +
+          (isPast
+            ? "bg-slate-100 opacity-55 grayscale hover:opacity-80 "
+            : `${tone.bg} hover:-translate-y-px ${tone.hoverShadow} `) +
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+        }
+      >
+        {/* Route — headline. */}
+        <span
+          className={
+            "truncate font-mono text-[11.5px] font-bold uppercase tabular-nums tracking-[0.08em] " +
+            (isPast
+              ? "text-slate-500 line-through decoration-slate-400/60 "
+              : `${tone.routeText} ${tone.strike ? "line-through decoration-rose-400/70 " : ""}`)
+          }
+        >
+          {voyage.originCode}
+          <span
+            className={"mx-1 " + (isPast ? "text-slate-400" : tone.arrow)}
+            aria-hidden
+          >
+            →
+          </span>
+          {voyage.destinationCode}
+        </span>
+        {/* Vessel — supporting caption. */}
+        <span
+          className={
+            "truncate text-[10.5px] font-medium tracking-tight " +
+            (isPast ? "text-slate-400" : tone.vesselText)
+          }
+        >
+          {voyage.vesselName}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+// ─────────── VoyageDetailDialog ───────────
+// Read-only detail surface for an existing voyage. The only editable field is
+// the lifecycle status, which auto-saves the moment a different chip is picked.
+//
+// Anatomy:
+//   ┌──────────────────────────────────────────────────────┐
+//   │ TAG → ORM                                       ✕    │
+//   │ Mon, May 25, 2026 · 4:00 AM                          │
+//   ├──────────────────────────────────────────────────────┤
+//   │ Vessel       MV Maayo 18 · RoRo · 420 pax            │
+//   │ Bookings     0 / 420                                 │
+//   │ Fares        ₱1,696 → ₱2,520                         │
+//   ├──────────────────────────────────────────────────────┤
+//   │ Status       [Scheduled] [Departed] [Arrived] [Cncl] │
+//   └──────────────────────────────────────────────────────┘
+// All chips share the same brand-orange palette — the meaning is in the label,
+// not the color. Cards on the calendar still tint per status (sky / emerald /
+// rose) so the lifecycle reads at a glance there; the dialog itself stays calm.
+const STATUS_CHIP_TONE = {
+  active: "bg-brand-500 text-white ring-brand-500",
+  rest: "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50",
+} as const;
+
+const STATUS_CHIPS: { key: VoyageStatus; label: string }[] = [
+  { key: "Scheduled", label: "Scheduled" },
+  { key: "Departed", label: "Departed" },
+  { key: "Arrived", label: "Arrived" },
+  { key: "Cancelled", label: "Cancelled" },
+];
+
+function VoyageDetailDialog({
+  voyage,
+  open,
+  onClose,
+  onStatusChange,
+  onRemove,
+}: {
+  voyage: Voyage | null;
+  open: boolean;
+  onClose: () => void;
+  onStatusChange: (id: string, status: VoyageStatus) => void;
+  onRemove: (id: string) => void;
+}) {
+  // The dialog mirrors whichever line is currently active in the top-bar
+  // switcher — voyages always read from the live context, never the stored
+  // lineId. Keeps the org identity in sync with the rest of the app.
+  const { active: activeLine } = useShippingLine();
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  // Reset confirm state any time the dialog closes or the voyage changes.
+  useEffect(() => {
+    if (!open) setConfirmingRemove(false);
+  }, [open, voyage?.id]);
+
+  if (!voyage) return null;
+
+  const period = voyage.hour < 12 ? "AM" : "PM";
+  const h12 = ((voyage.hour + 11) % 12) + 1;
+  const timeLabel = `${h12}:${String(voyage.minute).padStart(2, "0")} ${period}`;
+  const dateLabel = voyage.date.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const vesselLine = [
+    voyage.vesselName,
+    voyage.vesselType,
+    voyage.paxCapacity > 0 ? `${voyage.paxCapacity.toLocaleString()} pax cap.` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <Modal open={open} onClose={onClose} maxWidth="max-w-lg">
+      <div className="flex flex-col">
+        {/* Small left-aligned dialog title + close button. */}
+        <div className="flex items-center justify-between gap-3 px-5 pt-6 pb-3">
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+            Voyage details
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-slate-400 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Itinerary header — shipping line on top, then big city names
+            flanking a centered logo avatar with dashed-arrow connectors. */}
+        <div className="px-5 pb-4">
+          <div className="flex items-center justify-center gap-3">
+            {/* Origin — code on top, city caption below. */}
+            <div className="min-w-0 text-center">
+              <div className="truncate font-mono text-[22px] font-bold uppercase tabular-nums tracking-[0.06em] text-slate-900">
+                {voyage.originCode}
+              </div>
+              <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                {voyage.originCity}
+              </div>
+            </div>
+            <DashedArrow />
+            {/* Avatar + line name caption. The line name sits as a quiet
+                subtitle directly under the logo so the org identity reads
+                without competing with the city headlines. */}
+            <div className="flex flex-col items-center gap-1">
+              <ShippingLineAvatar lineId={activeLine.id} />
+              <span className="max-w-[120px] truncate text-[10px] font-medium text-slate-500">
+                {activeLine.name}
+              </span>
+            </div>
+            <DashedArrow />
+            {/* Destination — same anatomy. */}
+            <div className="min-w-0 text-center">
+              <div className="truncate font-mono text-[22px] font-bold uppercase tabular-nums tracking-[0.06em] text-slate-900">
+                {voyage.destinationCode}
+              </div>
+              <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                {voyage.destinationCity}
+              </div>
+            </div>
+          </div>
+          <p className="mt-3 truncate text-center text-[11.5px] text-slate-500">
+            <span>{dateLabel}</span>
+            <span className="mx-1.5 text-slate-300">·</span>
+            <span className="font-mono tabular-nums">{timeLabel}</span>
+          </p>
+        </div>
+
+        <div className="border-t border-slate-100" />
+
+        {/* Detail rows */}
+        <dl className="divide-y divide-slate-100 px-5 py-2">
+          <DetailRow label="Vessel" value={vesselLine || "—"} />
+          <DetailRow
+            label="Bookings"
+            value={
+              <span>
+                <span className="font-mono font-semibold tabular-nums text-slate-900">
+                  {voyage.paxConfirmed.toLocaleString()}
+                </span>
+                <span className="text-slate-400"> / {voyage.paxCapacity.toLocaleString()}</span>
+              </span>
+            }
+          />
+        </dl>
+
+        {/* Itemized fares — passenger tiers, vehicle classes, add-ons. Each
+            group separated by a small slate eyebrow so the breakdown reads
+            top-down without crowding the rows above. */}
+        <FareBreakdown lines={voyage.fareLines} />
+
+        <div className="border-t border-slate-100" />
+
+        {/* Status — inline chip group, auto-saves on click */}
+        <div className="px-5 py-4">
+          <div className="mb-2 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+            Status
+          </div>
+          <div role="radiogroup" aria-label="Voyage status" className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+            {STATUS_CHIPS.map((s) => {
+              const on = voyage.status === s.key;
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => onStatusChange(voyage.id, s.key)}
+                  className={
+                    "rounded-lg px-2.5 py-1.5 text-[12px] font-medium tracking-tight ring-1 transition-colors duration-150 " +
+                    (on ? STATUS_CHIP_TONE.active : STATUS_CHIP_TONE.rest)
+                  }
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="border-t border-slate-100" />
+
+        {/* Destructive footer — two-step remove. First click reveals a confirm
+            row; second click actually deletes. Keeps an accidental dismissal
+            cheap (Cancel beside Remove). */}
+        <div className="flex items-center justify-end gap-2 px-5 py-3">
+          {confirmingRemove ? (
+            <>
+              <span className="mr-auto text-[12px] text-slate-600">
+                Remove this voyage?
+              </span>
+              <button
+                type="button"
+                onClick={() => setConfirmingRemove(false)}
+                className="rounded-md px-2.5 py-1 text-[12px] font-medium text-slate-600 transition-colors hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => onRemove(voyage.id)}
+                className="rounded-md bg-rose-600 px-2.5 py-1 text-[12px] font-medium text-white shadow-[0_1px_2px_rgba(15,23,42,0.06)] transition-colors hover:bg-rose-700"
+              >
+                Yes, remove
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmingRemove(true)}
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium text-rose-600 transition-colors hover:bg-rose-50"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6" />
+              </svg>
+              Remove voyage
+            </button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-2">
+      <dt className="shrink-0 text-[12px] text-slate-500">{label}</dt>
+      <dd className="min-w-0 flex-1 text-right text-[12.5px] tracking-tight text-slate-900">{value}</dd>
+    </div>
+  );
+}
+
+// ─────────── ShippingLineAvatar ───────────
+// Logo-only avatar shown between the city names in the voyage dialog header.
+// Framed in a soft white box matching the switcher's LogoTile vocabulary.
+function ShippingLineAvatar({ lineId }: { lineId: string }) {
+  const line = allLines.find((l) => l.id === lineId);
+  if (!line) {
+    return (
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-slate-100 text-[10px] font-semibold text-slate-400">
+        —
+      </span>
+    );
+  }
+  return (
+    <span className="shrink-0">
+      <LogoTile line={line} size={32} />
+    </span>
+  );
+}
+
+// ─────────── DashedArrow ───────────
+// Visual connector flanking the shipping-line avatar in the dialog header.
+// Dashed line with a chevron tip — communicates "X to Y via this operator."
+function DashedArrow() {
+  return (
+    <svg viewBox="0 0 48 12" className="h-3 w-12 shrink-0 text-slate-300" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M2 6 H38" strokeDasharray="3 3" />
+      <path d="M38 2 L44 6 L38 10" />
+    </svg>
+  );
+}
+
+// ─────────── FareBreakdown ───────────
+// Itemized fare lines for the voyage dialog. Replaces the cheapest→priciest
+// summary with a top-down list grouped by Passenger / Vehicle / Add-ons.
+// Each group only renders when it has at least one line.
+function FareBreakdown({
+  lines,
+}: {
+  lines: { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon"; free?: boolean }[] | undefined;
+}) {
+  // Older voyages persisted before fareLines existed won't have this field.
+  // Treat missing/empty the same way.
+  if (!lines || lines.length === 0) {
+    return (
+      <div className="px-5 py-3">
+        <div className="rounded-md border border-dashed border-slate-200 bg-slate-50/40 px-3 py-3 text-center text-[11.5px] text-slate-400">
+          No fares configured for this voyage.
+        </div>
+      </div>
+    );
+  }
+
+  const groups: { key: "passenger" | "vehicle" | "addon"; title: string }[] = [
+    { key: "passenger", title: "Passenger fares" },
+    { key: "vehicle",   title: "Vehicle fares" },
+    { key: "addon",     title: "Add-ons" },
+  ];
+
+  return (
+    <div className="px-5 pb-1">
+      {groups.map((g) => {
+        const items = lines.filter((l) => l.group === g.key);
+        if (items.length === 0) return null;
+        return (
+          <div key={g.key} className="mt-3 first:mt-1">
+            <div className="mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+              {g.title}
+            </div>
+            <div className="divide-y divide-slate-100">
+              {items.map((l) => (
+                <div key={l.key} className="flex items-center justify-between gap-3 py-1.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[12px] font-medium tracking-tight text-slate-800">
+                      {l.label}
+                    </div>
+                    {l.sublabel && (
+                      <div className="truncate text-[10.5px] text-slate-500">{l.sublabel}</div>
+                    )}
+                  </div>
+                  <div className="shrink-0">
+                    {l.free ? (
+                      <span className="text-[11.5px] font-semibold text-emerald-600">Free</span>
+                    ) : (
+                      <span className="font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">
+                        ₱{l.amount.toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
