@@ -238,9 +238,11 @@ function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       const hasVehicle = true;
       // Vehicle bookings always include a driver + 1 companion (both comped
       // under the vehicle fee), so we floor pax at 2 in that case.
-      const pax = hasVehicle
-        ? 2 + Math.floor(rand() * 3) // 2-4 pax when a vehicle is involved
-        : 1 + Math.floor(rand() * 4);
+      const pax = counter === 17
+        ? 4 // forced sample: 4 passengers with mixed ticket statuses
+        : hasVehicle
+          ? 2 + Math.floor(rand() * 3) // 2-4 pax when a vehicle is involved
+          : 1 + Math.floor(rand() * 4);
       const vehicleClass = hasVehicle ? VEHICLE_LABELS[Math.floor(rand() * VEHICLE_LABELS.length)] : undefined;
       // Realistic PH plate format: 3 letters + space + 4 digits (e.g. ABC 1234).
       let vehicle: Vehicle | undefined;
@@ -270,18 +272,17 @@ function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       // First booking minted is forced to "Refunded" so the table has one
       // representative entry for that status without disturbing the
       // distribution of the rest.
-      // Forced samples so every status has a deterministic representative in
-      // the table:
-      //   counter === 1  → Refunded
-      //   counter === 17 → Cancelled
-      //   counter === 18 → Confirmed booking with all tickets voided (sample)
+      // Forced samples so every status has a deterministic representative.
+      //   counter === 1  → Refunded booking (table sample)
+      //   counter === 17 → 4 passengers, mixed ticket statuses:
+      //                    pax 0 Paid · pax 1 Paid · pax 2 Cancelled · pax 3 Void
+      //   counter === 18 → normal booking, but every ticket is Void
+      // Ticket-only overrides leave the booking status to the normal roll
+      // so the row still reads as a healthy booking.
       const status: BookingStatus = counter === 1
         ? "Refunded"
-        : counter === 17
-          ? "Cancelled"
-          : counter === 18
-            ? "Confirmed"
-            : statusRoll < 0.65 ? "Confirmed" : statusRoll < 0.9 ? "Pending" : "Cancelled";
+        : statusRoll < 0.65 ? "Confirmed" : statusRoll < 0.9 ? "Pending" : "Cancelled";
+      const forceTicketMix17 = counter === 17;
       const forceTicketsVoid = counter === 18;
       const first = FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
       const last = LAST_NAMES[Math.floor(rand() * LAST_NAMES.length)];
@@ -358,6 +359,12 @@ function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           status: (() => {
             if (status === "Cancelled") return "Cancelled" as TicketStatus;
             if (status === "Refunded")  return "Refunded"  as TicketStatus;
+            if (forceTicketMix17) {
+              // pax 0+1 → Paid, pax 2 → Cancelled, pax 3 → Void
+              if (p === 2) return "Cancelled" as TicketStatus;
+              if (p === 3) return "Void"      as TicketStatus;
+              return "Paid" as TicketStatus;
+            }
             if (forceTicketsVoid)       return "Void"      as TicketStatus;
             // Tiny chance of Void to give the table some realistic variance.
             if (rand() < 0.05) return "Void" as TicketStatus;
@@ -448,13 +455,22 @@ function fmtDate(d: Date): string {
 }
 
 // Unified status palette — uppercase labels, no dots, restrained tones.
-// Confirmed = opaque emerald (settled / good); Pending = brand-orange
+// Approved = opaque emerald (settled / good); Pending = brand-orange
 // (needs attention); Cancelled = struck slate.
 const statusTone: Record<BookingStatus, string> = {
   Confirmed: "bg-emerald-100 text-emerald-800",
   Pending:   "bg-brand-50 text-brand-700",
   Cancelled: "bg-slate-50 text-slate-400 line-through decoration-slate-300",
   Refunded:  "bg-sky-50 text-sky-700",
+};
+
+// Display label per status — keeps the internal "Confirmed" value (so all
+// existing logic still works) while surfacing "Approved" to the operator.
+const statusLabel: Record<BookingStatus, string> = {
+  Confirmed: "Approved",
+  Pending:   "Pending",
+  Cancelled: "Cancelled",
+  Refunded:  "Refunded",
 };
 
 // Per-ticket palette — Paid is the healthy default (emerald), Void reads
@@ -501,17 +517,17 @@ export default function BookingsPage() {
       showToast("Failed to copy", "error");
     }
   };
-  const handleCopyTicket = async (id: string) => {
+  const handleCopyTicket = async (ticketId: string) => {
     try {
-      await navigator.clipboard.writeText(id);
-      setCopiedTicket(id);
-      showToast(`Ticket ${id} copied`);
-      setTimeout(() => setCopiedTicket((prev) => (prev === id ? null : prev)), 1500);
+      await navigator.clipboard.writeText(ticketId)
+      setCopiedTicket(ticketId);
+      showToast(`Ticket ID ${ticketId} copied`);
+      setTimeout(() => setCopiedTicket((prev) => (prev === ticketId ? null : prev)), 1500);
     } catch {
       showToast("Failed to copy", "error");
     }
   };
-
+  
   const openBooking = useMemo(
     () => (bookings ?? []).find((b) => b.ref === openRef) ?? null,
     [bookings, openRef]
@@ -665,7 +681,7 @@ export default function BookingsPage() {
                 className="w-32"
                 options={[
                   { value: "all", label: "All status" },
-                  { value: "Confirmed", label: "Confirmed" },
+                  { value: "Confirmed", label: "Approved" },
                   { value: "Pending", label: "Pending" },
                   { value: "Cancelled", label: "Cancelled" },
                   { value: "Refunded", label: "Refunded" },
@@ -758,7 +774,7 @@ export default function BookingsPage() {
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
                       <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[b.status]}`}>
-                        {b.status}
+                        {statusLabel[b.status]}
                       </span>
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
@@ -966,7 +982,7 @@ function BookingDetailDialog({
                     </button>
                   )}
                   <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[booking.status]}`}>
-                    {booking.status}
+                    {statusLabel[booking.status]}
                   </span>
                 </div>
                 <h2 className="mt-1.5 truncate text-[17px] font-semibold tracking-tight text-slate-900">{booking.ticketholder}</h2>
@@ -1092,7 +1108,7 @@ function BookingDetailDialog({
 
             {/* Footer — actions scoped to the booking's current status:
                   Pending   → Approve (primary) + ⋯ menu (Cancel / Refund)
-                  Confirmed → Cancel (ghost rose)
+                  Approved → Cancel (ghost rose)
                   Cancelled → no destructive actions
                 Edit is always present. */}
             <DialogFooter
@@ -1114,7 +1130,7 @@ function BookingDetailDialog({
 // Status-aware footer for the booking detail dialog.
 //   - Pending bookings need explicit approval → Approve (primary) + ⋯ menu
 //     with Cancel + Refund so the destructive actions don't crowd the row.
-//   - Confirmed bookings only expose Cancel (ghost rose), since approval
+//   - Approved bookings only expose Cancel (ghost rose), since approval
 //     already happened.
 //   - Cancelled bookings show no destructive actions (terminal state).
 // Edit is always present.
@@ -1178,7 +1194,7 @@ function DialogFooter({
           </>
         )}
 
-        {/* Confirmed — only Cancel is destructive; Edit is the primary. */}
+        {/* Approved — only Cancel is destructive; Edit is the primary. */}
         {booking.status === "Confirmed" && (
           <>
             <button
