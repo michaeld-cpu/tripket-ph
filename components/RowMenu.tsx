@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type RowMenuItem = {
   label: string;
@@ -44,14 +45,24 @@ export default function RowMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<"down" | "up">("down");
+  // Portal coords — the popover lives on document.body so it escapes any
+  // ancestor `overflow-x-auto` containers (eg. the bookings table) which
+  // would otherwise add a horizontal scrollbar when the menu pushed past
+  // the viewport edge. Coords are computed from the trigger's rect.
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
 
-  // Outside click + Escape closes the menu.
+  // Outside click + Escape closes the menu. The popover is portaled, so the
+  // pointer test must include both the trigger wrapper *and* the popover.
   useEffect(() => {
     if (!open) return;
     const onPointer = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      const insideTrigger = ref.current?.contains(target);
+      const insidePop = popRef.current?.contains(target);
+      if (!insideTrigger && !insidePop) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", onPointer);
@@ -62,15 +73,34 @@ export default function RowMenu({
     };
   }, [open]);
 
-  // Decide vertical placement so the menu never gets clipped by the viewport bottom.
+  // Compute viewport coords + decide vertical placement when the menu opens
+  // and on scroll/resize so the floating menu stays anchored to the trigger.
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    const estimatedHeight = items.length * ITEM_H + MENU_PADDING;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    setPlacement(spaceBelow < estimatedHeight && spaceAbove > spaceBelow ? "up" : "down");
-  }, [open, items.length]);
+    const compute = () => {
+      const rect = triggerRef.current!.getBoundingClientRect();
+      const estimatedHeight = items.length * ITEM_H + MENU_PADDING;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const flipUp = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+      setPlacement(flipUp ? "up" : "down");
+      const MENU_WIDTH = 208; // w-52
+      const left = align === "right"
+        ? rect.right - MENU_WIDTH
+        : rect.left;
+      const top = flipUp
+        ? rect.top - estimatedHeight - 6
+        : rect.bottom + 6;
+      setCoords({ top, left });
+    };
+    compute();
+    window.addEventListener("scroll", compute, true);
+    window.addEventListener("resize", compute);
+    return () => {
+      window.removeEventListener("scroll", compute, true);
+      window.removeEventListener("resize", compute);
+    };
+  }, [open, items.length, align]);
 
   return (
     <div className="relative inline-block" ref={ref}>
@@ -96,17 +126,16 @@ export default function RowMenu({
         </svg>
       </button>
 
-      {open && (
+      {open && coords && typeof document !== "undefined" && createPortal(
         <div
+          ref={popRef}
           role="menu"
           aria-orientation="vertical"
+          style={{ position: "fixed", top: coords.top, left: coords.left }}
           className={
-            "row-menu-pop absolute z-40 w-52 overflow-hidden rounded-xl bg-white p-1 " +
+            "row-menu-pop z-[60] w-52 overflow-hidden rounded-xl bg-white p-1 " +
             "ring-1 ring-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-8px_rgba(15,23,42,0.18)] " +
-            (align === "right" ? "right-0 " : "left-0 ") +
-            (placement === "up"
-              ? "bottom-full mb-1.5 origin-bottom-right"
-              : "top-full mt-1.5 origin-top-right")
+            (placement === "up" ? "origin-bottom-right" : "origin-top-right")
           }
         >
           {items.map((item, i) => (
@@ -149,7 +178,8 @@ export default function RowMenu({
               </button>
             </div>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
 
       <style jsx>{`

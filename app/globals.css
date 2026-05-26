@@ -11,6 +11,17 @@
   --sidebar: #fafafa;
 }
 
+/* ── Global focus ring ──
+   Replace the browser's default blue focus outline with our brand-orange
+   ring so keyboard focus reads as project-native everywhere. Components
+   that need a custom focus treatment can still opt out by setting their
+   own `focus-visible:outline-none focus-visible:ring-*` classes. */
+*:focus-visible {
+  outline: 2px solid #f97316; /* brand-500 */
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 html, body { height: 100%; }
 html {
   /* Lift the root font-size by ~6.25% so any rem-based sizing scales up.

@@ -19,13 +19,17 @@ import type { VesselValue } from "@/components/schedule-steps/VesselStep";
 import type { VehicleClass, PassengerType, AddOn } from "@/lib/dashboard-data";
 
 export type FareRow = { enabled: boolean; price: string };
+/** Vehicle-specific fare row. The vehicle fee always includes 1 driver
+ *  seat at no extra charge; `includedCompanions` is how many *additional*
+ *  comped seats ride free under the same fee (commonly 0-2). */
+export type VehicleFareRow = FareRow & { includedCompanions: number };
 export type FaresValue = {
   /** Headline Economy / base passenger fare. */
   baseFare: string;
   /** Keyed by PassengerType.key — the vessel-defined catalog. */
   passengerPrices: Record<string, FareRow>;
   /** Keyed by VehicleClass.key. */
-  vehiclePrices: Record<string, FareRow>;
+  vehiclePrices: Record<string, VehicleFareRow>;
   /** Keyed by AddOn.key. */
   addOnPrices: Record<string, FareRow>;
 };
@@ -70,7 +74,9 @@ function hydrate(value: FaresValue, vessel: VesselValue): FaresValue {
   });
   vessel.vehicleClasses.forEach((c) => {
     if (!next.vehiclePrices[c.key]) {
-      next.vehiclePrices[c.key] = { enabled: c.enabled, price: "" };
+      // Default to 1 included companion (the common PH ferry convention:
+      // vehicle fee covers driver + 1 helper). Operators can adjust.
+      next.vehiclePrices[c.key] = { enabled: c.enabled, price: "", includedCompanions: 1 };
       touched = true;
     }
   });
@@ -122,7 +128,7 @@ export default function FaresStep({
       ...hydrated,
       passengerPrices: { ...hydrated.passengerPrices, [key]: { ...hydrated.passengerPrices[key], ...patch } },
     });
-  const setVehicle = (key: string, patch: Partial<FareRow>) =>
+  const setVehicle = (key: string, patch: Partial<VehicleFareRow>) =>
     onChange({
       ...hydrated,
       vehiclePrices: { ...hydrated.vehiclePrices, [key]: { ...hydrated.vehiclePrices[key], ...patch } },
@@ -246,6 +252,12 @@ export default function FaresStep({
                       ariaLabel={`${c.label} price`}
                     />
                   }
+                  extraRow={
+                    <CompanionStepper
+                      value={row.includedCompanions}
+                      onChange={(n) => setVehicle(c.key, { includedCompanions: n })}
+                    />
+                  }
                 />
               );
             })}
@@ -343,7 +355,7 @@ function EmptyCatalog({ message }: { message: string }) {
 
 // ─────────── Row, toggle, price field ───────────
 function FareRowItem({
-  first, enabled, onToggle, label, sublabel, priceInput,
+  first, enabled, onToggle, label, sublabel, priceInput, extraRow,
 }: {
   first: boolean;
   enabled: boolean;
@@ -351,23 +363,80 @@ function FareRowItem({
   label: string;
   sublabel?: string;
   priceInput: React.ReactNode;
+  /** Optional secondary row rendered under the main line (e.g. vehicle
+   *  companion stepper). Indents to align under the label column. */
+  extraRow?: React.ReactNode;
 }) {
   return (
     <div
       className={
-        "flex items-center gap-3 px-3.5 py-2.5 transition-colors duration-150 " +
+        "transition-colors duration-150 " +
         (first ? "" : "border-t border-slate-100 ") +
         (enabled ? "bg-brand-50/40" : "bg-white")
       }
     >
-      <Toggle on={enabled} onChange={onToggle} ariaLabel={`Toggle ${label}`} />
-      <div className="flex-1 min-w-0">
-        <div className={"text-[13px] font-semibold tracking-tight " + (enabled ? "text-slate-900" : "text-slate-700")}>
-          {label}
+      <div className="flex items-center gap-3 px-3.5 py-2.5">
+        <Toggle on={enabled} onChange={onToggle} ariaLabel={`Toggle ${label}`} />
+        <div className="flex-1 min-w-0">
+          <div className={"text-[13px] font-semibold tracking-tight " + (enabled ? "text-slate-900" : "text-slate-700")}>
+            {label}
+          </div>
+          {sublabel && <div className="mt-0.5 text-[11px] leading-tight text-slate-500">{sublabel}</div>}
         </div>
-        {sublabel && <div className="mt-0.5 text-[11px] leading-tight text-slate-500">{sublabel}</div>}
+        <div className="shrink-0">{priceInput}</div>
       </div>
-      <div className="shrink-0">{priceInput}</div>
+      {extraRow && enabled && (
+        <div className="border-t border-dashed border-slate-200/80 px-3.5 py-2 pl-[3.25rem]">
+          {extraRow}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Stepper for "free companion seats" bundled into a vehicle fare. Driver is
+// always implicitly included (1 free seat), so this only counts the
+// *additional* helpers — typical PH defaults are 0-2.
+function CompanionStepper({
+  value, onChange,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+}) {
+  const MAX = 4;
+  const dec = () => onChange(Math.max(0, value - 1));
+  const inc = () => onChange(Math.min(MAX, value + 1));
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-[12px] font-medium tracking-tight text-slate-700">Includes driver + companion seats</div>
+        <div className="mt-0.5 text-[11px] leading-tight text-slate-500">
+          Driver always rides free. Pick how many extra companion seats are bundled into the vehicle fare.
+        </div>
+      </div>
+      <div className="inline-flex shrink-0 items-center overflow-hidden rounded-md bg-white ring-1 ring-slate-200">
+        <button
+          type="button"
+          onClick={dec}
+          disabled={value <= 0}
+          aria-label="Decrease companions"
+          className="grid h-7 w-7 place-items-center text-slate-500 transition-[background-color,color] duration-150 hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3.5 w-3.5"><path d="M5 12h14"/></svg>
+        </button>
+        <span className="grid h-7 w-9 place-items-center border-x border-slate-200 font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">
+          {value}
+        </span>
+        <button
+          type="button"
+          onClick={inc}
+          disabled={value >= MAX}
+          aria-label="Increase companions"
+          className="grid h-7 w-7 place-items-center text-slate-500 transition-[background-color,color] duration-150 hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3.5 w-3.5"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
     </div>
   );
 }
