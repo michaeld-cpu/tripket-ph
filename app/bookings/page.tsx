@@ -11,413 +11,18 @@ import DateRangePicker, { type DateRange } from "@/components/DateRangePicker";
 import { useToast } from "@/components/ToastContext";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
 import type { Line } from "@/lib/shipping-lines";
+import {
+  deriveBookings,
+  statusLabel,
+  statusTone,
+  ticketStatusTone,
+  type Booking,
+  type BookingStatus,
+  type FareClass,
+  type StoredVoyage,
+  type Ticket,
+} from "@/lib/bookings-data";
 
-// ─────────── Booking shape ───────────
-// Bookings are derived synthetically from the voyages an operator has created
-// (stored in `tripket.voyages` localStorage). Each voyage seeds 1-3 mock
-// bookings so the table has something to render before a real booking system
-// is wired up.
-type BookingStatus = "Confirmed" | "Pending" | "Cancelled" | "Refunded";
-
-type FareClass = "Economy" | "Tourist" | "Business";
-type PassengerSex = "Male" | "Female";
-// Per-ticket lifecycle. Paid is the default once payment clears; tickets
-// can be Voided (issued in error, no refund), Cancelled (refund pending),
-// or Refunded (money returned).
-type TicketStatus = "Paid" | "Void" | "Cancelled" | "Refunded";
-
-// Per-pax ticket carried under one booking. Each ticket has its own ID
-// suffixed off the booking ref (TKT-0001-A, TKT-0001-B, …) so passengers can
-// be checked in individually while staying grouped under the booking.
-type Ticket = {
-  id: string;
-  name: string;
-  fareClass: FareClass;
-  age: number;
-  sex: PassengerSex;
-  nationality: string;
-  /** Type of valid ID presented at check-in (e.g. "PhilSys ID", "Driver's License"). */
-  documentType: string;
-  /** Document number — formatted to match Philippine ID conventions. */
-  documentRef: string;
-  /** Fare paid for this ticket — fareClass-multiplied off the voyage's base fare. */
-  fare: number;
-  /** Per-ticket gate status, distinct from the booking-level status. */
-  status: TicketStatus;
-  /** Optional per-pax contact. Lead pax usually inherits the booking's
-      contact details; companions may or may not have their own captured. */
-  phone?: string;
-  email?: string;
-  /** Required photo of the valid ID, front side. */
-  idFrontUrl: string;
-  /** Required photo of the valid ID, back side. */
-  idBackUrl: string;
-  /** Whether this ticket is bundled with a vehicle booking and what role it
-      plays. Driver/Companion seats ride with the vehicle and may be comped
-      depending on the shipping line's policy. */
-  vehicleRole?: "Driver" | "Companion";
-  /** True when the ticket was bundled free under the vehicle fee. Surfaces
-      in the payment breakdown as "Comped (vehicle)". */
-  comped?: boolean;
-};
-
-// Per-booking vehicle details. Present only when the booking includes a
-// vehicle slot. Plate + driver name are captured at checkout so the gate
-// crew can match the vehicle and its driver against the manifest.
-type Vehicle = {
-  class: string;
-  plateNumber: string;
-  driverName: string;
-  /** Vehicle registration year. */
-  year: number;
-  /** Manufacturer / brand (Toyota, Honda, Mitsubishi…). */
-  make: string;
-  /** Model name (Vios, Civic, L300…). */
-  model: string;
-  /** Operator-chosen short label (e.g. "Family SUV", "Tito's truck"). */
-  label: string;
-  /** Optional vehicle photo URL uploaded by the user. */
-  photoUrl?: string;
-  /** Required Official Receipt photo. Captured at booking — together with
-      the CR it forms the legal proof of registration the gate crew checks. */
-  orUrl: string;
-  /** Required Certificate of Registration photo. */
-  crUrl: string;
-};
-
-const VEHICLE_MAKES = ["Toyota", "Honda", "Mitsubishi", "Hyundai", "Isuzu", "Nissan", "Suzuki", "Ford", "Yamaha", "Kawasaki"];
-const VEHICLE_MODELS_BY_MAKE: Record<string, string[]> = {
-  Toyota: ["Vios", "Innova", "Hilux", "Fortuner"],
-  Honda: ["Civic", "City", "BR-V", "Click 125i"],
-  Mitsubishi: ["L300", "Mirage", "Xpander", "Strada"],
-  Hyundai: ["Accent", "Tucson", "H-100"],
-  Isuzu: ["Crosswind", "D-Max", "Elf"],
-  Nissan: ["Almera", "Navara", "Urvan"],
-  Suzuki: ["Ertiga", "APV", "Carry"],
-  Ford: ["Ranger", "Everest", "Territory"],
-  Yamaha: ["Mio i 125", "NMAX", "Sniper 150"],
-  Kawasaki: ["Barako II", "CT125", "Rouser NS160"],
-};
-const VEHICLE_LABEL_PREFIXES = ["Family", "Backup", "Daily", "Cargo", "Tito's", "Lola's", "Beach"];
-
-// Fare-class multipliers applied to the voyage's cheapestFare to derive a
-// per-ticket rate. Keeps the per-pax table honest with the booking total.
-const FARE_CLASS_MULTIPLIER: Record<FareClass, number> = {
-  Economy: 1,
-  Tourist: 1.5,
-  Business: 2.4,
-};
-
-// Philippine valid-ID catalogue. Each entry knows how to mint a realistic-
-// looking number so the mock data reads like a real check-in roster rather
-// than a placeholder sequence.
-const ID_TYPES: { label: string; format: (rand: () => number) => string }[] = [
-  // PhilSys (national ID) — 16-digit PCN, displayed in 4-4-4-4 blocks.
-  { label: "PhilSys ID", format: (r) => {
-    const block = () => String(1000 + Math.floor(r() * 8999));
-    return `${block()}-${block()}-${block()}-${block()}`;
-  }},
-  // LTO driver's license — letter + 2 digits + 6 digits.
-  { label: "Professional Driver's License", format: (r) => {
-    const L = String.fromCharCode(65 + Math.floor(r() * 26));
-    return `${L}${String(10 + Math.floor(r() * 89))}-${String(100000 + Math.floor(r() * 899999))}`;
-  }},
-  // UMID / SSS card.
-  { label: "UMID", format: (r) => `CRN-${String(1000 + Math.floor(r() * 8999))}-${String(1000000 + Math.floor(r() * 8999999))}-${Math.floor(r() * 10)}` },
-  // Passport — 1 letter + 7 digits + 1 letter.
-  { label: "Passport", format: (r) => {
-    const L = () => String.fromCharCode(65 + Math.floor(r() * 26));
-    return `${L()}${String(1000000 + Math.floor(r() * 8999999))}${L()}`;
-  }},
-  // PRC professional license — 7 digits.
-  { label: "PRC ID", format: (r) => String(1000000 + Math.floor(r() * 8999999)) },
-  // Voter's ID — VIN style.
-  { label: "Voter's ID", format: (r) => `${String(1000 + Math.floor(r() * 8999))}-${String(1000 + Math.floor(r() * 8999))}A-${String(1000 + Math.floor(r() * 8999))}` },
-];
-
-type Booking = {
-  ref: string;
-  ticketholder: string;
-  pax: number;
-  vehicleClass?: string;
-  /** Full vehicle record when the booking includes a vehicle slot. */
-  vehicle?: Vehicle;
-  routeOriginCode: string;
-  routeDestinationCode: string;
-  routeOriginCity: string;
-  routeDestinationCity: string;
-  vesselName: string;
-  /** Departure timestamp. */
-  departureDate: Date;
-  amount: number;
-  status: BookingStatus;
-  bookingDate: Date;
-  /** Contact details captured at booking. */
-  contactMobile: string;
-  contactEmail: string;
-  /** Payment metadata. */
-  paymentMethod: "Tripket Wallet";
-  paymentStatus: "Paid" | "Pending" | "Refunded";
-  /** Per-pax tickets. tickets.length === pax. */
-  tickets: Ticket[];
-};
-
-// ─────────── Voyage shape (slice of what we need from localStorage) ───────────
-// Mirrors the fields VoyagesPage writes. Defensive — fields may be missing on
-// older payloads, so we tolerate optionals everywhere.
-type StoredVoyage = {
-  id: string;
-  date: string;
-  hour: number;
-  minute: number;
-  vesselName?: string;
-  originCode?: string;
-  destinationCode?: string;
-  originCity?: string;
-  destinationCity?: string;
-  paxCapacity?: number;
-  cheapestFare?: number;
-  priciestFare?: number;
-};
-
-// Single placeholder image used across every uploaded-document slot while
-// real upload pipelines are being wired up. One Unsplash cat for now.
-// Gray tabby kitten leaning on white wall — Unsplash photo VwqecUsYKvs.
-const PLACEHOLDER_CAT = "https://images.unsplash.com/photo-1506755855567-92ff770e8d00?w=900&q=80";
-
-// Signature kept for API stability with the call sites — every bucket now
-// returns the same image. Swap PLACEHOLDER_CAT for real upload URLs later.
-function pickMockImage(_bucket: "idFront" | "idBack" | "vehiclePhoto" | "or" | "cr", _rand: () => number): string {
-  return PLACEHOLDER_CAT;
-}
-
-// ─────────── Deterministic pseudo-random helpers ───────────
-// We want each voyage's bookings to look randomly-distributed but stay stable
-// across re-renders so users don't see rows shuffle when filters change.
-function hashStr(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-function rng(seed: number) {
-  let s = seed || 1;
-  return () => {
-    s = Math.imul(s ^ (s >>> 15), 2246822507);
-    s = Math.imul(s ^ (s >>> 13), 3266489909);
-    s ^= s >>> 16;
-    return (s >>> 0) / 4294967296;
-  };
-}
-
-const FIRST_NAMES = ["Maria", "Juan", "Ana", "Carlos", "Lorna", "Roberto", "Elena", "Mark", "Gloria", "Dennis", "Patricia", "Jose", "Andrea", "Rafael", "Camille", "Miguel", "Sofia", "Diego", "Bianca", "Noel"];
-const LAST_NAMES = ["Santos", "dela Cruz", "Reyes", "Mendoza", "Garcia", "Flores", "Cruz", "Villanueva", "Tan", "Aquino", "Lim", "Bautista", "Castro", "Ramos", "Torres", "Diaz", "Navarro", "Pascual"];
-const VEHICLE_LABELS = ["Motorcycle", "Car / SUV", "Pickup / AUV", "Light Truck"];
-
-function deriveBookings(voyages: StoredVoyage[]): Booking[] {
-  const bookings: Booking[] = [];
-  let counter = 1;
-  voyages.forEach((v) => {
-    const seed = hashStr(v.id);
-    const rand = rng(seed);
-    // Skip voyages with missing core fields rather than emit garbage rows.
-    if (!v.originCode || !v.destinationCode) return;
-    const dep = new Date(v.date);
-    if (isNaN(dep.getTime())) return;
-    dep.setHours(v.hour, v.minute, 0, 0);
-    const baseFare = v.cheapestFare || 1200;
-
-    // 1-3 bookings per voyage.
-    const count = 1 + Math.floor(rand() * 3);
-    for (let i = 0; i < count; i++) {
-      // Force every booking to carry a vehicle so the Vehicle Information
-      // section is always visible during dialog development. Flip back to
-      // `rand() < 0.35` once real bookings flow in.
-      const hasVehicle = true;
-      // Vehicle bookings always include a driver + 1 companion (both comped
-      // under the vehicle fee), so we floor pax at 2 in that case.
-      const pax = counter === 17
-        ? 4 // forced sample: 4 passengers with mixed ticket statuses
-        : hasVehicle
-          ? 2 + Math.floor(rand() * 3) // 2-4 pax when a vehicle is involved
-          : 1 + Math.floor(rand() * 4);
-      const vehicleClass = hasVehicle ? VEHICLE_LABELS[Math.floor(rand() * VEHICLE_LABELS.length)] : undefined;
-      // Realistic PH plate format: 3 letters + space + 4 digits (e.g. ABC 1234).
-      let vehicle: Vehicle | undefined;
-      if (hasVehicle) {
-        const make = VEHICLE_MAKES[Math.floor(rand() * VEHICLE_MAKES.length)];
-        const models = VEHICLE_MODELS_BY_MAKE[make] ?? ["Standard"];
-        const model = models[Math.floor(rand() * models.length)];
-        const labelPrefix = VEHICLE_LABEL_PREFIXES[Math.floor(rand() * VEHICLE_LABEL_PREFIXES.length)];
-        vehicle = {
-          class: vehicleClass!,
-          plateNumber: `${String.fromCharCode(65 + Math.floor(rand() * 26))}${String.fromCharCode(65 + Math.floor(rand() * 26))}${String.fromCharCode(65 + Math.floor(rand() * 26))} ${String(1000 + Math.floor(rand() * 8999))}`,
-          driverName: "", // finalized after the tickets loop
-          year: 2015 + Math.floor(rand() * 11), // 2015 – 2025
-          make,
-          model,
-          label: `${labelPrefix} ${model}`,
-          // 60% of bookings include an optional vehicle photo.
-          // Optional vehicle photo — every booking gets one so the dialog
-          // always has something to preview.
-          photoUrl: pickMockImage("vehiclePhoto", rand),
-          // OR + CR are both required at checkout — always present in mock data.
-          orUrl: pickMockImage("or", rand),
-          crUrl: pickMockImage("cr", rand),
-        };
-      }
-      const statusRoll = rand();
-      // First booking minted is forced to "Refunded" so the table has one
-      // representative entry for that status without disturbing the
-      // distribution of the rest.
-      // Forced samples so every status has a deterministic representative.
-      //   counter === 1  → Refunded booking (table sample)
-      //   counter === 17 → 4 passengers, mixed ticket statuses:
-      //                    pax 0 Paid · pax 1 Paid · pax 2 Cancelled · pax 3 Void
-      //   counter === 18 → normal booking, but every ticket is Void
-      // Ticket-only overrides leave the booking status to the normal roll
-      // so the row still reads as a healthy booking.
-      const status: BookingStatus = counter === 1
-        ? "Refunded"
-        : statusRoll < 0.65 ? "Confirmed" : statusRoll < 0.9 ? "Pending" : "Cancelled";
-      const forceTicketMix17 = counter === 17;
-      const forceTicketsVoid = counter === 18;
-      const first = FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
-      const last = LAST_NAMES[Math.floor(rand() * LAST_NAMES.length)];
-      // Booking date sits 1-14 days before departure.
-      const bookedDaysBefore = 1 + Math.floor(rand() * 14);
-      const bookingDate = new Date(dep);
-      bookingDate.setDate(bookingDate.getDate() - bookedDaysBefore);
-      bookingDate.setHours(0, 0, 0, 0);
-
-      const ref = `TKT-${String(counter).padStart(4, "0")}`;
-
-      // Booking-level contact — captured once at checkout and inherited by
-      // the lead passenger. Companions may or may not have their own contact
-      // on file, so we roll independently below.
-      const contactMobile = `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14);
-      const contactEmail = `${first}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`;
-
-      // Per-pax tickets. Each gets a letter suffix off the booking ref. The
-      // first ticket carries the ticketholder's name; subsequent tickets get
-      // randomized companions with the same surname (kept as a deterministic
-      // family-feel without overcommitting to a real-relations model).
-      const fareClasses: FareClass[] = ["Economy", "Tourist", "Business"];
-      const tickets: Ticket[] = [];
-      for (let p = 0; p < pax; p++) {
-        const isLead = p === 0;
-        const tFirst = isLead ? first : FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
-        // Vehicle role: first ticket is the Driver, second is the
-        // Companion. Both are comped (fare = 0) under the vehicle fee.
-        const vehicleRole: Ticket["vehicleRole"] | undefined = hasVehicle
-          ? p === 0 ? "Driver" : p === 1 ? "Companion" : undefined
-          : undefined;
-        const comped = !!vehicleRole;
-        const fareClass: FareClass = rand() < 0.55 ? "Economy" : rand() < 0.85 ? "Tourist" : "Business";
-        const sex: PassengerSex = rand() < 0.5 ? "Female" : "Male";
-        // Driver must be of driving age — bump if the roll came in low.
-        let age = 3 + Math.floor(rand() * 70);
-        if (vehicleRole === "Driver" && age < 21) age = 21 + Math.floor(rand() * 30);
-        // Driver's valid ID is forced to Professional Driver's License so
-        // the document type aligns with the role.
-        const idType = vehicleRole === "Driver"
-          ? ID_TYPES.find((t) => t.label === "Professional Driver's License")!
-          : ID_TYPES[Math.floor(rand() * ID_TYPES.length)];
-        // Lead pax inherits the booking contact; companions get their own
-        // ~45% of the time so the dialog has a believable mix of filled and
-        // blank cells.
-        // Every passenger gets phone + email captured so the dialog always
-        // has channels to surface. Lead pax inherits the booking contact;
-        // companions get their own minted off their name.
-        const paxPhone = isLead
-          ? contactMobile
-          : `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14);
-        const paxEmail = isLead
-          ? contactEmail
-          : `${tFirst.toLowerCase()}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`;
-        tickets.push({
-          id: `${ref}-${String.fromCharCode(65 + p)}`, // A, B, C, …
-          name: `${tFirst} ${last}`,
-          fareClass,
-          age,
-          sex,
-          nationality: "Filipino",
-          documentType: idType.label,
-          documentRef: idType.format(rand),
-          idFrontUrl: pickMockImage("idFront", rand),
-          idBackUrl: pickMockImage("idBack", rand),
-          fare: comped ? 0 : Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
-          phone: paxPhone,
-          email: paxEmail,
-          vehicleRole,
-          comped: comped || undefined,
-          // Per-ticket lifecycle. Cancelled/Refunded bookings push every
-          // ticket into the matching terminal state. Otherwise tickets are
-          // Paid by default with a small chance of being Voided.
-          status: (() => {
-            if (status === "Cancelled") return "Cancelled" as TicketStatus;
-            if (status === "Refunded")  return "Refunded"  as TicketStatus;
-            if (forceTicketMix17) {
-              // pax 0+1 → Paid, pax 2 → Cancelled, pax 3 → Void
-              if (p === 2) return "Cancelled" as TicketStatus;
-              if (p === 3) return "Void"      as TicketStatus;
-              return "Paid" as TicketStatus;
-            }
-            if (forceTicketsVoid)       return "Void"      as TicketStatus;
-            // Tiny chance of Void to give the table some realistic variance.
-            if (rand() < 0.05) return "Void" as TicketStatus;
-            return "Paid" as TicketStatus;
-          })(),
-        });
-        void fareClasses; // silence lint
-      }
-
-      // Finalize the driver name on the vehicle record now that we know who
-      // got assigned the Driver role.
-      if (vehicle) {
-        const driverTicket = tickets.find((t) => t.vehicleRole === "Driver");
-        if (driverTicket) vehicle.driverName = driverTicket.name;
-      }
-
-      // Payment metadata — deterministic per booking via the same rng.
-      // Single source of payment for the platform — Tripket Wallet routes
-      // both customer top-ups and operator settlements through the same
-      // ledger, so every booking lands here.
-      const paymentMethod: Booking["paymentMethod"] = "Tripket Wallet";
-      const paymentStatus: Booking["paymentStatus"] =
-        status === "Cancelled" || status === "Refunded"
-          ? "Refunded"
-          : status === "Pending" ? "Pending" : "Paid";
-
-      bookings.push({
-        ref,
-        ticketholder: `${first} ${last}`,
-        pax,
-        vehicleClass,
-        vehicle,
-        routeOriginCode: v.originCode,
-        routeDestinationCode: v.destinationCode,
-        routeOriginCity: v.originCity ?? v.originCode,
-        routeDestinationCity: v.destinationCity ?? v.destinationCode,
-        vesselName: v.vesselName ?? "Unknown vessel",
-        departureDate: dep,
-        amount: pax * baseFare + (hasVehicle ? 500 + Math.floor(rand() * 2000) : 0),
-        status,
-        bookingDate,
-        contactMobile,
-        contactEmail,
-        paymentMethod,
-        paymentStatus,
-        tickets,
-      });
-      counter++;
-    }
-  });
-  // Newest bookings first.
-  return bookings.sort((a, b) => b.bookingDate.getTime() - a.bookingDate.getTime());
-}
 
 const PAGE_SIZE = 10;
 
@@ -454,34 +59,6 @@ function fmtDate(d: Date): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-// Unified status palette — uppercase labels, no dots, restrained tones.
-// Approved = opaque emerald (settled / good); Pending = brand-orange
-// (needs attention); Cancelled = struck slate.
-const statusTone: Record<BookingStatus, string> = {
-  Confirmed: "bg-emerald-100 text-emerald-800",
-  Pending:   "bg-brand-50 text-brand-700",
-  Cancelled: "bg-slate-50 text-slate-400 line-through decoration-slate-300",
-  Refunded:  "bg-sky-50 text-sky-700",
-};
-
-// Display label per status — keeps the internal "Confirmed" value (so all
-// existing logic still works) while surfacing "Approved" to the operator.
-const statusLabel: Record<BookingStatus, string> = {
-  Confirmed: "Approved",
-  Pending:   "Pending",
-  Cancelled: "Cancelled",
-  Refunded:  "Refunded",
-};
-
-// Per-ticket palette — Paid is the healthy default (emerald), Void reads
-// as quietly invalidated (slate), Cancelled is struck-through, Refunded
-// matches the booking-level refund tone.
-const ticketStatusTone: Record<TicketStatus, string> = {
-  Paid:      "bg-emerald-100 text-emerald-800",
-  Void:      "bg-slate-100 text-slate-500",
-  Cancelled: "bg-slate-50 text-slate-400 line-through decoration-slate-300",
-  Refunded:  "bg-sky-50 text-sky-700",
-};
 
 function SortIcon() {
   return (
@@ -581,6 +158,16 @@ export default function BookingsPage() {
   }, [active.id]);
 
   useEffect(() => { setPage(1); }, [query, routeFilter, vesselFilter, statusFilter, dateRange]);
+
+  // ?ref=TKT-#### deep link — opens the matching booking dialog once data
+  // hydrates. Used by the Tickets page's "View booking" action to jump
+  // straight from a ticket row into its parent booking detail.
+  useEffect(() => {
+    if (!bookings) return;
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get("ref");
+    if (ref && bookings.some((b) => b.ref === ref)) setOpenRef(ref);
+  }, [bookings]);
 
   // Filter dropdown options derived from the data.
   const routeOptions = useMemo(() => {
@@ -702,7 +289,7 @@ export default function BookingsPage() {
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
                   <th className="whitespace-nowrap px-6 py-3 text-center font-medium">#</th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">Ref</th>
+                  <th className="whitespace-nowrap px-6 py-3 font-medium">Booking ref</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Status</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Ticketholder <SortIcon /></button>
@@ -822,14 +409,16 @@ export default function BookingsPage() {
                       <RowMenu
                         ariaLabel={`Actions for ${b.ref}`}
                         items={[
-                          // View — always available; pure read action.
+                          // View tickets — routes to the Tickets page with this
+                          // booking's ref pre-loaded as the search query so the
+                          // table filters to just that booking's passenger tickets.
                           {
-                            label: "View booking",
-                            onClick: () => setOpenRef(b.ref),
+                            label: "View tickets",
+                            onClick: () => { window.location.href = `/tickets?booking=${b.ref}`; },
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
-                                <circle cx="12" cy="12" r="3" />
+                                <path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4V8Z" />
+                                <path d="M14 6v12" strokeDasharray="2 2" />
                               </svg>
                             ),
                           },
@@ -1149,8 +738,14 @@ function DialogFooter({
   onRefund: (ref: string) => void;
   onEdit: (ref: string) => void;
 }) {
-  const fire = (fn: (ref: string) => void) => {
-    fn(booking.ref);
+  // Single status picker collapses Approve/Cancel/Refund into a ClickUp-style
+  // dropdown (matching the tickets dialog). Each selection fires the matching
+  // mutation and closes the dialog so the user gets feedback in the table.
+  const onChangeStatus = (next: BookingStatus) => {
+    if (next === "Confirmed") onApprove(booking.ref);
+    else if (next === "Cancelled") onCancel(booking.ref);
+    else if (next === "Refunded") onRefund(booking.ref);
+    // Pending is the initial state; transitioning back isn't a normal flow.
     onClose();
   };
 
@@ -1164,67 +759,122 @@ function DialogFooter({
         Close
       </button>
 
-      <div className="flex items-center gap-1">
-        {/* Pending — destructive ghost buttons sit before the primary so the
-            eye lands on Approve last. Cancel uses rose to mark it as the
-            terminal action; Refund stays neutral. */}
-        {booking.status === "Pending" && (
-          <>
-            <button
-              type="button"
-              onClick={() => fire(onCancel)}
-              className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-rose-500 transition-colors duration-150 hover:bg-rose-50 hover:text-rose-600"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => fire(onRefund)}
-              className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-100"
-            >
-              Refund
-            </button>
-            <button
-              type="button"
-              onClick={() => fire(onApprove)}
-              className="ml-1 rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-brand-600"
-            >
-              Approve
-            </button>
-          </>
-        )}
-
-        {/* Approved — only Cancel is destructive; Edit is the primary. */}
-        {booking.status === "Confirmed" && (
-          <>
-            <button
-              type="button"
-              onClick={() => fire(onCancel)}
-              className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-rose-500 transition-colors duration-150 hover:bg-rose-50 hover:text-rose-600"
-            >
-              Cancel booking
-            </button>
-            <button
-              type="button"
-              onClick={() => onEdit(booking.ref)}
-              className="ml-1 rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-brand-600"
-            >
-              Edit
-            </button>
-          </>
-        )}
-
-        {/* Cancelled — terminal state, only Edit remains. */}
-        {booking.status === "Cancelled" && (
-          <button
-            type="button"
-            onClick={() => onEdit(booking.ref)}
-            className="rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-brand-600"
-          >
-            Edit
-          </button>
-        )}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onEdit(booking.ref)}
+          className="whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50"
+        >
+          Edit
+        </button>
+        <BookingStatusPicker current={booking.status} onChange={onChangeStatus} />
       </div>
+    </div>
+  );
+}
+
+// ─────────── BookingStatusPicker ───────────
+// Mirror of the tickets-page StatusPicker, scoped to booking lifecycle.
+// Brand-orange primary button reads "STATUS · APPROVED ▾" and opens a
+// popover with every valid transition. Terminal Cancelled/Refunded states
+// disable every option so the picker can still be opened to inspect state.
+function BookingStatusPicker({
+  current,
+  onChange,
+}: {
+  current: BookingStatus;
+  onChange: (next: BookingStatus) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const isTerminal = current === "Cancelled" || current === "Refunded";
+  const canPick = (s: BookingStatus): boolean => {
+    if (s === current) return false;
+    if (isTerminal) return false;
+    // Pending → cannot move back to Pending from Confirmed.
+    if (s === "Pending") return false;
+    return true;
+  };
+
+  const options: { value: BookingStatus; label: string }[] = [
+    { value: "Confirmed", label: "Approve" },
+    { value: "Refunded",  label: "Refund" },
+    { value: "Cancelled", label: "Cancel booking" },
+  ];
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-brand-600"
+      >
+        <span className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-white/80">Status</span>
+        <span className="text-[12.5px] font-semibold uppercase tracking-[0.04em] text-white">{statusLabel[current]}</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-3.5 w-3.5 text-white/80 transition-transform duration-150 ${open ? "rotate-180" : ""}`}>
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="menu"
+            initial={{ opacity: 0, scale: 0.96, y: 4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 4 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28, mass: 0.7 }}
+            style={{ transformOrigin: "bottom right" }}
+            className="absolute bottom-full right-0 z-30 mb-2 w-60 overflow-hidden rounded-xl bg-white p-1 shadow-[0_18px_44px_-16px_rgba(15,23,42,0.25)] ring-1 ring-slate-200/70"
+          >
+            <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">
+              Update status
+            </div>
+            {options.map((o) => {
+              const disabled = !canPick(o.value);
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="menuitem"
+                  disabled={disabled}
+                  onClick={() => { if (!disabled) { onChange(o.value); setOpen(false); } }}
+                  className={`grid w-full grid-cols-[minmax(0,1fr)_auto_16px] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors duration-100 ${
+                    disabled
+                      ? "cursor-not-allowed text-slate-300"
+                      : o.value === "Cancelled"
+                        ? "text-rose-600 hover:bg-rose-50"
+                        : "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900"
+                  }`}
+                >
+                  <span className="truncate font-medium">{o.label}</span>
+                  <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${statusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
+                    {statusLabel[o.value]}
+                  </span>
+                  <span className="flex justify-end" />
+                </button>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

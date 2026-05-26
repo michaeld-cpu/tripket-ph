@@ -1317,17 +1317,108 @@ function VoyageBlock({
 // All chips share the same brand-orange palette — the meaning is in the label,
 // not the color. Cards on the calendar still tint per status (sky / emerald /
 // rose) so the lifecycle reads at a glance there; the dialog itself stays calm.
-const STATUS_CHIP_TONE = {
-  active: "bg-brand-500 text-white ring-brand-500",
-  rest: "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50",
-} as const;
-
 const STATUS_CHIPS: { key: VoyageStatus; label: string }[] = [
   { key: "Scheduled", label: "Scheduled" },
   { key: "Departed", label: "Departed" },
   { key: "Arrived", label: "Arrived" },
   { key: "Cancelled", label: "Cancelled" },
 ];
+
+// Pill tones for the voyage status picker — mirror the calendar lifecycle.
+const VOYAGE_STATUS_PILL_TONE: Record<VoyageStatus, string> = {
+  Scheduled: "bg-brand-50 text-brand-700",
+  Departed:  "bg-sky-50 text-sky-700",
+  Arrived:   "bg-emerald-100 text-emerald-800",
+  Cancelled: "bg-slate-100 text-slate-500",
+};
+
+// ─────────── VoyageStatusPicker ───────────
+// ClickUp-style status selector for the voyage detail dialog. Mirrors the
+// booking/ticket pickers: brand-orange primary trigger reads "STATUS · VALUE
+// ▾" with a popover listing every transition. Closes on outside click + Esc.
+function VoyageStatusPicker({
+  current,
+  onChange,
+}: {
+  current: VoyageStatus;
+  onChange: (next: VoyageStatus) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-brand-600"
+      >
+        <span className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-white/80">Status</span>
+        <span className="text-[12.5px] font-semibold uppercase tracking-[0.04em] text-white">{current}</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-3.5 w-3.5 text-white/80 transition-transform duration-150 ${open ? "rotate-180" : ""}`}>
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute bottom-full right-0 z-30 mb-2 w-56 overflow-hidden rounded-xl bg-white p-1 shadow-[0_18px_44px_-16px_rgba(15,23,42,0.25)] ring-1 ring-slate-200/70"
+        >
+          <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">
+            Update status
+          </div>
+          {STATUS_CHIPS.map((o) => {
+            const isCurrent = o.key === current;
+            return (
+              <button
+                key={o.key}
+                type="button"
+                role="menuitem"
+                disabled={isCurrent}
+                onClick={() => { if (!isCurrent) { onChange(o.key); setOpen(false); } }}
+                className={`grid w-full grid-cols-[minmax(0,1fr)_auto_16px] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors duration-100 ${
+                  isCurrent
+                    ? "cursor-default text-slate-400"
+                    : o.key === "Cancelled"
+                      ? "text-rose-600 hover:bg-rose-50"
+                      : "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900"
+                }`}
+              >
+                <span className="truncate font-medium">Mark {o.label}</span>
+                <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${VOYAGE_STATUS_PILL_TONE[o.key]} ${isCurrent ? "opacity-50" : ""}`}>
+                  {o.label}
+                </span>
+                <span className="flex justify-end">
+                  {isCurrent && (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-400">
+                      <path d="M5 12l5 5 9-11" />
+                    </svg>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function VoyageDetailDialog({
   voyage,
@@ -1457,31 +1548,15 @@ function VoyageDetailDialog({
 
         <div className="border-t border-slate-100" />
 
-        {/* Status — inline chip group, auto-saves on click */}
-        <div className="px-5 py-4">
-          <div className="mb-2 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+        {/* Status — compact ClickUp-style picker, auto-saves on selection */}
+        <div className="flex items-center justify-between gap-3 px-5 py-4">
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">
             Status
           </div>
-          <div role="radiogroup" aria-label="Voyage status" className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-            {STATUS_CHIPS.map((s) => {
-              const on = voyage.status === s.key;
-              return (
-                <button
-                  key={s.key}
-                  type="button"
-                  role="radio"
-                  aria-checked={on}
-                  onClick={() => onStatusChange(voyage.id, s.key)}
-                  className={
-                    "rounded-lg px-2.5 py-1.5 text-[12px] font-medium tracking-tight ring-1 transition-colors duration-150 " +
-                    (on ? STATUS_CHIP_TONE.active : STATUS_CHIP_TONE.rest)
-                  }
-                >
-                  {s.label}
-                </button>
-              );
-            })}
-          </div>
+          <VoyageStatusPicker
+            current={voyage.status}
+            onChange={(next) => onStatusChange(voyage.id, next)}
+          />
         </div>
 
         <div className="border-t border-slate-100" />
