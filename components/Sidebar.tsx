@@ -40,10 +40,20 @@ const VoyageIcon = ({ className }: IconProps) => (
   </svg>
 );
 
+// Bookings — clipboard with a checklist, reads as "list of bookings".
 const TicketIcon = ({ className }: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <rect x="5" y="4" width="14" height="17" rx="2" />
+    <path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1" />
+    <path d="M9 10h6M9 14h6M9 18h4" />
+  </svg>
+);
+
+// Tickets — perforated ticket stub, the canonical "single ticket" icon.
+const TicketsIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4V8Z" />
-    <path d="M10 6v12" strokeDasharray="2 2" />
+    <path d="M14 6v12" strokeDasharray="2 2" />
   </svg>
 );
 
@@ -119,6 +129,7 @@ const navEntries: (NavEntry | { kind: "divider" })[] = [
   { kind: "leaf", href: "/routes",   label: "Routes",    Icon: RouteIcon },
   { kind: "leaf", href: "/vessels",  label: "Vessels",   Icon: FerryIcon },
   { kind: "leaf", href: "/bookings", label: "Bookings",  Icon: TicketIcon },
+  { kind: "leaf", href: "/tickets",  label: "Tickets",   Icon: TicketsIcon },
   { kind: "leaf", href: "/reports",  label: "Reports",   Icon: ReportsIcon },
 
   {
