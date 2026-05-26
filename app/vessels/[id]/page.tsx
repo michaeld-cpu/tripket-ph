@@ -30,9 +30,9 @@ function vesselInitials(name: string): string {
 // Unified status palette — uppercase labels, no dots, restrained tones.
 const statusTone: Record<Vessel["status"], string> = {
   Active:      "bg-emerald-100 text-emerald-800",
-  Inactive:    "bg-slate-50 text-slate-400 line-through decoration-slate-300",
+  Inactive:    "bg-slate-100 text-slate-500",
   Maintenance: "bg-brand-50 text-brand-700",
-  Retired:     "bg-slate-50 text-slate-400 line-through decoration-slate-300",
+  Retired:     "bg-slate-100 text-slate-500",
 };
 
 // Live voyage mock — anchored to today's wall clock, deterministic per vessel id.

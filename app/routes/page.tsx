@@ -29,7 +29,7 @@ type Route = {
 // Active uses opaque emerald (running / healthy); Inactive is struck slate.
 const statusTone: Record<RouteStatus, string> = {
   Active:   "bg-emerald-100 text-emerald-800",
-  Inactive: "bg-slate-50 text-slate-400 line-through decoration-slate-300",
+  Inactive: "bg-slate-100 text-slate-500",
 };
 
 // Mock catalog — mirrors the reference, both directions of each pair so dispatchers see

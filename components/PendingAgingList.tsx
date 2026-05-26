@@ -26,7 +26,7 @@ type Pending = {
 const statusTone: Record<Pending["status"], string> = {
   Pending:   "bg-brand-50 text-brand-700",
   Confirmed: "bg-emerald-100 text-emerald-800",
-  Cancelled: "bg-slate-50 text-slate-400 line-through decoration-slate-300",
+  Cancelled: "bg-slate-100 text-slate-500",
 };
 
 function relativeAge(mins: number): string {
