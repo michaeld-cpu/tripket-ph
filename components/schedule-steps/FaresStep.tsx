@@ -74,9 +74,15 @@ function hydrate(value: FaresValue, vessel: VesselValue): FaresValue {
   });
   vessel.vehicleClasses.forEach((c) => {
     if (!next.vehiclePrices[c.key]) {
-      // Default to 1 included companion (the common PH ferry convention:
-      // vehicle fee covers driver + 1 helper). Operators can adjust.
-      next.vehiclePrices[c.key] = { enabled: c.enabled, price: "", includedCompanions: 1 };
+      // Pre-fill the price from the vessel's registered base fare for this
+      // class (set in Add Vessel → Classes & fares). Falls back to empty
+      // when none was provided. Default to 1 included companion (the common
+      // PH ferry convention: vehicle fee covers driver + 1 helper).
+      next.vehiclePrices[c.key] = {
+        enabled: c.enabled,
+        price: c.defaultPrice != null ? String(c.defaultPrice) : "",
+        includedCompanions: 1,
+      };
       touched = true;
     }
   });

@@ -150,7 +150,7 @@ export default function DateRangePicker({ value, onChange }: Props) {
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-[background-color,transform] duration-150 ease-out hover:bg-slate-50 active:scale-[0.97]"
+        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-[background-color,transform] duration-150 ease-out hover:bg-slate-50 active:scale-[0.97] focus:outline-none focus-visible:border-brand-200 focus-visible:ring-2 focus-visible:ring-brand-100"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-brand-500">
           <rect x="3.5" y="5" width="17" height="16" rx="2" />

@@ -41,11 +41,21 @@ export default function CreateRouteModal({
   open,
   onClose,
   onCreate,
+  editValue,
+  onSave,
+  editExtra,
 }: {
   open: boolean;
   onClose: () => void;
   onCreate?: (payload: CreatedRoute) => void;
+  /** When provided, the dialog opens in edit mode pre-filled with this route. */
+  editValue?: RoutesValue | null;
+  /** Persist edits (edit mode only). */
+  onSave?: (payload: RoutesValue) => void;
+  /** Extra content rendered below the form in edit mode (e.g. assigned vessels). */
+  editExtra?: React.ReactNode;
 }) {
+  const isEdit = !!editValue;
   const [stepIdx, setStepIdx] = useState(0);
   const [value, setValue] = useState<RoutesValue>(initialValue);
   const step = STEPS[stepIdx];
@@ -54,8 +64,8 @@ export default function CreateRouteModal({
   useEffect(() => {
     if (!open) return;
     setStepIdx(0);
-    setValue(initialValue());
-  }, [open]);
+    setValue(editValue ?? initialValue());
+  }, [open, editValue]);
 
   // Step 1 gates step 2.
   const sameOriginDest = value.originCode !== "" && value.originCode === value.destinationCode;
@@ -68,6 +78,12 @@ export default function CreateRouteModal({
     Number(value.durationHighHrs) >= Number(value.durationLowHrs);
 
   const continueDisabled = step.id === "details" && !detailsValid;
+
+  const saveEdit = () => {
+    if (!detailsValid) return;
+    onSave?.(value);
+    onClose();
+  };
 
   const goNext = () => {
     if (isLast) {
@@ -83,8 +99,8 @@ export default function CreateRouteModal({
     <Modal open={open} onClose={onClose} maxWidth="max-w-2xl">
       <div className="flex max-h-[90vh] flex-col">
         <WizardHeader
-          title="Create route"
-          caption={step.description}
+          title={isEdit ? "Edit route" : "Create route"}
+          caption={isEdit ? "Update the ports, distance, or crossing time." : step.description}
           onClose={onClose}
           icon={
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
@@ -94,42 +110,86 @@ export default function CreateRouteModal({
           }
         />
 
-        {/* Stepper — only two pips, but the chrome stays consistent with the
-            schedule wizard so operators recognise the pattern. */}
-        <div className="border-b border-slate-100 px-6 py-4">
-          <Stepper
-            steps={STEPS.map((s) => ({ id: s.id, label: s.label }))}
-            currentIdx={stepIdx}
-            onStepClick={(idx) => {
-              // Only allow jumping back to completed steps.
-              if (idx <= stepIdx) setStepIdx(idx);
-            }}
-          />
-        </div>
+        {/* Stepper — only in create mode. Editing is a single form, so the
+            two-pip wizard chrome would be noise. */}
+        {!isEdit && (
+          <div className="border-b border-slate-100 px-6 py-4">
+            <Stepper
+              steps={STEPS.map((s) => ({ id: s.id, label: s.label }))}
+              currentIdx={stepIdx}
+              onStepClick={(idx) => {
+                // Only allow jumping back to completed steps.
+                if (idx <= stepIdx) setStepIdx(idx);
+              }}
+            />
+          </div>
+        )}
 
         <div
           className="min-h-[280px] flex-1 overflow-y-auto px-6 py-5"
           style={{ scrollbarGutter: "stable" }}
         >
-          {step.id === "details" ? (
+          {isEdit ? (
+            <div className="space-y-5">
+              <RoutesStep value={value} onChange={setValue} hideReturnToggle showStatus />
+              {editExtra}
+            </div>
+          ) : step.id === "details" ? (
             <RoutesStep value={value} onChange={setValue} />
           ) : (
             <RouteReview value={value} onEdit={() => setStepIdx(0)} />
           )}
         </div>
 
-        <WizardFooter
-          stepIdx={stepIdx}
-          stepCount={STEPS.length}
-          onCancel={onClose}
-          onBack={goBack}
-          onContinue={goNext}
-          isLast={isLast}
-          continueLabel={isLast ? "Create route" : "Continue"}
-          continueDisabled={continueDisabled}
-        />
+        {isEdit ? (
+          <EditFooter onCancel={onClose} onSave={saveEdit} saveDisabled={!detailsValid} />
+        ) : (
+          <WizardFooter
+            stepIdx={stepIdx}
+            stepCount={STEPS.length}
+            onCancel={onClose}
+            onBack={goBack}
+            onContinue={goNext}
+            isLast={isLast}
+            continueLabel={isLast ? "Create route" : "Continue"}
+            continueDisabled={continueDisabled}
+          />
+        )}
       </div>
     </Modal>
+  );
+}
+
+// ─────────── Edit-mode footer ───────────
+// Cancel · Save changes. Deleting a route lives in the table's row actions
+// menu, not here — editing stays focused on changes.
+function EditFooter({
+  onCancel,
+  onSave,
+  saveDisabled,
+}: {
+  onCancel: () => void;
+  onSave: () => void;
+  saveDisabled: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-4">
+      <button
+        type="button"
+        onClick={onCancel}
+        className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-slate-300"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={saveDisabled}
+        className="inline-flex items-center rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-brand-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-400 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        Save changes
+      </button>
+    </div>
   );
 }
 

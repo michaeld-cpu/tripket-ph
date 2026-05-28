@@ -13,15 +13,19 @@ import { LogoTile } from "@/components/ShippingLineSwitcher";
 import type { Line } from "@/lib/shipping-lines";
 import {
   deriveBookings,
+  deriveActivity,
+  makeActivity,
   statusLabel,
   statusTone,
   ticketStatusTone,
   type Booking,
   type BookingStatus,
   type FareClass,
-  type StoredVoyage,
   type Ticket,
 } from "@/lib/bookings-data";
+import { loadScopedVoyages } from "@/lib/line-scope";
+import ActivityLog from "@/components/ActivityLog";
+import Modal from "@/components/Modal";
 
 
 const PAGE_SIZE = 10;
@@ -69,7 +73,7 @@ function SortIcon() {
 }
 
 export default function BookingsPage() {
-  const { active } = useShippingLine();
+  const { active, locked } = useShippingLine();
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [query, setQuery] = useState("");
   const [routeFilter, setRouteFilter] = useState<string>("all");
@@ -83,6 +87,8 @@ export default function BookingsPage() {
   const [copiedRef, setCopiedRef] = useState<string | null>(null);
   const [openRef, setOpenRef] = useState<string | null>(null);
   const [copiedTicket, setCopiedTicket] = useState<string | null>(null);
+  // Booking being approved via the batch ticket-number dialog.
+  const [approveTarget, setApproveTarget] = useState<Booking | null>(null);
   const { showToast } = useToast();
   const handleCopyRef = async (ref: string) => {
     try {
@@ -98,7 +104,7 @@ export default function BookingsPage() {
     try {
       await navigator.clipboard.writeText(ticketId)
       setCopiedTicket(ticketId);
-      showToast(`Ticket ID ${ticketId} copied`);
+      showToast(`Ticket number ${ticketId} copied`);
       setTimeout(() => setCopiedTicket((prev) => (prev === ticketId ? null : prev)), 1500);
     } catch {
       showToast("Failed to copy", "error");
@@ -118,23 +124,68 @@ export default function BookingsPage() {
     return () => document.removeEventListener("keydown", onKey);
   }, [openRef]);
 
+  // Live admin actions are attributed to the signed-in operator.
+  const ACTOR = "Ada Reyes";
+  const logTo = (b: Booking, entry: ReturnType<typeof makeActivity>): Booking => ({
+    ...b,
+    activity: [entry, ...(b.activity ?? deriveActivity(b))],
+  });
+
   const handleCancel = (ref: string) => {
-    setBookings((prev) => prev ? prev.map((x) => x.ref === ref ? { ...x, status: "Cancelled", paymentStatus: "Refunded" } : x) : prev);
+    setBookings((prev) => prev ? prev.map((x) => x.ref === ref
+      ? logTo({ ...x, status: "Cancelled", paymentStatus: "Refunded" }, makeActivity("cancelled", "Booking cancelled", ACTOR))
+      : x) : prev);
     showToast(`Booking ${ref} cancelled`);
   };
+  // Approve opens the batch dialog so the admin can assign each pending
+  // ticket its own ticket number before confirming.
   const handleApprove = (ref: string) => {
-    setBookings((prev) => prev ? prev.map((x) => x.ref === ref ? { ...x, status: "Confirmed", paymentStatus: "Paid" } : x) : prev);
-    showToast(`Booking ${ref} approved`);
+    const b = bookings?.find((x) => x.ref === ref) ?? null;
+    if (b) setApproveTarget(b);
+  };
+  // Commit a batch decision: each pending ticket is set to Paid (with a ticket
+  // number), Cancelled, or Refunded. The booking is Confirmed if any ticket is
+  // Paid; otherwise Cancelled (none settled).
+  const commitApproval = (
+    ref: string,
+    decisions: Record<string, { status: "Paid" | "Cancelled" | "Refunded"; number?: string }>
+  ) => {
+    setBookings((prev) =>
+      prev
+        ? prev.map((x) => {
+            if (x.ref !== ref) return x;
+            const entries: ReturnType<typeof makeActivity>[] = [];
+            const tickets = x.tickets.map((t) => {
+              const d = decisions[t.id];
+              if (t.status !== "Pending" || !d) return t;
+              if (d.status === "Paid") {
+                entries.push(makeActivity("ticket_paid", "Ticket marked paid", ACTOR, `Ticket no. ${d.number} · ${t.name}`));
+                return { ...t, status: "Paid" as const, ticketNumber: d.number };
+              }
+              entries.push(makeActivity(d.status === "Refunded" ? "refunded" : "cancelled", `Ticket ${d.status.toLowerCase()}`, ACTOR, t.name));
+              return { ...t, status: d.status };
+            });
+            const hasPaid = tickets.some((t) => t.status === "Paid");
+            // Booking-level entry summarising the decision, on top of the
+            // per-ticket entries (newest-first order).
+            entries.push(makeActivity(hasPaid ? "approved" : "cancelled", hasPaid ? "Booking approved" : "Booking cancelled", ACTOR));
+            return {
+              ...x,
+              tickets,
+              status: hasPaid ? "Confirmed" : "Cancelled",
+              paymentStatus: hasPaid ? "Paid" : x.paymentStatus,
+              activity: [...entries.reverse(), ...(x.activity ?? deriveActivity(x))],
+            };
+          })
+        : prev
+    );
+    showToast(`Booking ${ref} updated`);
   };
   const handleRefund = (ref: string) => {
-    setBookings((prev) => prev ? prev.map((x) => x.ref === ref ? { ...x, paymentStatus: "Refunded" } : x) : prev);
+    setBookings((prev) => prev ? prev.map((x) => x.ref === ref
+      ? logTo({ ...x, paymentStatus: "Refunded" }, makeActivity("refunded", "Payment refunded", ACTOR, `₱${x.amount.toLocaleString()} returned`))
+      : x) : prev);
     showToast(`Booking ${ref} refunded`);
-  };
-  // Edit booking — the editable field set isn't finalized yet, so for now
-  // the action surfaces a toast acknowledging the intent and stays clickable
-  // across statuses. Wire up the editor form once requirements are nailed.
-  const handleEdit = (ref: string) => {
-    showToast(`Edit booking ${ref} — coming soon`);
   };
 
   // Booking-date range filter — drives the dashboard-style picker.
@@ -147,15 +198,20 @@ export default function BookingsPage() {
   // Hydrate bookings from localStorage voyages on mount.
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem("tripket.voyages");
-      const voyages: StoredVoyage[] = raw ? JSON.parse(raw) : [];
+      // Operators only ever derive bookings from their own line's voyages.
+      const voyages = loadScopedVoyages(active.id, locked);
       // Fake the loading shimmer briefly so the page matches the routes/vessels feel.
-      const t = setTimeout(() => setBookings(deriveBookings(voyages)), 180);
+      // Seed each booking's activity from its derived history so the rail has a
+      // starting trail; live admin actions append to it from here on.
+      const t = setTimeout(
+        () => setBookings(deriveBookings(voyages).map((b) => ({ ...b, activity: deriveActivity(b) }))),
+        180
+      );
       return () => clearTimeout(t);
     } catch {
       setBookings([]);
     }
-  }, [active.id]);
+  }, [active.id, locked]);
 
   useEffect(() => { setPage(1); }, [query, routeFilter, vesselFilter, statusFilter, dateRange]);
 
@@ -485,15 +541,185 @@ export default function BookingsPage() {
         onCancel={(ref) => { handleCancel(ref); }}
         onApprove={(ref) => { handleApprove(ref); }}
         onRefund={(ref) => { handleRefund(ref); }}
-        onEdit={(ref) => { handleEdit(ref); }}
         copiedTicket={copiedTicket}
         onCopyTicket={handleCopyTicket}
         copiedRef={copiedRef}
         onCopyRef={handleCopyRef}
       />
+
+      <ApproveBookingDialog
+        booking={approveTarget}
+        onClose={() => setApproveTarget(null)}
+        onConfirm={(decisions) => {
+          if (!approveTarget) return;
+          commitApproval(approveTarget.ref, decisions);
+          setApproveTarget(null);
+          setOpenRef(null);
+        }}
+      />
     </div>
   );
 }
+
+// ─────────── ApproveBookingDialog ───────────
+// Review a pending booking ticket-by-ticket. Each pending ticket can be
+// approved (with its own distinct ticket number → Paid) or declined
+// (→ Cancelled), so passengers in the same booking can be settled
+// independently. The booking confirms if any ticket is approved, else cancels.
+function ApproveBookingDialog({
+  booking,
+  onClose,
+  onConfirm,
+}: {
+  booking: Booking | null;
+  onClose: () => void;
+  onConfirm: (decisions: Record<string, { status: TicketDecision; number?: string }>) => void;
+}) {
+  const pending = useMemo(
+    () => (booking ? booking.tickets.filter((t) => t.status === "Pending") : []),
+    [booking]
+  );
+  // Per-ticket target status. Defaults to Paid; admin can flip any to
+  // Cancelled or Refunded.
+  const [decisions, setDecisions] = useState<Record<string, TicketDecision>>({});
+  const [numbers, setNumbers] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!booking) return;
+    setNumbers({});
+    setDecisions(Object.fromEntries(pending.map((t) => [t.id, "Paid" as TicketDecision])));
+  }, [booking]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const statusOf = (id: string): TicketDecision => decisions[id] ?? "Paid";
+  const paidCount = pending.filter((t) => statusOf(t.id) === "Paid").length;
+  // Only Paid tickets need a number entered.
+  const ready = pending.length > 0 && pending.every((t) =>
+    statusOf(t.id) !== "Paid" || (numbers[t.id] ?? "").trim().length > 0
+  );
+  const alreadyPaid = booking ? booking.tickets.length - pending.length : 0;
+
+  const commit = () => {
+    if (!ready) return;
+    const payload: Record<string, { status: TicketDecision; number?: string }> = {};
+    pending.forEach((t) => {
+      const s = statusOf(t.id);
+      payload[t.id] = s === "Paid" ? { status: "Paid", number: numbers[t.id].trim() } : { status: s };
+    });
+    onConfirm(payload);
+  };
+
+  const ctaLabel = paidCount > 0
+    ? `Confirm · ${paidCount} paid${pending.length - paidCount > 0 ? ` · ${pending.length - paidCount} other` : ""}`
+    : "Confirm";
+  const noPaid = pending.length > 0 && paidCount === 0;
+
+  return (
+    <Modal open={!!booking} onClose={onClose} maxWidth="max-w-lg">
+      <div className="flex max-h-[80vh] flex-col">
+        <div className="shrink-0 border-b border-slate-100 px-6 pb-4 pt-5">
+          <div className="flex items-center gap-2.5">
+            <span aria-hidden className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200/70">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[17px] w-[17px]">
+                <path d="M5 12l5 5 9-11" />
+              </svg>
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Review booking</h2>
+              <p className="text-[12px] text-slate-500">
+                <span className="font-mono font-medium tabular-nums text-slate-700">{booking?.ref}</span>
+                {" · "}Set each passenger&apos;s ticket status.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {pending.length === 0 ? (
+            <p className="py-6 text-center text-[13px] text-slate-500">All tickets in this booking are already settled.</p>
+          ) : (
+            <ul className="space-y-2.5">
+              {pending.map((t, i) => {
+                const s = statusOf(t.id);
+                const settled = s !== "Paid"; // cancelled/refunded → dim, no number
+                return (
+                  <li key={t.id} className={"rounded-xl border px-3.5 py-2.5 transition-colors " + (settled ? "border-slate-200 bg-slate-50/60" : "border-slate-200 bg-white")}>
+                    <div className="flex items-center gap-3">
+                      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-slate-100 font-mono text-[11px] font-semibold tabular-nums text-slate-500">
+                        {i + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className={"truncate text-[13px] font-semibold tracking-tight " + (settled ? "text-slate-400 line-through" : "text-slate-900")}>{t.name}</div>
+                        <div className="text-[11px] text-slate-400">{t.fareClass}</div>
+                      </div>
+                      {/* Per-ticket status toggle: Paid · Cancelled · Refunded */}
+                      <div className="inline-flex shrink-0 rounded-lg bg-slate-100 p-0.5">
+                        {(["Paid", "Cancelled", "Refunded"] as TicketDecision[]).map((opt) => {
+                          const on = s === opt;
+                          const onTone = opt === "Paid" ? "text-emerald-700" : opt === "Refunded" ? "text-sky-700" : "text-rose-600";
+                          return (
+                            <button
+                              key={opt}
+                              type="button"
+                              onClick={() => setDecisions((p) => ({ ...p, [t.id]: opt }))}
+                              className={"rounded-md px-2 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none " + (on ? `bg-white ${onTone} shadow-[0_1px_2px_rgba(15,23,42,0.08)]` : "text-slate-500 hover:text-slate-700")}
+                            >
+                              {opt}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {s === "Paid" && (
+                      <input
+                        type="text"
+                        value={numbers[t.id] ?? ""}
+                        onChange={(e) => setNumbers((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                        placeholder="Ticket number"
+                        aria-label={`Ticket number for ${t.name}`}
+                        className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-[12.5px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                      />
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {alreadyPaid > 0 && (
+            <p className="mt-3 text-[11.5px] text-slate-400">
+              {alreadyPaid} ticket{alreadyPaid === 1 ? "" : "s"} already settled — unaffected.
+            </p>
+          )}
+          {noPaid && pending.length > 0 && (
+            <p className="mt-3 text-[11.5px] text-rose-500">No tickets marked paid — the booking will be cancelled.</p>
+          )}
+        </div>
+
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-slate-100 px-6 py-3.5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-slate-300"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={commit}
+            disabled={!ready}
+            className={
+              "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 focus:outline-none focus-visible:ring-1 disabled:cursor-not-allowed disabled:opacity-60 " +
+              (noPaid ? "bg-rose-600 hover:bg-rose-700 focus-visible:ring-rose-400" : "bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-400")
+            }
+          >
+            {ctaLabel}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// Per-ticket target status the admin can set in the review dialog.
+type TicketDecision = "Paid" | "Cancelled" | "Refunded";
 
 // ─────────── Booking detail dialog ───────────
 // Four sections matching the project's visual language:
@@ -508,7 +734,6 @@ function BookingDetailDialog({
   onCancel,
   onApprove,
   onRefund,
-  onEdit,
   copiedTicket,
   onCopyTicket,
   copiedRef,
@@ -520,7 +745,6 @@ function BookingDetailDialog({
   onCancel: (ref: string) => void;
   onApprove: (ref: string) => void;
   onRefund: (ref: string) => void;
-  onEdit: (ref: string) => void;
   copiedTicket: string | null;
   onCopyTicket: (id: string) => void;
   copiedRef: string | null;
@@ -544,8 +768,10 @@ function BookingDetailDialog({
             exit={{ opacity: 0, scale: 0.97, y: 8 }}
             transition={{ type: "spring", stiffness: 320, damping: 30, mass: 0.8 }}
             onClick={(e) => e.stopPropagation()}
-            className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] ring-1 ring-slate-200/70"
+            className="flex max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] ring-1 ring-slate-200/70"
           >
+          {/* Left column — booking content (header · scroll body · footer). */}
+          <div className="flex min-w-0 flex-1 flex-col">
             {/* Header */}
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
               <div className="min-w-0">
@@ -698,16 +924,20 @@ function BookingDetailDialog({
             {/* Footer — actions scoped to the booking's current status:
                   Pending   → Approve (primary) + ⋯ menu (Cancel / Refund)
                   Approved → Cancel (ghost rose)
-                  Cancelled → no destructive actions
-                Edit is always present. */}
+                  Cancelled → no destructive actions */}
             <DialogFooter
               booking={booking}
               onClose={onClose}
               onCancel={onCancel}
               onApprove={onApprove}
               onRefund={onRefund}
-              onEdit={onEdit}
             />
+          </div>
+
+          {/* Right rail — activity / audit log, bottom-anchored. */}
+          <div className="hidden w-[300px] shrink-0 border-l border-slate-100 sm:flex">
+            <ActivityLog entries={booking.activity ?? deriveActivity(booking)} />
+          </div>
           </motion.div>
         </motion.div>
       )}
@@ -729,14 +959,12 @@ function DialogFooter({
   onCancel,
   onApprove,
   onRefund,
-  onEdit,
 }: {
   booking: Booking;
   onClose: () => void;
   onCancel: (ref: string) => void;
   onApprove: (ref: string) => void;
   onRefund: (ref: string) => void;
-  onEdit: (ref: string) => void;
 }) {
   // Single status picker collapses Approve/Cancel/Refund into a ClickUp-style
   // dropdown (matching the tickets dialog). Each selection fires the matching
@@ -760,13 +988,6 @@ function DialogFooter({
       </button>
 
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onEdit(booking.ref)}
-          className="whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50"
-        >
-          Edit
-        </button>
         <BookingStatusPicker current={booking.status} onChange={onChangeStatus} />
       </div>
     </div>
@@ -897,14 +1118,13 @@ function PassengerTable({
   const [preview, setPreview] = useState<{ title: string; url: string } | null>(null);
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
-      <div className="grid grid-cols-[28px_minmax(0,5fr)_44px_38px_64px_80px_72px_20px] items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">
+      <div className="grid grid-cols-[28px_minmax(0,5fr)_44px_38px_64px_80px_20px] items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">
         <span className="text-center">#</span>
         <span>Passenger</span>
         <span>Sex</span>
         <span>Age</span>
         <span>Class</span>
         <span>Status</span>
-        <span className="text-right">Rate</span>
         <span />
       </div>
       <ul className="divide-y divide-slate-100">
@@ -917,27 +1137,17 @@ function PassengerTable({
                 onClick={() => setOpenId((prev) => (prev === t.id ? null : t.id))}
                 aria-label={expanded ? "Collapse passenger details" : "Expand passenger details"}
                 aria-expanded={expanded}
-                className="grid w-full grid-cols-[28px_minmax(0,5fr)_44px_38px_64px_80px_72px_20px] items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-slate-50/80"
+                className="grid w-full grid-cols-[28px_minmax(0,5fr)_44px_38px_64px_80px_20px] items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-slate-50/80"
               >
                 <span className="text-center font-mono text-[11.5px] tabular-nums text-slate-400">{idx + 1}</span>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{t.name}</span>
-                    {t.vehicleRole && (
-                      <span className="inline-flex shrink-0 items-center rounded bg-brand-50 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-brand-700">
-                        {t.vehicleRole}
-                      </span>
-                    )}
-                  </div>
+                  <span className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{t.name}</span>
                 </div>
                 <span className="text-[12px] font-medium tracking-tight text-slate-700">{t.sex}</span>
                 <span className="font-mono text-[12px] tabular-nums text-slate-700">{t.age}</span>
                 <span className="text-[12px] font-medium tracking-tight text-slate-700">{t.fareClass}</span>
                 <span className={`inline-flex w-fit items-center rounded-md px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[t.status]}`}>
                   {t.status}
-                </span>
-                <span className="text-right font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">
-                  ₱{t.fare.toLocaleString()}
                 </span>
                 <span className={`grid h-6 w-6 place-items-center justify-self-end text-slate-400 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
@@ -957,27 +1167,33 @@ function PassengerTable({
                   >
                     <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-t border-dashed border-slate-200 px-4 py-3 text-[12px]">
                       <div>
-                        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Ticket ID</div>
+                        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Ticket number</div>
                         <div className="mt-0.5 flex items-center gap-1.5">
-                          <span className="font-mono text-[13px] font-bold tabular-nums tracking-[0.04em] text-slate-900">{t.id}</span>
-                          {copiedTicket === t.id ? (
-                            <span className="grid h-4 w-4 place-items-center rounded text-emerald-600">
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
-                                <path d="M5 12l5 5 9-11" />
-                              </svg>
-                            </span>
+                          {t.ticketNumber ? (
+                            <>
+                              <span className="font-mono text-[13px] font-bold tabular-nums tracking-[0.04em] text-slate-900">{t.ticketNumber}</span>
+                              {copiedTicket === t.ticketNumber ? (
+                                <span className="grid h-4 w-4 place-items-center rounded text-emerald-600">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                                    <path d="M5 12l5 5 9-11" />
+                                  </svg>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => onCopyTicket(t.ticketNumber!)}
+                                  aria-label={`Copy ${t.ticketNumber}`}
+                                  className="grid h-4 w-4 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-200 hover:text-slate-700 active:scale-90"
+                                >
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                                    <rect x="9" y="9" width="11" height="11" rx="2" />
+                                    <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                                  </svg>
+                                </button>
+                              )}
+                            </>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => onCopyTicket(t.id)}
-                              aria-label={`Copy ${t.id}`}
-                              className="grid h-4 w-4 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-200 hover:text-slate-700 active:scale-90"
-                            >
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
-                                <rect x="9" y="9" width="11" height="11" rx="2" />
-                                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                              </svg>
-                            </button>
+                            <span className="font-mono text-[13px] font-bold tabular-nums tracking-[0.04em] text-slate-300" title="Assigned when the ticket is marked paid">—</span>
                           )}
                         </div>
                       </div>
@@ -1046,20 +1262,19 @@ function VehicleInformation({ booking }: { booking: Booking }) {
   // Preview dialog state — which document the operator clicked to enlarge.
   const [preview, setPreview] = useState<{ title: string; url: string } | null>(null);
   if (!v) return null;
-  const companions = booking.tickets.filter((t) => t.vehicleRole);
-  const compedCount = companions.filter((t) => t.comped).length;
+  const compedCount = booking.tickets.filter((t) => t.comped).length;
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
       <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
         <h3 className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Vehicle Information</h3>
-        {compedCount > 0 && (
+        {v.includedSeats > 0 && (
           <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-emerald-700">
-            {compedCount} comped
+            Includes {v.includedSeats} free seat{v.includedSeats === 1 ? "" : "s"}
           </span>
         )}
       </div>
 
-      {/* Identity strip — Type · Plate · Driver. */}
+      {/* Identity strip — Type · Plate · Included seats. */}
       <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
         <div className="px-4 py-3">
           <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Type</div>
@@ -1070,8 +1285,10 @@ function VehicleInformation({ booking }: { booking: Booking }) {
           <div className="mt-1 truncate font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] text-slate-900">{v.plateNumber}</div>
         </div>
         <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Driver</div>
-          <div className="mt-1 truncate text-[12.5px] font-semibold tracking-tight text-slate-900">{v.driverName}</div>
+          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Free seats</div>
+          <div className="mt-1 font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">
+            {compedCount} <span className="text-slate-400">/ {v.includedSeats}</span>
+          </div>
         </div>
       </div>
 
@@ -1121,25 +1338,6 @@ function VehicleInformation({ booking }: { booking: Booking }) {
         </ul>
       </div>
 
-      {/* Companion roster bundled with the vehicle. */}
-      <div className="px-4 py-3">
-        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Included with vehicle fee</div>
-        <ul className="mt-2 space-y-1.5">
-          {companions.map((t) => (
-            <li key={t.id} className="flex items-center justify-between text-[12.5px]">
-              <div className="flex items-center gap-1.5">
-                <span className="inline-flex items-center rounded bg-brand-50 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-brand-700">
-                  {t.vehicleRole}
-                </span>
-                <span className="font-medium tracking-tight text-slate-900">{t.name}</span>
-              </div>
-              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-emerald-700">
-                {t.comped ? "Comped" : `₱${t.fare.toLocaleString()}`}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
 
       <DocumentPreviewDialog
         doc={preview}

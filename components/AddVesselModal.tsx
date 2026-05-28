@@ -15,12 +15,12 @@ type Props = {
 };
 
 export const defaultVehicleClasses: VehicleClass[] = [
-  { key: "motorcycle",  label: "Motorcycle / Tricycle", descriptor: "≤ 300 kg GVW",   enabled: false, maxWeightKg: 300 },
-  { key: "car",         label: "Car / SUV / Van",       descriptor: "≤ 3,500 kg GVW", enabled: false, maxWeightKg: 3500 },
-  { key: "pickup",      label: "Pickup / AUV",          descriptor: "≤ 3,500 kg GVW", enabled: false, maxWeightKg: 3500 },
-  { key: "light_truck", label: "Light Truck / Elf",     descriptor: "3.5 – 7 tons",   enabled: false, maxWeightKg: 7000 },
-  { key: "heavy_truck", label: "Heavy Truck / Trailer", descriptor: "7+ tons",        enabled: false, maxWeightKg: 12000 },
-  { key: "bus",         label: "Bus / Minibus",         descriptor: "≤ 12 m length",  enabled: false, maxLengthM: 12 },
+  { key: "motorcycle",  label: "Motorcycle / Tricycle", descriptor: "≤ 300 kg GVW",   enabled: false, maxWeightKg: 300,   defaultPrice: 300 },
+  { key: "car",         label: "Car / SUV / Van",       descriptor: "≤ 3,500 kg GVW", enabled: false, maxWeightKg: 3500,  defaultPrice: 1500 },
+  { key: "pickup",      label: "Pickup / AUV",          descriptor: "≤ 3,500 kg GVW", enabled: false, maxWeightKg: 3500,  defaultPrice: 1800 },
+  { key: "light_truck", label: "Light Truck / Elf",     descriptor: "3.5 – 7 tons",   enabled: false, maxWeightKg: 7000,  defaultPrice: 3500 },
+  { key: "heavy_truck", label: "Heavy Truck / Trailer", descriptor: "7+ tons",        enabled: false, maxWeightKg: 12000, defaultPrice: 6500 },
+  { key: "bus",         label: "Bus / Minibus",         descriptor: "≤ 12 m length",  enabled: false, maxLengthM: 12,     defaultPrice: 5000 },
 ];
 
 export const defaultPassengerTypes: PassengerType[] = [
@@ -563,7 +563,7 @@ function VehicleClassRow({
             transition={{ duration: 0.18, ease: "easeOut" }}
             className="overflow-hidden"
           >
-            <div className="grid grid-cols-2 gap-3 pb-3 pl-7 pr-1">
+            <div className="grid grid-cols-3 gap-3 pb-3 pl-7 pr-1">
               <div>
                 <label className="block text-[11px] font-medium text-slate-500">Max weight</label>
                 <SuffixInput
@@ -580,6 +580,16 @@ function VehicleClassRow({
                   onChange={(v) => onChange({ maxLengthM: v ? parseFloat(v) : undefined })}
                   placeholder="—"
                   suffix="m"
+                />
+              </div>
+              {/* Base fare — flows downstream as the Voyages Fares default. */}
+              <div>
+                <label className="block text-[11px] font-medium text-slate-500">Base fare</label>
+                <SuffixInput
+                  value={String(cls.defaultPrice ?? "")}
+                  onChange={(v) => onChange({ defaultPrice: v ? parseInt(v.replace(/[^\d]/g, ""), 10) : undefined })}
+                  placeholder="—"
+                  prefix="₱"
                 />
               </div>
             </div>
@@ -926,10 +936,11 @@ function ReviewRow({
 /* ─────────────────────────  shared atoms  ───────────────────────── */
 
 function SuffixInput({
-  value, onChange, placeholder, suffix,
-}: { value: string; onChange: (v: string) => void; placeholder: string; suffix: string }) {
+  value, onChange, placeholder, suffix, prefix,
+}: { value: string; onChange: (v: string) => void; placeholder: string; suffix?: string; prefix?: string }) {
   return (
     <div className="mt-1 flex items-center rounded-lg border border-slate-200 bg-white transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100">
+      {prefix && <span className="pl-3 text-[11px] font-medium text-slate-400">{prefix}</span>}
       <input
         type="number"
         value={value}
@@ -937,7 +948,7 @@ function SuffixInput({
         placeholder={placeholder}
         className="w-full bg-transparent px-3 py-2 text-[13px] tabular-nums text-slate-900 placeholder:text-slate-400 focus:outline-none"
       />
-      <span className="pr-3 text-[11px] font-medium text-slate-400">{suffix}</span>
+      {suffix && <span className="pr-3 text-[11px] font-medium text-slate-400">{suffix}</span>}
     </div>
   );
 }

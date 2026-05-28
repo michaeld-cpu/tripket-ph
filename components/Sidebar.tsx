@@ -120,19 +120,10 @@ type NavEntry = NavLeaf | NavGroup;
 // Flat list — section title labels removed for compactness. A single hairline
 // divider separates the top "Overview" cluster from everything else, and a
 // second divider before Settings, matching reference apps like Linear / Vercel.
-const navEntries: (NavEntry | { kind: "divider" })[] = [
-  { kind: "leaf", href: "/",         label: "Dashboard", Icon: DashboardIcon },
-
-  { kind: "divider" },
-
-  { kind: "leaf", href: "/voyages",  label: "Voyages",   Icon: VoyageIcon },
-  { kind: "leaf", href: "/routes",   label: "Routes",    Icon: RouteIcon },
-  { kind: "leaf", href: "/vessels",  label: "Vessels",   Icon: FerryIcon },
-  { kind: "leaf", href: "/bookings", label: "Bookings",  Icon: TicketIcon },
-  { kind: "leaf", href: "/tickets",  label: "Tickets",   Icon: TicketsIcon },
-  { kind: "leaf", href: "/reports",  label: "Reports",   Icon: ReportsIcon },
-
-  {
+// Nav is role-aware: the Security group (Users + Audit logs) is platform-level
+// governance and shows only for admins. Operators get the line-scoped set.
+function buildNavEntries(role: "admin" | "operator"): (NavEntry | { kind: "divider" })[] {
+  const securityGroup: NavEntry = {
     kind: "group",
     basePath: "/security",
     label: "Security",
@@ -141,16 +132,33 @@ const navEntries: (NavEntry | { kind: "divider" })[] = [
       { kind: "leaf", href: "/users",      label: "Users",      Icon: UsersIcon },
       { kind: "leaf", href: "/audit-logs", label: "Audit logs", Icon: AuditIcon },
     ],
-  },
+  };
 
-  { kind: "divider" },
+  return [
+    { kind: "leaf", href: "/",         label: "Dashboard", Icon: DashboardIcon },
 
-  { kind: "leaf", href: "/settings", label: "Settings",  Icon: SettingsIcon },
-];
+    { kind: "divider" },
+
+    { kind: "leaf", href: "/voyages",  label: "Voyages",   Icon: VoyageIcon },
+    { kind: "leaf", href: "/routes",   label: "Routes",    Icon: RouteIcon },
+    { kind: "leaf", href: "/vessels",  label: "Vessels",   Icon: FerryIcon },
+    { kind: "leaf", href: "/bookings", label: "Bookings",  Icon: TicketIcon },
+    { kind: "leaf", href: "/tickets",  label: "Tickets",   Icon: TicketsIcon },
+    { kind: "leaf", href: "/reports",  label: "Reports",   Icon: ReportsIcon },
+
+    ...(role === "admin" ? [securityGroup] : []),
+
+    { kind: "divider" },
+
+    { kind: "leaf", href: "/settings", label: "Settings",  Icon: SettingsIcon },
+  ];
+}
 
 export default function Sidebar() {
   const path = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const { user } = useCurrentUser();
+  const navEntries = buildNavEntries(user?.role ?? "admin");
 
   return (
     <aside
@@ -373,17 +381,7 @@ function NavGroupItem({
 function UserBlock({ collapsed }: { collapsed: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const { user: currentUser, setRole } = useCurrentUser();
-
-  // Derive display props from the active user
-  const initials = currentUser.name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? "")
-    .join("") || "??";
-  const roleLabel = currentUser.role === "admin" ? "Admin" : "Operator";
-  const user = { email: currentUser.email, role: roleLabel, initials };
+  const { user: currentUser, signOut } = useCurrentUser();
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -401,8 +399,20 @@ function UserBlock({ collapsed }: { collapsed: boolean }) {
 
   const handleLogout = () => {
     setMenuOpen(false);
-    // TODO: wire up real auth signout
+    signOut();
   };
+
+  // Sidebar only renders inside authenticated chrome, but guard for types.
+  if (!currentUser) return null;
+
+  const initials = currentUser.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("") || "??";
+  const roleLabel = currentUser.role === "admin" ? "Admin" : "Operator";
+  const user = { email: currentUser.email, role: roleLabel, initials };
 
   return (
     <div className="relative mt-4 border-t border-slate-200/70 pt-3" ref={ref}>
@@ -414,7 +424,7 @@ function UserBlock({ collapsed }: { collapsed: boolean }) {
           collapsed ? "justify-center px-0 py-2" : "gap-2.5 px-2 py-2"
         }`}
       >
-        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-900 text-[11px] font-semibold text-white">
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-100 text-[11px] font-bold text-brand-600">
           {user.initials}
         </div>
         {!collapsed && (
@@ -441,7 +451,8 @@ function UserBlock({ collapsed }: { collapsed: boolean }) {
               <div className="truncate text-[12px] font-medium text-slate-900">{user.email}</div>
               <div className="text-[10px] uppercase tracking-[0.08em] text-slate-400">{user.role}</div>
             </div>
-            <button
+            <Link
+              href="/account"
               onClick={() => setMenuOpen(false)}
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-slate-700 transition-[background-color] duration-150 ease-out hover:bg-slate-50"
             >
@@ -450,39 +461,11 @@ function UserBlock({ collapsed }: { collapsed: boolean }) {
                 <path d="M4 21a8 8 0 0 1 16 0" />
               </svg>
               Account settings
-            </button>
+            </Link>
 
-            {/* Dev-only role switcher — remove once real auth lands */}
-            <div className="border-t border-slate-100 px-3 pb-1 pt-2">
-              <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                View as
-              </div>
-              <div className="mt-1.5 grid grid-cols-2 gap-1">
-                <button
-                  onClick={() => { setRole("admin"); setMenuOpen(false); }}
-                  className={`rounded-md px-2 py-1 text-[11.5px] font-medium transition-colors duration-150 ease-out ${
-                    currentUser.role === "admin"
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-50 text-slate-600 hover:bg-slate-100"
-                  }`}
-                >
-                  Admin
-                </button>
-                <button
-                  onClick={() => { setRole("operator"); setMenuOpen(false); }}
-                  className={`rounded-md px-2 py-1 text-[11.5px] font-medium transition-colors duration-150 ease-out ${
-                    currentUser.role === "operator"
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-50 text-slate-600 hover:bg-slate-100"
-                  }`}
-                >
-                  Operator
-                </button>
-              </div>
-            </div>
             <button
               onClick={handleLogout}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-rose-600 transition-[background-color] duration-150 ease-out hover:bg-rose-50"
+              className="mt-1 flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-[13px] text-rose-600 transition-[background-color] duration-150 ease-out hover:bg-rose-50"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />

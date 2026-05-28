@@ -35,7 +35,7 @@ function smoothPath(points: { x: number; y: number }[]) {
   return d.join(" ");
 }
 
-export default function TicketBookingsChart({ data }: { data: Point[] }) {
+export default function TicketBookingsChart({ data, showTotal = true }: { data: Point[]; showTotal?: boolean }) {
   const [hover, setHover] = useState<number | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -240,9 +240,11 @@ export default function TicketBookingsChart({ data }: { data: Point[] }) {
                       <span className="text-gray-500">Veh</span>
                       <span className="ml-auto font-medium text-gray-900">{d.veh.toLocaleString()}</span>
                     </div>
-                    <div className="mt-1 border-t border-gray-100 pt-1 text-[11px] font-semibold text-gray-900">
-                      Total {(d.pax + d.veh).toLocaleString()}
-                    </div>
+                    {showTotal && (
+                      <div className="mt-1 border-t border-gray-100 pt-1 text-[11px] font-semibold text-gray-900">
+                        Total {(d.pax + d.veh).toLocaleString()}
+                      </div>
+                    )}
                   </div>
                 );
               })()}

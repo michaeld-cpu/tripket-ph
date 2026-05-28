@@ -8,10 +8,18 @@ const config: Config = {
         brand: {
           50: "#fff7ed",
           100: "#ffedd5",
+          200: "#fed7aa",
+          300: "#fdba74",
+          400: "#fb923c",
           500: "#f97316",
           600: "#ea580c",
           700: "#c2410c",
         },
+      },
+      // Default focus/ring color is brand orange so any stray `ring-*` or
+      // focus ring falls back to orange instead of the browser/Tailwind blue.
+      ringColor: {
+        DEFAULT: "#f97316",
       },
       fontFamily: {
         // Single typeface across the whole app. `font-mono` is aliased to the

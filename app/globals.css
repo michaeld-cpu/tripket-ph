@@ -16,10 +16,12 @@
    ring so keyboard focus reads as project-native everywhere. Components
    that need a custom focus treatment can still opt out by setting their
    own `focus-visible:outline-none focus-visible:ring-*` classes. */
-*:focus-visible {
-  outline: 2px solid #f97316; /* brand-500 */
-  outline-offset: 2px;
-  border-radius: 4px;
+@layer base {
+  *:focus-visible {
+    outline: 2px solid #f97316; /* brand-500 */
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
 }
 
 html, body { height: 100%; }

@@ -56,32 +56,44 @@ export default function ReviewStep({
   const vesselSlots = vessel.mode === "fleet" ? pickedFleet?.vehicleSlots ?? 0 : Number(vessel.vehicleSlots) || 0;
   const vesselImo   = vessel.mode === "fleet" ? null : vessel.imoNumber.trim() || null;
 
-  // ── Trips total (weekly only) ──
+  // ── Trips projection over the next 30 days ──
+  // The server expands the schedule across a rolling 30-day window; we
+  // mirror that math here so the review screen agrees with the calendar.
+  const RANGE_DAYS = 30;
   const tripsTotal = useMemo(() => {
-    if (schedule.recurrence === "once") return 1;
-    const dep = new Date(schedule.departureDate + "T00:00:00");
-    const end = new Date(schedule.endDate + "T00:00:00");
-    if (isNaN(dep.getTime()) || isNaN(end.getTime()) || schedule.runsOn.length === 0) return 0;
-    const runsKey = new Set(schedule.runsOn);
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const dowKeys: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     let count = 0;
-    const cursor = new Date(dep);
-    while (cursor <= end) {
-      const dow = (cursor.getDay() + 6) % 7;
-      const key = (["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] as DayKey[])[dow];
-      if (runsKey.has(key)) count++;
-      cursor.setDate(cursor.getDate() + 1);
+    for (let offset = 0; offset < RANGE_DAYS; offset++) {
+      const c = new Date(start);
+      c.setDate(c.getDate() + offset);
+      const dow = (c.getDay() + 6) % 7;
+      count += schedule.dayTimes[dowKeys[dow]]?.length ?? 0;
     }
     return count;
   }, [schedule]);
 
-  // ── Span (days between dep & end, for weekly) ──
-  const spanDays = useMemo(() => {
-    if (schedule.recurrence === "once") return 0;
-    const dep = new Date(schedule.departureDate + "T00:00:00");
-    const end = new Date(schedule.endDate + "T00:00:00");
-    if (isNaN(dep.getTime()) || isNaN(end.getTime())) return 0;
-    return Math.round((end.getTime() - dep.getTime()) / 86_400_000) + 1;
+  // Weekdays that have at least one selected time. Used by the review card
+  // to render the WeekdayChips.
+  const activeDays = useMemo<DayKey[]>(() => {
+    const order: DayKey[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    return order.filter((k) => (schedule.dayTimes[k]?.length ?? 0) > 0);
   }, [schedule]);
+
+  // First-of-day time for the hero ETA calculation — picks the earliest
+  // slot on the earliest active weekday so the boarding-pass card has
+  // something concrete to show.
+  const sampleDepartureTime = useMemo(() => {
+    for (const k of activeDays) {
+      const hours = schedule.dayTimes[k];
+      if (hours && hours.length > 0) {
+        const h = hours[0];
+        return `${String(h).padStart(2, "0")}:00`;
+      }
+    }
+    return "";
+  }, [schedule.dayTimes, activeDays]);
 
   // ── Fares math — read from the vessel's catalog + the schedule's pricing ──
   const baseEconomy = Number(fares.baseFare) || 0;
@@ -130,8 +142,10 @@ export default function ReviewStep({
   const priciest = passengerLines.filter((l) => !l.free).reduce<FareLine | null>((max, l) => !max || l.amount > max.amount ? l : max, null);
 
   // ── Estimated arrival time for the hero pill ──
+  // Uses the first slot of the first active weekday as a representative
+  // departure since the schedule has many possible departure times.
   const eta = useMemo(() => {
-    const m = schedule.departureTime?.match(/^(\d{1,2}):(\d{2})$/);
+    const m = sampleDepartureTime?.match(/^(\d{1,2}):(\d{2})$/);
     const avg = (Number(routes.durationLowHrs) + Number(routes.durationHighHrs)) / 2;
     if (!m || !Number.isFinite(avg) || avg <= 0) return null;
     const startMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
@@ -142,7 +156,7 @@ export default function ReviewStep({
     const h12 = ((endH + 11) % 12) + 1;
     const overnight = total >= 24 * 60;
     return `${h12}:${String(endM).padStart(2, "0")} ${period}${overnight ? " (next day)" : ""}`;
-  }, [schedule.departureTime, routes.durationLowHrs, routes.durationHighHrs]);
+  }, [sampleDepartureTime, routes.durationLowHrs, routes.durationHighHrs]);
 
   return (
     <div className="space-y-5 [&>*]:[animation:review-fade-in_360ms_cubic-bezier(0.16,1,0.3,1)_both]">
@@ -188,9 +202,7 @@ export default function ReviewStep({
         eta={eta}
         origin={origin}
         destination={destination}
-        departureDate={schedule.departureDate}
-        departureTime={schedule.departureTime}
-        recurrence={schedule.recurrence}
+        departureTime={sampleDepartureTime}
         tripsTotal={tripsTotal}
         distanceNm={routes.distanceNm}
         durationLow={routes.durationLowHrs}
@@ -205,7 +217,7 @@ export default function ReviewStep({
         {/* Schedule */}
         <ReviewCard
           title="Schedule"
-          subtitle={schedule.recurrence === "once" ? "Single voyage" : `Recurring for ${spanDays} days`}
+          subtitle={`Recurring over ${RANGE_DAYS} days`}
           icon={
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
               <rect x="3.5" y="5" width="17" height="16" rx="2" />
@@ -215,35 +227,37 @@ export default function ReviewStep({
           onEdit={() => onEdit(0)}
         >
           <DefList>
-            <DefRow
-              label="Recurrence"
-              value={
-                <span className="inline-flex items-center gap-1.5">
-                  <span>{schedule.recurrence === "once" ? "One-time trip" : "Recurring weekly"}</span>
-                  <span className={"inline-flex h-1.5 w-1.5 rounded-full " + (schedule.recurrence === "weekly" ? "bg-brand-500" : "bg-slate-300")} />
-                </span>
-              }
-            />
-            <DefRow label="Departs" value={formatDate(schedule.departureDate)} />
-            <DefRow label="Time" value={<Mono>{formatTime(schedule.departureTime)}</Mono>} />
-            {schedule.recurrence === "weekly" && (
-              <>
+            {schedule.label?.trim() && (
+              <DefRow label="Label" value={schedule.label.trim()} />
+            )}
+            <DefRow label="Runs on" value={<WeekdayChips active={activeDays} />} />
+            {activeDays.map((k) => {
+              const hours = schedule.dayTimes[k] ?? [];
+              return (
                 <DefRow
-                  label="Runs on"
-                  value={<WeekdayChips active={schedule.runsOn} />}
-                />
-                <DefRow label="Ends on" value={formatDate(schedule.endDate)} />
-                <DefRow
-                  label="Voyages"
+                  key={k}
+                  label={k}
                   value={
-                    <span>
-                      <span className="font-mono font-semibold tabular-nums text-slate-900">{tripsTotal}</span>
-                      <span className="ml-1 text-[10.5px] text-slate-400">over {spanDays} days</span>
+                    <span className="flex flex-wrap gap-1.5">
+                      {hours.map((h) => (
+                        <span key={h} className="inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10.5px] tabular-nums text-slate-700">
+                          {formatHourLabel(h)}
+                        </span>
+                      ))}
                     </span>
                   }
                 />
-              </>
-            )}
+              );
+            })}
+            <DefRow
+              label="Voyages"
+              value={
+                <span>
+                  <span className="font-mono font-semibold tabular-nums text-slate-900">{tripsTotal}</span>
+                  <span className="ml-1 text-[10.5px] text-slate-400">over the next {RANGE_DAYS} days</span>
+                </span>
+              }
+            />
           </DefList>
         </ReviewCard>
 
@@ -435,24 +449,19 @@ export default function ReviewStep({
       </div>
 
       {/* ─── Ready-to-create confirmation panel ─── */}
-      <ReadyToCreate
-        recurrence={schedule.recurrence}
-        tripsTotal={tripsTotal}
-      />
+      <ReadyToCreate tripsTotal={tripsTotal} />
     </div>
   );
 }
 
 // ─────────── Hero summary — boarding-pass style ───────────
 function HeroSummary({
-  origin, destination, departureTime, recurrence, tripsTotal,
+  origin, destination, departureTime, tripsTotal,
   durationLow, durationHigh, eta, vesselName,
 }: {
   origin: Port | null;
   destination: Port | null;
-  departureDate: string;
   departureTime: string;
-  recurrence: "once" | "weekly";
   tripsTotal: number;
   distanceNm: string;
   durationLow: string;
@@ -470,7 +479,7 @@ function HeroSummary({
       {/* Wrapper header — eyebrow on left, reference code on right */}
       <div className="flex items-center justify-between px-2.5 py-1.5">
         <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-white">
-          {recurrence === "once" ? "One-time schedule" : "Weekly schedule"}
+          Weekly schedule
         </span>
         <span className="font-mono text-[10.5px] tabular-nums tracking-[0.08em] text-white/85">
           #{refCode}
@@ -510,9 +519,9 @@ function HeroSummary({
         <div className="grid grid-cols-2 divide-x divide-slate-100">
           <KeyStat label="Vessel" value={vesselName ?? "—"} />
           <KeyStat
-            label={recurrence === "weekly" ? "Voyages queued" : "Crossing"}
+            label="Voyages queued"
             value={
-              recurrence === "weekly" && tripsTotal > 0
+              tripsTotal > 0
                 ? `${tripsTotal}`
                 : durationLow && durationHigh
                   ? `${durationLow}–${durationHigh}h`
@@ -583,16 +592,14 @@ function StatBlock({
 
 // ─────────── ReadyToCreate — flat, minimal confirmation row ───────────
 function ReadyToCreate({
-  recurrence,
   tripsTotal,
 }: {
-  recurrence: "once" | "weekly";
   tripsTotal: number;
 }) {
   const queued =
-    recurrence === "weekly" && tripsTotal > 0
+    tripsTotal > 0
       ? `${tripsTotal} ${tripsTotal === 1 ? "voyage" : "voyages"} will be queued`
-      : "1 voyage will be queued";
+      : "no voyages queued yet";
 
   return (
     <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
@@ -751,15 +758,7 @@ function FareLineRow({ label, sublabel, amount, free }: { label: string; sublabe
   );
 }
 
-// ─────────── Date / time helpers ───────────
-function formatDate(iso: string, variant: "full" | "short" | "weekday" = "full"): string {
-  if (!iso) return "—";
-  const d = new Date(iso + "T00:00:00");
-  if (isNaN(d.getTime())) return "—";
-  if (variant === "short")   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  if (variant === "weekday") return d.toLocaleDateString("en-US", { weekday: "long" });
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
-}
+// ─────────── Time helpers ───────────
 function formatTime(hhmm: string): string {
   const m = hhmm?.match(/^(\d{1,2}):(\d{2})$/);
   if (!m) return "—";
@@ -767,6 +766,12 @@ function formatTime(hhmm: string): string {
   const period = h24 < 12 ? "AM" : "PM";
   const h12 = ((h24 + 11) % 12) + 1;
   return `${h12}:${m[2]} ${period}`;
+}
+// Compact hour-only label ("4 AM", "11 PM") used by the per-day time chips.
+function formatHourLabel(h: number): string {
+  const period = h < 12 ? "AM" : "PM";
+  const h12 = ((h + 11) % 12) + 1;
+  return `${h12} ${period}`;
 }
 function prettyType(t: string): string {
   // Mirrors VesselFormBody.typeOptions so review reads identically to the form.

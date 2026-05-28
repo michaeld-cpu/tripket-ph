@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
@@ -8,7 +9,8 @@ import Select from "@/components/Select";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import CreateRouteModal from "@/components/CreateRouteModal";
-import { PORTS } from "@/components/schedule-steps/RoutesStep";
+import Modal from "@/components/Modal";
+import { PORTS, type RoutesValue } from "@/components/schedule-steps/RoutesStep";
 
 // ─────────── Route catalog ───────────
 // Each route is a directional origin → destination pair with a nautical-mile distance
@@ -18,12 +20,62 @@ import { PORTS } from "@/components/schedule-steps/RoutesStep";
 type RouteStatus = "Active" | "Inactive";
 type Route = {
   id: string;
+  /** Short human-friendly reference code displayed in the table. */
+  ref: string;
   origin: { code: string; city: string };
   destination: { code: string; city: string };
   distanceNm: number;       // nautical miles
   durationHrs: [number, number]; // [low, high]
   status: RouteStatus;
+  /** Vessel assignments on this route. A route can run multiple vessels,
+      each with its own dated departures. Empty = unassigned. */
+  assignments: VesselAssignment[];
 };
+
+// One vessel's sailings on a route.
+type VesselAssignment = {
+  vessel: string;
+  /** Concrete dated departures for this vessel, sorted ascending. */
+  departures: Date[];
+};
+
+// Mints mock departure dates — used until the real schedule-generation
+// pipeline feeds dates in. Spreads `count` sailings across the next ~30
+// days on a fixed weekday cadence.
+// Map a table Route into the wizard-shaped RoutesValue the edit dialog expects.
+function routeToValue(r: Route): RoutesValue {
+  return {
+    originCode: r.origin.code,
+    destinationCode: r.destination.code,
+    distanceNm: String(r.distanceNm),
+    durationLowHrs: String(r.durationHrs[0]),
+    durationHighHrs: String(r.durationHrs[1]),
+    createReturn: false,
+    status: r.status,
+  };
+}
+
+function mockDepartures(count: number, weekdays: number[], hour: number): Date[] {
+  if (count === 0) return [];
+  const out: Date[] = [];
+  const cursor = new Date();
+  cursor.setHours(hour, 0, 0, 0);
+  let guard = 0;
+  while (out.length < count && guard < 60) {
+    if (weekdays.includes(cursor.getDay())) out.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+    guard++;
+  }
+  return out;
+}
+
+// Flatten all departures across a route's vessel assignments, sorted
+// ascending — used for the "next + N more" summary in the table cell.
+function allDepartures(r: Route): Date[] {
+  return r.assignments
+    .flatMap((a) => a.departures)
+    .sort((x, y) => x.getTime() - y.getTime());
+}
 
 // Unified status palette — uppercase labels, no dots, restrained tones.
 // Active uses opaque emerald (running / healthy); Inactive is struck slate.
@@ -35,22 +87,30 @@ const statusTone: Record<RouteStatus, string> = {
 // Mock catalog — mirrors the reference, both directions of each pair so dispatchers see
 // origin → destination and the return leg as separate rows.
 const MOCK_ROUTES: Route[] = [
-  { id: "r1",  origin: { code: "CEB", city: "Cebu City" },       destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 42, durationHrs: [3.5, 4],   status: "Active" },
-  { id: "r2",  origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "CEB", city: "Cebu City" },      distanceNm: 42, durationHrs: [3.5, 4],   status: "Active" },
-  { id: "r3",  origin: { code: "CEB", city: "Cebu City" },       destination: { code: "TAG", city: "Tagbilaran City" },distanceNm: 65, durationHrs: [2, 2.5],   status: "Active" },
-  { id: "r4",  origin: { code: "TAG", city: "Tagbilaran City" }, destination: { code: "CEB", city: "Cebu City" },      distanceNm: 65, durationHrs: [2, 2.5],   status: "Active" },
-  { id: "r5",  origin: { code: "CEB", city: "Cebu City" },       destination: { code: "ORM", city: "Ormoc City" },     distanceNm: 95, durationHrs: [3.5, 4],   status: "Active" },
-  { id: "r6",  origin: { code: "ORM", city: "Ormoc City" },      destination: { code: "CEB", city: "Cebu City" },      distanceNm: 95, durationHrs: [3.5, 4],   status: "Active" },
-  { id: "r7",  origin: { code: "CEB", city: "Cebu City" },       destination: { code: "BAC", city: "Bacolod City" },   distanceNm: 80, durationHrs: [4, 5],     status: "Active" },
-  { id: "r8",  origin: { code: "BAC", city: "Bacolod City" },    destination: { code: "CEB", city: "Cebu City" },      distanceNm: 80, durationHrs: [4, 5],     status: "Active" },
-  { id: "r9",  origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "DAP", city: "Dapitan City" },   distanceNm: 38, durationHrs: [2.5, 3],   status: "Inactive" },
-  { id: "r10", origin: { code: "DAP", city: "Dapitan City" },    destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 38, durationHrs: [2.5, 3],   status: "Inactive" },
-  { id: "r11", origin: { code: "BAT", city: "Batangas City" },   destination: { code: "CAL", city: "Calapan City" },   distanceNm: 26, durationHrs: [2.5, 3],   status: "Active" },
-  { id: "r12", origin: { code: "CAL", city: "Calapan City" },    destination: { code: "BAT", city: "Batangas City" },  distanceNm: 26, durationHrs: [2.5, 3],   status: "Active" },
-  { id: "r13", origin: { code: "MNL", city: "Manila" },          destination: { code: "PPS", city: "Puerto Princesa" },distanceNm: 350,durationHrs: [22, 24],  status: "Active" },
-  { id: "r14", origin: { code: "PPS", city: "Puerto Princesa" }, destination: { code: "MNL", city: "Manila" },         distanceNm: 350,durationHrs: [22, 24],  status: "Active" },
-  { id: "r15", origin: { code: "MNL", city: "Manila" },          destination: { code: "ILO", city: "Iloilo City" },    distanceNm: 250,durationHrs: [18, 20],  status: "Active" },
-  { id: "r16", origin: { code: "ILO", city: "Iloilo City" },     destination: { code: "MNL", city: "Manila" },         distanceNm: 250,durationHrs: [18, 20],  status: "Active" },
+  // Multi-vessel routes (r1, r5) demonstrate the assignments model — same
+  // route served by more than one vessel, each on its own cadence.
+  { id: "r1",  ref: "RT-0001", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 42, durationHrs: [3.5, 4],   status: "Active",   assignments: [
+    { vessel: "MV Filipinas Cebu", departures: mockDepartures(13, [1,3,5], 8) },
+    { vessel: "FC Sinulog",        departures: mockDepartures(8, [2,4], 13) },
+  ] },
+  { id: "r2",  ref: "RT-0002", origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "CEB", city: "Cebu City" },      distanceNm: 42, durationHrs: [3.5, 4],   status: "Active",   assignments: [{ vessel: "MV Filipinas Cebu", departures: mockDepartures(13, [1,3,5], 14) }] },
+  { id: "r3",  ref: "RT-0003", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "TAG", city: "Tagbilaran City" },distanceNm: 65, durationHrs: [2, 2.5],   status: "Active",   assignments: [{ vessel: "FC Sinulog", departures: mockDepartures(8, [2,4], 6) }] },
+  { id: "r4",  ref: "RT-0004", origin: { code: "TAG", city: "Tagbilaran City" }, destination: { code: "CEB", city: "Cebu City" },      distanceNm: 65, durationHrs: [2, 2.5],   status: "Active",   assignments: [{ vessel: "FC Sinulog", departures: mockDepartures(8, [2,4], 11) }] },
+  { id: "r5",  ref: "RT-0005", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "ORM", city: "Ormoc City" },     distanceNm: 95, durationHrs: [3.5, 4],   status: "Active",   assignments: [
+    { vessel: "MV Reina del Cielo", departures: mockDepartures(21, [1,2,3,4,5], 9) },
+    { vessel: "MV Visayan Star",    departures: mockDepartures(8, [6,0], 9) },
+  ] },
+  { id: "r6",  ref: "RT-0006", origin: { code: "ORM", city: "Ormoc City" },      destination: { code: "CEB", city: "Cebu City" },      distanceNm: 95, durationHrs: [3.5, 4],   status: "Active",   assignments: [{ vessel: "MV Reina del Cielo", departures: mockDepartures(21, [1,2,3,4,5], 16) }] },
+  { id: "r7",  ref: "RT-0007", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "BAC", city: "Bacolod City" },   distanceNm: 80, durationHrs: [4, 5],     status: "Active",   assignments: [{ vessel: "MV Visayan Star", departures: mockDepartures(8, [6,0], 7) }] },
+  { id: "r8",  ref: "RT-0008", origin: { code: "BAC", city: "Bacolod City" },    destination: { code: "CEB", city: "Cebu City" },      distanceNm: 80, durationHrs: [4, 5],     status: "Active",   assignments: [{ vessel: "MV Visayan Star", departures: mockDepartures(8, [6,0], 13) }] },
+  { id: "r9",  ref: "RT-0009", origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "DAP", city: "Dapitan City" },   distanceNm: 38, durationHrs: [2.5, 3],   status: "Inactive", assignments: [] },
+  { id: "r10", ref: "RT-0010", origin: { code: "DAP", city: "Dapitan City" },    destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 38, durationHrs: [2.5, 3],   status: "Inactive", assignments: [] },
+  { id: "r11", ref: "RT-0011", origin: { code: "BAT", city: "Batangas City" },   destination: { code: "CAL", city: "Calapan City" },   distanceNm: 26, durationHrs: [2.5, 3],   status: "Active",   assignments: [{ vessel: "MV Maligaya", departures: mockDepartures(26, [1,2,3,4,5,6,0], 5) }] },
+  { id: "r12", ref: "RT-0012", origin: { code: "CAL", city: "Calapan City" },    destination: { code: "BAT", city: "Batangas City" },  distanceNm: 26, durationHrs: [2.5, 3],   status: "Active",   assignments: [{ vessel: "MV Maligaya", departures: mockDepartures(26, [1,2,3,4,5,6,0], 10) }] },
+  { id: "r13", ref: "RT-0013", origin: { code: "MNL", city: "Manila" },          destination: { code: "PPS", city: "Puerto Princesa" },distanceNm: 350,durationHrs: [22, 24],  status: "Active",   assignments: [{ vessel: "2GO Masinloc", departures: mockDepartures(4, [5], 18) }] },
+  { id: "r14", ref: "RT-0014", origin: { code: "PPS", city: "Puerto Princesa" }, destination: { code: "MNL", city: "Manila" },         distanceNm: 350,durationHrs: [22, 24],  status: "Active",   assignments: [{ vessel: "2GO Masinloc", departures: mockDepartures(4, [0], 18) }] },
+  { id: "r15", ref: "RT-0015", origin: { code: "MNL", city: "Manila" },          destination: { code: "ILO", city: "Iloilo City" },    distanceNm: 250,durationHrs: [18, 20],  status: "Active",   assignments: [{ vessel: "2GO Saint Pope John Paul II", departures: mockDepartures(4, [3], 20) }] },
+  { id: "r16", ref: "RT-0016", origin: { code: "ILO", city: "Iloilo City" },     destination: { code: "MNL", city: "Manila" },         distanceNm: 250,durationHrs: [18, 20],  status: "Active",   assignments: [{ vessel: "2GO Saint Pope John Paul II", departures: mockDepartures(4, [6], 20) }] },
 ];
 
 const PAGE_SIZE = 10;
@@ -110,6 +170,19 @@ export default function RoutesPage() {
   const [locationFilter, setLocationFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | RouteStatus>("all");
   const [page, setPage] = useState(1);
+  // Route whose vessel/departure schedule dialog is open (null = closed).
+  const [scheduleRoute, setScheduleRoute] = useState<Route | null>(null);
+  const [editRoute, setEditRoute] = useState<Route | null>(null);
+  const [deleteRoute, setDeleteRoute] = useState<Route | null>(null);
+  const router = useRouter();
+
+  // "Manage schedule" → jump to the Voyages page pre-filtered by this route's
+  // origin port and (optionally) a specific vessel.
+  const goToVoyages = (route: Route, vessel?: string) => {
+    const params = new URLSearchParams({ origin: route.origin.code });
+    if (vessel) params.set("vessel", vessel);
+    router.push(`/voyages?${params.toString()}`);
+  };
 
   // Fake async fetch so the skeleton + active.id loop reads consistently with vessels/page.
   useEffect(() => {
@@ -149,42 +222,6 @@ export default function RoutesPage() {
   }, [routes, query, locationFilter, statusFilter]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const isEmpty = routes !== null && routes.length === 0;
-
-  // ── First-route inline form state ──
-  // When the catalog is empty we render the Add-route form directly in place of the
-  // empty-state placeholder so operators get to work without an extra click.
-  const [draft, setDraft] = useState({
-    originCode: "",
-    originCity: "",
-    destCode: "",
-    destCity: "",
-    distanceNm: "",
-    durationLow: "",
-    durationHigh: "",
-    status: "Active" as RouteStatus,
-  });
-  const draftValid =
-    draft.originCode.trim().length >= 2 &&
-    draft.originCity.trim().length > 0 &&
-    draft.destCode.trim().length >= 2 &&
-    draft.destCity.trim().length > 0 &&
-    Number(draft.distanceNm) > 0 &&
-    Number(draft.durationLow) > 0 &&
-    Number(draft.durationHigh) >= Number(draft.durationLow);
-
-  const submitFirstRoute = () => {
-    if (!draftValid) return;
-    const newRoute: Route = {
-      id: `r-${Date.now()}`,
-      origin: { code: draft.originCode.trim().toUpperCase(), city: draft.originCity.trim() },
-      destination: { code: draft.destCode.trim().toUpperCase(), city: draft.destCity.trim() },
-      distanceNm: Number(draft.distanceNm),
-      durationHrs: [Number(draft.durationLow), Number(draft.durationHigh)],
-      status: draft.status,
-    };
-    setRoutes([newRoute]);
-  };
 
   return (
     <div>
@@ -204,211 +241,6 @@ export default function RoutesPage() {
 
       {!routes ? (
         <TableSkeleton rows={9} />
-      ) : isEmpty ? (
-        <section className="relative overflow-hidden rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
-          {/* Decorative backdrop — soft grid + brand glow, anchored top-right so the
-              content reads cleanly on the left and the illustration breathes on the right. */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0"
-            style={{
-              backgroundImage:
-                "radial-gradient(60% 50% at 100% 0%, rgba(249,115,22,0.08) 0%, transparent 60%), linear-gradient(rgba(15,23,42,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.035) 1px, transparent 1px)",
-              backgroundSize: "auto, 28px 28px, 28px 28px",
-              backgroundPosition: "0 0, 0 0, 0 0",
-              maskImage: "linear-gradient(to bottom, rgba(0,0,0,0.9), rgba(0,0,0,0.4) 70%, transparent)",
-            }}
-          />
-
-          <div className="relative grid gap-10 px-8 py-12 sm:grid-cols-[minmax(0,1fr)_320px] sm:px-12 sm:py-14">
-            {/* ── Inline form ── */}
-            <form
-              onSubmit={(e) => { e.preventDefault(); submitFirstRoute(); }}
-              className="max-w-xl"
-            >
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-brand-700 ring-1 ring-brand-100">
-                <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
-                Step 1 · Set up the fleet
-              </span>
-              <h2 className="mt-4 text-[22px] font-semibold leading-tight tracking-tight text-slate-900">
-                Chart your first route
-              </h2>
-              <p className="mt-2 text-[13px] leading-relaxed text-slate-600">
-                No routes detected for{" "}
-                <span className="font-medium text-slate-800">{active.name}</span> yet. Fill the
-                fields below to create the first one.
-              </p>
-
-              {/* Origin / Destination pair */}
-              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <FieldGroup label="Origin port">
-                  <div className="grid grid-cols-[88px_1fr] gap-2">
-                    <Input
-                      value={draft.originCode}
-                      onChange={(v) => setDraft((d) => ({ ...d, originCode: v.toUpperCase().slice(0, 4) }))}
-                      placeholder="CEB"
-                      mono
-                      ariaLabel="Origin code"
-                    />
-                    <Input
-                      value={draft.originCity}
-                      onChange={(v) => setDraft((d) => ({ ...d, originCity: v }))}
-                      placeholder="Cebu City"
-                      ariaLabel="Origin city"
-                    />
-                  </div>
-                </FieldGroup>
-                <FieldGroup label="Destination port">
-                  <div className="grid grid-cols-[88px_1fr] gap-2">
-                    <Input
-                      value={draft.destCode}
-                      onChange={(v) => setDraft((d) => ({ ...d, destCode: v.toUpperCase().slice(0, 4) }))}
-                      placeholder="DGT"
-                      mono
-                      ariaLabel="Destination code"
-                    />
-                    <Input
-                      value={draft.destCity}
-                      onChange={(v) => setDraft((d) => ({ ...d, destCity: v }))}
-                      placeholder="Dumaguete City"
-                      ariaLabel="Destination city"
-                    />
-                  </div>
-                </FieldGroup>
-              </div>
-
-              {/* Distance + duration + status */}
-              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1.4fr_1fr]">
-                <FieldGroup label="Distance" suffix="nm">
-                  <Input
-                    value={draft.distanceNm}
-                    onChange={(v) => setDraft((d) => ({ ...d, distanceNm: v.replace(/[^\d.]/g, "") }))}
-                    placeholder="42"
-                    mono
-                    ariaLabel="Distance in nautical miles"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Duration" suffix="hrs">
-                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5">
-                    <Input
-                      value={draft.durationLow}
-                      onChange={(v) => setDraft((d) => ({ ...d, durationLow: v.replace(/[^\d.]/g, "") }))}
-                      placeholder="3.5"
-                      mono
-                      ariaLabel="Minimum duration"
-                    />
-                    <span className="text-[12px] text-slate-400">to</span>
-                    <Input
-                      value={draft.durationHigh}
-                      onChange={(v) => setDraft((d) => ({ ...d, durationHigh: v.replace(/[^\d.]/g, "") }))}
-                      placeholder="4"
-                      mono
-                      ariaLabel="Maximum duration"
-                    />
-                  </div>
-                </FieldGroup>
-                <FieldGroup label="Status">
-                  <div className="grid grid-cols-2 rounded-lg border border-slate-200 bg-slate-50/40 p-0.5">
-                    {(["Active", "Inactive"] as const).map((s) => {
-                      const on = draft.status === s;
-                      return (
-                        <button
-                          key={s}
-                          type="button"
-                          onClick={() => setDraft((d) => ({ ...d, status: s }))}
-                          className={
-                            "rounded-md px-2 py-1.5 text-[12px] font-medium tracking-tight transition-colors " +
-                            (on ? "bg-white text-slate-900 shadow-[0_1px_2px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/60" : "text-slate-500 hover:text-slate-700")
-                          }
-                        >
-                          {s}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </FieldGroup>
-              </div>
-
-              {/* Actions */}
-              <div className="mt-6 flex flex-wrap items-center gap-2">
-                <button
-                  type="submit"
-                  disabled={!draftValid}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-2 text-sm font-medium text-white shadow-[0_4px_12px_-4px_rgba(249,115,22,0.55)] transition-[background-color,transform,box-shadow,opacity] duration-150 ease-out hover:bg-brand-700 hover:shadow-[0_6px_18px_-4px_rgba(249,115,22,0.65)] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:active:scale-100"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                  Create route
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDraft({ originCode: "", originCity: "", destCode: "", destCity: "", distanceNm: "", durationLow: "", durationHigh: "", status: "Active" })}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors duration-150 ease-out hover:bg-slate-50"
-                >
-                  Clear
-                </button>
-              </div>
-            </form>
-
-            {/* ── Decorative route illustration ── */}
-            <div className="hidden sm:block">
-              <div className="relative h-[200px] w-[260px] rounded-xl bg-gradient-to-br from-slate-50 to-white ring-1 ring-slate-200/70">
-                <svg viewBox="0 0 260 200" className="absolute inset-0 h-full w-full" aria-hidden>
-                  <defs>
-                    <linearGradient id="routeLine" x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0%" stopColor="#fb923c" />
-                      <stop offset="100%" stopColor="#f97316" />
-                    </linearGradient>
-                    <radialGradient id="portGlow" cx="50%" cy="50%" r="50%">
-                      <stop offset="0%" stopColor="#f97316" stopOpacity="0.25" />
-                      <stop offset="100%" stopColor="#f97316" stopOpacity="0" />
-                    </radialGradient>
-                  </defs>
-
-                  {/* dashed sea grid */}
-                  <path d="M0 60 H260 M0 100 H260 M0 140 H260" stroke="rgba(15,23,42,0.05)" strokeDasharray="2 6" />
-
-                  {/* port halos */}
-                  <circle cx="50" cy="140" r="28" fill="url(#portGlow)" />
-                  <circle cx="210" cy="60" r="28" fill="url(#portGlow)" />
-
-                  {/* curved route path */}
-                  <path
-                    d="M50 140 Q 130 40 210 60"
-                    stroke="url(#routeLine)"
-                    strokeWidth="2.25"
-                    strokeLinecap="round"
-                    fill="none"
-                    strokeDasharray="4 5"
-                  >
-                    <animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.6s" repeatCount="indefinite" />
-                  </path>
-
-                  {/* origin pin */}
-                  <circle cx="50" cy="140" r="6" fill="#fff" stroke="#f97316" strokeWidth="2.25" />
-                  <circle cx="50" cy="140" r="2" fill="#f97316" />
-
-                  {/* destination pin */}
-                  <circle cx="210" cy="60" r="6" fill="#fff" stroke="#f97316" strokeWidth="2.25" />
-                  <circle cx="210" cy="60" r="2" fill="#f97316" />
-
-                  {/* port labels */}
-                  <g fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontSize="10" fill="#94a3b8" letterSpacing="1">
-                    <text x="50" y="162" textAnchor="middle">ORIGIN</text>
-                    <text x="210" y="42" textAnchor="middle">DESTINATION</text>
-                  </g>
-
-                  {/* tiny ship glyph travelling along — visually idle, just adornment */}
-                  <g transform="translate(125 80)" fill="#f97316">
-                    <path d="M-6 2 L6 2 L4 6 L-4 6 Z" />
-                    <rect x="-1" y="-3" width="2" height="5" />
-                  </g>
-                </svg>
-              </div>
-            </div>
-          </div>
-        </section>
       ) : (
         <section className="rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
           {/* Toolbar */}
@@ -465,13 +297,16 @@ export default function RoutesPage() {
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
                   <th className="whitespace-nowrap px-5 py-2.5 text-center font-medium">#</th>
+                  <th className="px-5 py-2.5 font-medium">Route ref</th>
+                  <th className="px-5 py-2.5 font-medium">Status</th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Origin <SortIcon /></button>
                   </th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Destination <SortIcon /></button>
                   </th>
-                  <th className="px-5 py-2.5 font-medium">Status</th>
+                  <th className="px-5 py-2.5 font-medium">Vessel</th>
+                  <th className="px-5 py-2.5 font-medium">Departures</th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Distance <SortIcon /></button>
                   </th>
@@ -484,7 +319,7 @@ export default function RoutesPage() {
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={10} className="px-5 py-12 text-center text-sm text-slate-400">
                       No routes match your filters.
                     </td>
                   </tr>
@@ -503,6 +338,14 @@ export default function RoutesPage() {
                       <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
                       {rowNo}
                     </td>
+                    <td className="px-5 py-3.5 align-middle">
+                      <RouteRef value={r.ref} />
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[r.status]}`}>
+                        {r.status}
+                      </span>
+                    </td>
                     <td className="px-5 py-3.5"><PortCell {...r.origin} /></td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-2">
@@ -512,10 +355,55 @@ export default function RoutesPage() {
                         <PortCell {...r.destination} />
                       </div>
                     </td>
-                    <td className="px-5 py-3.5">
-                      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[r.status]}`}>
-                        {r.status}
-                      </span>
+                    <td className="px-5 py-3.5 align-middle">
+                      {r.assignments.length === 0 ? (
+                        <span className="text-[12px] text-slate-400">Unassigned</span>
+                      ) : r.assignments.length === 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => setScheduleRoute(r)}
+                          className="text-left text-[13px] font-medium tracking-tight text-slate-900 underline-offset-2 hover:underline"
+                        >
+                          {r.assignments[0].vessel}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setScheduleRoute(r)}
+                          className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2 py-0.5 text-[12px] font-medium text-slate-700 transition-colors hover:bg-slate-200"
+                        >
+                          {r.assignments.length} vessels
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-slate-400">
+                            <path d="M9 6l6 6-6 6" />
+                          </svg>
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5 align-middle">
+                      {(() => {
+                        const deps = allDepartures(r);
+                        if (deps.length === 0) return <span className="text-[12px] text-slate-400">No upcoming</span>;
+                        const next = deps[0];
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setScheduleRoute(r)}
+                            className="flex items-baseline gap-1.5 text-left"
+                          >
+                            <span className="text-[12.5px] font-medium tracking-tight text-slate-900 underline-offset-2 hover:underline">
+                              {next.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                            </span>
+                            <span className="font-mono text-[11px] tabular-nums text-slate-500">
+                              {((next.getHours() + 11) % 12) + 1}:{String(next.getMinutes()).padStart(2, "0")} {next.getHours() < 12 ? "AM" : "PM"}
+                            </span>
+                            {deps.length > 1 && (
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-500">
+                                +{deps.length - 1}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })()}
                     </td>
                     <td className="px-5 py-3.5 align-middle tabular-nums">
                       <span className="font-semibold text-slate-900">{r.distanceNm}</span>
@@ -534,10 +422,7 @@ export default function RoutesPage() {
                         items={[
                           {
                             label: "Edit route",
-                            onClick: () => {
-                              // TODO: wire to edit modal once the form lands
-                              console.log("edit route", r.id);
-                            },
+                            onClick: () => setEditRoute(r),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                 <path d="M12 20h9" />
@@ -548,10 +433,7 @@ export default function RoutesPage() {
                           {
                             label: "Delete route",
                             danger: true,
-                            onClick: () => {
-                              // TODO: wire to delete confirm dialog once the dialog lands
-                              setRoutes((prev) => prev ? prev.filter((x) => x.id !== r.id) : prev);
-                            },
+                            onClick: () => setDeleteRoute(r),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                 <path d="M3 6h18" />
@@ -595,11 +477,13 @@ export default function RoutesPage() {
           const hi = Number(payload.durationHighHrs) || lo;
           const newRoute: Route = {
             id: `r-${Date.now()}`,
+            ref: `RT-${String(Date.now()).slice(-4)}`,
             origin,
             destination,
             distanceNm: Number(payload.distanceNm) || 0,
             durationHrs: [lo, hi],
             status: "Active",
+            assignments: [],
           };
           setRoutes((prev) => prev ? [newRoute, ...prev] : [newRoute]);
           // If the operator opted in to a return leg, mirror the route.
@@ -614,6 +498,399 @@ export default function RoutesPage() {
           }
         }}
       />
+
+      {/* ── Edit-route dialog ── reuses CreateRouteModal in edit mode. */}
+      <CreateRouteModal
+        open={!!editRoute}
+        onClose={() => setEditRoute(null)}
+        editValue={editRoute ? routeToValue(editRoute) : null}
+        onSave={(payload) => {
+          if (!editRoute) return;
+          const origin = PORTS.find((p) => p.code === payload.originCode);
+          const destination = PORTS.find((p) => p.code === payload.destinationCode);
+          if (!origin || !destination) return;
+          const lo = Number(payload.durationLowHrs) || 0;
+          const hi = Number(payload.durationHighHrs) || lo;
+          setRoutes((prev) =>
+            prev
+              ? prev.map((r) =>
+                  r.id === editRoute.id
+                    ? { ...r, origin, destination, distanceNm: Number(payload.distanceNm) || 0, durationHrs: [lo, hi], status: payload.status ?? r.status }
+                    : r
+                )
+              : prev
+          );
+        }}
+        editExtra={editRoute && <AssignedVesselsSummary route={editRoute} onManage={(vessel) => goToVoyages(editRoute, vessel)} />}
+      />
+
+      <DeleteRouteDialog
+        route={deleteRoute}
+        onClose={() => setDeleteRoute(null)}
+        onConfirm={(r) => setRoutes((prev) => (prev ? prev.filter((x) => x.id !== r.id) : prev))}
+      />
+
+      <RouteScheduleDialog route={scheduleRoute} onClose={() => setScheduleRoute(null)} />
     </div>
   );
+}
+
+// ─────────── RouteRef ───────────
+// Route reference code with a copy-to-clipboard affordance. The icon stays
+// quiet until row hover, then flips to a check for a beat on copy.
+function RouteRef({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = (e: React.MouseEvent) => {
+    e.stopPropagation(); // don't trigger the row's edit click
+    navigator.clipboard?.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    }).catch(() => {});
+  };
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-900">{value}</span>
+      {copied ? (
+        <span aria-label="Copied" className="grid h-5 w-5 place-items-center rounded text-emerald-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+            <path d="M5 12l5 5 9-11" />
+          </svg>
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={copy}
+          aria-label={`Copy ${value}`}
+          className="grid h-5 w-5 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-90 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+          </svg>
+        </button>
+      )}
+    </span>
+  );
+}
+
+// ─────────── DeleteRouteDialog ───────────
+// Lightweight confirm — the row menu is now the only delete path, so it must
+// guard against accidental removal. Mirrors DeleteVesselDialog's visuals
+// without the type-to-confirm friction (a route is lower-stakes than a vessel).
+function DeleteRouteDialog({
+  route,
+  onClose,
+  onConfirm,
+}: {
+  route: Route | null;
+  onClose: () => void;
+  onConfirm: (r: Route) => void;
+}) {
+  const assignedCount = route?.assignments.length ?? 0;
+  return (
+    <Modal open={!!route} onClose={onClose} maxWidth="max-w-md">
+      <div className="px-6 pb-5 pt-6">
+        <div className="flex items-start gap-4">
+          <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-rose-50 text-rose-600 ring-1 ring-rose-200/70">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+              <path d="M3 6h18" />
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              <path d="M10 11v6M14 11v6" />
+            </svg>
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Delete this route?</h2>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
+              {route ? (
+                <>
+                  <span className="font-medium text-slate-900">
+                    {route.origin.city} ({route.origin.code}) → {route.destination.city} ({route.destination.code})
+                  </span>{" "}
+                  will be removed from your catalog.
+                  {assignedCount > 0 && (
+                    <> Its {assignedCount} vessel assignment{assignedCount === 1 ? "" : "s"} and their departures will be unlinked.</>
+                  )}{" "}
+                  This cannot be undone.
+                </>
+              ) : "—"}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-3.5">
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-slate-300"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => { if (route) { onConfirm(route); onClose(); } }}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-rose-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-rose-400"
+        >
+          Delete route
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ─────────── AssignedVesselsSummary ───────────
+// Read-only roster of the vessels sailing a route, shown in the edit dialog.
+// Departures are managed in the RouteScheduleDialog — the "Manage" link hands
+// off there rather than duplicating that editor here.
+function AssignedVesselsSummary({ route, onManage }: { route: Route; onManage: (vessel?: string) => void }) {
+  const { assignments } = route;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white">
+      <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2.5">
+        <div className="flex items-baseline gap-2">
+          <h4 className="text-[13px] font-semibold tracking-tight text-slate-900">Assigned vessels</h4>
+          <span className="font-mono text-[11px] tabular-nums text-slate-400">{assignments.length}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => onManage()}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] font-medium text-brand-700 transition-colors duration-150 hover:bg-brand-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300"
+        >
+          Manage schedule
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        </button>
+      </div>
+      {assignments.length === 0 ? (
+        <div className="px-4 pb-3.5 text-[12px] text-slate-400">
+          No vessels assigned yet. Use Manage schedule to add one.
+        </div>
+      ) : (
+        <ul className="divide-y divide-slate-100 px-4 pb-2">
+          {assignments.map((a) => {
+            const cadence = derivewWeekdayCadence(a.departures);
+            return (
+              <li key={a.vessel}>
+                <button
+                  type="button"
+                  onClick={() => onManage(a.vessel)}
+                  className="group flex w-full items-center gap-2.5 rounded-lg py-2.5 text-left transition-colors duration-150 hover:bg-slate-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300"
+                >
+                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                      <path d="M3 14h18l-2 5a2 2 0 0 1-1.9 1.3H6.9A2 2 0 0 1 5 19l-2-5Z" />
+                      <path d="M5 14V8a1 1 0 0 1 1-1h7l5 4" />
+                      <path d="M9 7V4h2" />
+                    </svg>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium tracking-tight text-slate-900">{a.vessel}</span>
+                    {cadence && <span className="block truncate text-[11px] text-slate-400">{cadence}</span>}
+                  </span>
+                  <span className="shrink-0 text-[11.5px] tabular-nums text-slate-500">
+                    {a.departures.length} departure{a.departures.length === 1 ? "" : "s"}
+                  </span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0 text-slate-300 transition-colors group-hover:text-brand-500">
+                    <path d="M9 6l6 6-6 6" />
+                  </svg>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ─────────── RouteScheduleDialog ───────────
+// Shows every vessel assigned to a route + that vessel's dated departures.
+// Filterable by vessel. Fixed body height so the dialog never resizes when
+// the filter changes (avoids the layout-shift / masking issue).
+function RouteScheduleDialog({
+  route,
+  onClose,
+}: {
+  route: Route | null;
+  onClose: () => void;
+}) {
+  const [vesselFilter, setVesselFilter] = useState<string>("all");
+
+  // Reset the filter whenever a different route opens.
+  useEffect(() => { setVesselFilter("all"); }, [route?.id]);
+
+  const vesselOptions = useMemo(() => {
+    if (!route) return [{ value: "all", label: "All vessels" }];
+    return [
+      { value: "all", label: "All vessels" },
+      ...route.assignments.map((a) => ({ value: a.vessel, label: a.vessel })),
+    ];
+  }, [route]);
+
+  const visible = useMemo(() => {
+    if (!route) return [];
+    return route.assignments.filter((a) => vesselFilter === "all" || a.vessel === vesselFilter);
+  }, [route, vesselFilter]);
+
+  // The earliest upcoming departure across all visible assignments — used to
+  // tag the single "Next" sailing so the operator's eye lands on it.
+  const nextDeparture = useMemo(() => {
+    const all = visible.flatMap((a) => a.departures).filter((d) => d.getTime() >= Date.now());
+    return all.length ? all.reduce((min, d) => (d < min ? d : min)) : null;
+  }, [visible]);
+
+  const totalDepartures = useMemo(
+    () => visible.reduce((s, a) => s + a.departures.length, 0),
+    [visible],
+  );
+
+  if (!route) return null;
+
+  const fmtTime = (d: Date) =>
+    `${((d.getHours() + 11) % 12) + 1}:${String(d.getMinutes()).padStart(2, "0")} ${d.getHours() < 12 ? "AM" : "PM"}`;
+
+  return (
+    <Modal open={!!route} onClose={onClose} maxWidth="max-w-2xl">
+      {/* Fixed height — body scrolls internally so the dialog box stays the
+          same size regardless of the vessel filter. */}
+      <div className="flex h-[760px] max-h-[90vh] flex-col">
+        {/* Header — boarding-pass style route headline. */}
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+          <div className="min-w-0">
+            <span className="font-mono text-[11px] font-semibold tabular-nums tracking-[0.08em] text-slate-400">{route.ref}</span>
+            <div className="mt-1 flex items-center gap-2">
+              <span className="font-mono text-[17px] font-bold uppercase tabular-nums tracking-[0.04em] text-slate-900">{route.origin.code}</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-300">
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
+              <span className="font-mono text-[17px] font-bold uppercase tabular-nums tracking-[0.04em] text-slate-900">{route.destination.code}</span>
+            </div>
+            <p className="mt-0.5 truncate text-[12px] text-slate-500">{route.origin.city} → {route.destination.city}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Filter + summary row */}
+        <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-3">
+          <Select
+            size="sm"
+            value={vesselFilter}
+            onChange={setVesselFilter}
+            ariaLabel="Filter by vessel"
+            className="flex-1"
+            options={vesselOptions}
+          />
+          <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-slate-500">
+            {totalDepartures} departure{totalDepartures === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        {/* Vessel → departures list */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {visible.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-[12.5px] text-slate-400">
+              No vessels assigned to this route.
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {visible.map((a) => {
+                const cadence = derivewWeekdayCadence(a.departures);
+                return (
+                  <div key={a.vessel}>
+                    {/* Vessel group header — icon tile + name + cadence chip,
+                        with the departure count tucked to the right. */}
+                    <div className="flex items-center gap-2.5">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                          <path d="M3 18c1.5 0 2-1 4-1s2.5 1 4 1 2-1 4-1 2.5 1 4 1" />
+                          <path d="M5 18V9l7-4 7 4v9" />
+                          <path d="M9 13h6" />
+                        </svg>
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{a.vessel}</h3>
+                          {cadence && (
+                            <span className="hidden shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] tracking-wide text-slate-500 sm:inline">
+                              {cadence}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          {a.departures.length} departure{a.departures.length === 1 ? "" : "s"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {a.departures.length === 0 ? (
+                      <p className="mt-2 pl-[42px] text-[12px] text-slate-400">No upcoming departures.</p>
+                    ) : (
+                      <ul className="mt-2.5 grid grid-cols-2 gap-1.5 pl-[42px]">
+                        {a.departures.map((d, i) => {
+                          const isNext = nextDeparture != null && d.getTime() === nextDeparture.getTime();
+                          const isPast = d.getTime() < Date.now();
+                          return (
+                            <li
+                              key={i}
+                              className={
+                                "flex items-baseline justify-between rounded-md px-2.5 py-1.5 text-[12px] " +
+                                (isNext
+                                  ? "bg-brand-50"
+                                  : isPast
+                                    ? "bg-transparent"
+                                    : "bg-slate-50")
+                              }
+                            >
+                              <span className="flex items-center gap-1.5">
+                                <span className={"font-medium tracking-tight " + (isPast ? "text-slate-400" : "text-slate-900")}>
+                                  {d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                                </span>
+                                {isNext && (
+                                  <span className="rounded bg-brand-500 px-1 py-0.5 text-[8.5px] font-bold uppercase tracking-[0.08em] text-white">
+                                    Next
+                                  </span>
+                                )}
+                              </span>
+                              <span className={"font-mono tabular-nums " + (isPast ? "text-slate-300" : "text-slate-500")}>
+                                {fmtTime(d)}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// Derive a compact weekday-cadence label ("Mon · Wed · Fri") from a list of
+// departures — gives the operator the recurring pattern at a glance. Returns
+// null when there's nothing meaningful to show.
+function derivewWeekdayCadence(departures: Date[]): string | null {
+  if (departures.length === 0) return null;
+  const short = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const present = new Set(departures.map((d) => d.getDay()));
+  // Order Mon→Sun for readability.
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  const days = order.filter((dow) => present.has(dow)).map((dow) => short[dow]);
+  if (days.length === 0 || days.length === 7) return days.length === 7 ? "Daily" : null;
+  return days.join(" · ");
 }
