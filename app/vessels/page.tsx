@@ -295,7 +295,6 @@ export default function VesselsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-y border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                  <th className="whitespace-nowrap px-5 py-2.5 text-center font-medium">#</th>
                   <th className="px-5 py-2.5 font-medium">IMO</th>
                   <th className="px-5 py-2.5 font-medium">Status</th>
                   <th className="px-5 py-2.5 font-medium">
@@ -315,14 +314,13 @@ export default function VesselsPage() {
               <tbody className="divide-y divide-slate-100">
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={8} className="px-5 py-12 text-center text-sm text-slate-400">
                       No vessels match your filters.
                     </td>
                   </tr>
                 )}
                 {filtered.map((v, i) => {
                   const tone = statusTone[v.status];
-                  const rowNo = i + 1;
                   return (
                     <motion.tr
                       key={v.id}
@@ -337,11 +335,8 @@ export default function VesselsPage() {
                       onClick={() => router.push(`/vessels/${v.id}`)}
                       className="group relative cursor-pointer transition-colors duration-150 ease-out hover:bg-slate-50/60"
                     >
-                      <td className="relative whitespace-nowrap px-5 py-3.5 align-middle text-center font-mono text-[12px] tabular-nums text-slate-400">
+                      <td className="relative px-5 py-3.5 align-middle" onClick={(e) => e.stopPropagation()}>
                         <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
-                        {rowNo}
-                      </td>
-                      <td className="px-5 py-3.5 align-middle" onClick={(e) => e.stopPropagation()}>
                         <div className="inline-flex items-center gap-1.5">
                           <span className="font-mono text-[13px] font-semibold tabular-nums text-slate-900">{v.imo}</span>
                           {copiedImo === v.imo ? (

@@ -176,7 +176,6 @@ export default function UsersPage() {
             <table className="w-full min-w-[840px] text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                  <th className="whitespace-nowrap px-5 py-2.5 text-center font-medium">#</th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">User <SortIcon /></button>
                   </th>
@@ -190,13 +189,12 @@ export default function UsersPage() {
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={6} className="px-5 py-12 text-center text-sm text-slate-400">
                       No users match your filters.
                     </td>
                   </tr>
                 )}
                 {pageRows.map((u, i) => {
-                  const rowNo = (page - 1) * PAGE_SIZE + i + 1;
                   const line = lines.find((l) => l.id === u.lineId);
                   const av = avatarFor(u.name);
                   return (
@@ -207,13 +205,9 @@ export default function UsersPage() {
                       transition={{ duration: 0.18, delay: i * 0.02, ease: "easeOut" }}
                       className="group transition-colors duration-150 hover:bg-slate-50/60"
                     >
-                      <td className="relative whitespace-nowrap px-5 py-3.5 align-middle text-center font-mono text-[12px] tabular-nums text-slate-400">
-                        <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
-                        {rowNo}
-                      </td>
-
                       {/* User — avatar + name + email */}
-                      <td className="px-5 py-3.5 align-middle">
+                      <td className="relative px-5 py-3.5 align-middle">
+                        <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
                         <div className="flex items-center gap-3">
                           <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-md text-[11px] font-bold ${av.cls}`}>
                             {av.initials}

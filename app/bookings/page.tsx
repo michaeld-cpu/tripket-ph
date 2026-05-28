@@ -344,7 +344,6 @@ export default function BookingsPage() {
             <table className="w-full min-w-[1280px] text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                  <th className="whitespace-nowrap px-6 py-3 text-center font-medium">#</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Booking ref</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Status</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">
@@ -371,13 +370,12 @@ export default function BookingsPage() {
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={12} className="px-6 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={11} className="px-6 py-12 text-center text-sm text-slate-400">
                       No bookings match your filters.
                     </td>
                   </tr>
                 )}
                 {pageRows.map((b, i) => {
-                  const rowNo = (page - 1) * PAGE_SIZE + i + 1;
                   return (
                   <motion.tr
                     key={b.ref}
@@ -387,11 +385,8 @@ export default function BookingsPage() {
                     onClick={() => setOpenRef(b.ref)}
                     className="group cursor-pointer transition-colors duration-150 hover:bg-slate-50/60"
                   >
-                    <td className="relative whitespace-nowrap px-6 py-4 align-middle text-center font-mono text-[12px] tabular-nums text-slate-400">
+                    <td className="relative whitespace-nowrap px-6 py-4 align-middle">
                       <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
-                      {rowNo}
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 align-middle">
                       <div className="inline-flex items-center gap-1.5">
                         <span className="font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-900">{b.ref}</span>
                         {copiedRef === b.ref ? (

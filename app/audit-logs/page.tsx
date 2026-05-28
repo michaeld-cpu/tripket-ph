@@ -6,8 +6,6 @@ import Select from "@/components/Select";
 import Pagination from "@/components/Pagination";
 import DateRangePicker, { type DateRange } from "@/components/DateRangePicker";
 import { TableSkeleton } from "@/components/Skeleton";
-import { LogoTile } from "@/components/ShippingLineSwitcher";
-import { lines } from "@/lib/shipping-lines";
 import {
   buildAuditLog,
   actionTone,
@@ -39,7 +37,6 @@ function avatarFor(name: string) {
 export default function AuditLogsPage() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
   const [query, setQuery] = useState("");
-  const [lineFilter, setLineFilter] = useState<string>("all");
   const [areaFilter, setAreaFilter] = useState<"all" | AuditArea>("all");
   const [page, setPage] = useState(1);
 
@@ -51,7 +48,7 @@ export default function AuditLogsPage() {
     return () => clearTimeout(t);
   }, []);
 
-  useEffect(() => { setPage(1); }, [query, lineFilter, areaFilter, dateRange]);
+  useEffect(() => { setPage(1); }, [query, areaFilter, dateRange]);
 
   const filtered = useMemo(() => {
     if (!entries) return [];
@@ -61,19 +58,13 @@ export default function AuditLogsPage() {
     return entries.filter((e) => {
       const t = e.at.getTime();
       if (t < lo || t > hi) return false;
-      if (lineFilter !== "all" && e.lineId !== lineFilter) return false;
       if (areaFilter !== "all" && e.area !== areaFilter) return false;
       if (q && !`${e.actor} ${e.action} ${e.target} ${e.area} ${e.detail ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [entries, query, lineFilter, areaFilter, dateRange]);
+  }, [entries, query, areaFilter, dateRange]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  const lineOptions = useMemo(
-    () => [{ value: "all", label: "All shipping lines" }, ...lines.map((l) => ({ value: l.id, label: l.name }))],
-    []
-  );
 
   return (
     <div>
@@ -107,7 +98,6 @@ export default function AuditLogsPage() {
                 />
               </div>
               <DateRangePicker value={dateRange} onChange={setDateRange} />
-              <Select size="sm" value={lineFilter} onChange={setLineFilter} ariaLabel="Filter by shipping line" className="w-44" options={lineOptions} />
               <Select
                 size="sm"
                 value={areaFilter}
@@ -129,19 +119,17 @@ export default function AuditLogsPage() {
                   <th className="px-5 py-2.5 font-medium">Action</th>
                   <th className="px-5 py-2.5 font-medium">Target</th>
                   <th className="px-5 py-2.5 font-medium">Area</th>
-                  <th className="px-5 py-2.5 font-medium">Shipping line</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={5} className="px-5 py-12 text-center text-sm text-slate-400">
                       No audit events in this range.
                     </td>
                   </tr>
                 )}
                 {pageRows.map((e, i) => {
-                  const line = lines.find((l) => l.id === e.lineId);
                   const av = avatarFor(e.actor);
                   return (
                     <motion.tr
@@ -184,14 +172,6 @@ export default function AuditLogsPage() {
                         <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10.5px] font-medium tracking-tight ${areaTone[e.area]}`}>
                           {e.area}
                         </span>
-                      </td>
-
-                      {/* Shipping line */}
-                      <td className="px-5 py-3.5 align-middle">
-                        <div className="flex items-center gap-2">
-                          {line && <LogoTile line={line} size={18} />}
-                          <span className="truncate text-[12px] text-slate-600">{line?.name ?? e.lineId}</span>
-                        </div>
                       </td>
                     </motion.tr>
                   );
