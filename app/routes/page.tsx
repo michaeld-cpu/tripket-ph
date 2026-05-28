@@ -296,7 +296,6 @@ export default function RoutesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                  <th className="whitespace-nowrap px-5 py-2.5 text-center font-medium">#</th>
                   <th className="px-5 py-2.5 font-medium">Route ref</th>
                   <th className="px-5 py-2.5 font-medium">Status</th>
                   <th className="px-5 py-2.5 font-medium">
@@ -319,13 +318,12 @@ export default function RoutesPage() {
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={9} className="px-5 py-12 text-center text-sm text-slate-400">
                       No routes match your filters.
                     </td>
                   </tr>
                 )}
                 {pageRows.map((r, i) => {
-                  const rowNo = (page - 1) * PAGE_SIZE + i + 1;
                   return (
                   <motion.tr
                     key={r.id}
@@ -334,11 +332,8 @@ export default function RoutesPage() {
                     transition={{ duration: 0.18, delay: i * 0.02, ease: "easeOut" }}
                     className="group transition-colors duration-150 hover:bg-slate-50/60"
                   >
-                    <td className="relative whitespace-nowrap px-6 py-4 align-middle text-center font-mono text-[12px] tabular-nums text-slate-400">
+                    <td className="relative px-5 py-3.5 align-middle">
                       <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
-                      {rowNo}
-                    </td>
-                    <td className="px-5 py-3.5 align-middle">
                       <RouteRef value={r.ref} />
                     </td>
                     <td className="px-5 py-3.5">

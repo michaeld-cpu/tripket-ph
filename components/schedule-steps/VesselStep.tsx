@@ -450,12 +450,12 @@ function ModeToggle({
   onChange: (m: VesselValue["mode"]) => void;
   fleetCount: number;
 }) {
+  // One unified container that reads as tabs, not two side-by-side cards.
+  // The selected tab gets a brand-orange underline + dark label; the other
+  // sits quiet. No inner card/shadow on the active item so it doesn't look
+  // like a card-in-card.
   return (
-    <div
-      role="tablist"
-      aria-label="Vessel source"
-      className="flex w-full items-center gap-1 rounded-xl border border-slate-200 bg-slate-50/60 p-1"
-    >
+    <div role="tablist" aria-label="Vessel source" className="flex items-center border-b border-slate-200">
       {[
         { key: "fleet" as const, label: "From fleet",   caption: `${fleetCount} ready` },
         { key: "new" as const,   label: "Register new", caption: "Add to fleet" },
@@ -469,21 +469,20 @@ function ModeToggle({
             aria-selected={on}
             onClick={() => onChange(opt.key)}
             className={
-              "group flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-[12.5px] font-medium tracking-tight transition-[background-color,color,box-shadow] duration-150 " +
-              (on
-                ? "bg-white text-slate-900 shadow-[0_1px_2px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/70"
-                : "text-slate-500 hover:text-slate-700")
+              "relative flex items-center gap-1.5 whitespace-nowrap px-4 py-2.5 text-[13px] font-medium tracking-tight transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300 " +
+              (on ? "text-brand-600" : "text-slate-500 hover:text-slate-800")
             }
           >
             <span>{opt.label}</span>
             <span
               className={
-                "inline-flex items-center rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider tabular-nums " +
-                (on ? "bg-brand-50 text-brand-700" : "bg-slate-200/70 text-slate-500 group-hover:bg-slate-200")
+                "inline-flex items-center rounded-md px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider tabular-nums " +
+                (on ? "bg-brand-50 text-brand-700" : "bg-slate-100 text-slate-500")
               }
             >
               {opt.caption}
             </span>
+            {on && <span aria-hidden className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-brand-500" />}
           </button>
         );
       })}
