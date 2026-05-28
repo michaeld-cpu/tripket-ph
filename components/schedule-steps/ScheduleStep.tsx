@@ -1,71 +1,91 @@
 "use client";
-import { useEffect, useMemo } from "react";
-import DatePicker from "@/components/DatePicker";
-import TimePicker from "@/components/TimePicker";
+import { useMemo, useState } from "react";
 
 /**
  * Schedule step — first stop of the Create-Schedule wizard.
  *
- * One question, framed as a single decision: *When and how often does this trip run?*
+ * Per backend spec: schedules are always recurring weekly. The server
+ * generates voyages for the next 30 days based on whichever weekdays +
+ * times the admin selects here. No one-time mode, no start/end date
+ * pickers — just weekday + time slots.
  *
  * Layout:
  *   ┌─────────────────────────────────────────────────────────────┐
- *   │ Recurrence  ⟨ Once · Weekly ⟩                               │
- *   ├─────────────────────────────────────────────────────────────┤
- *   │ Departure date     [05/20/2026]      Time   [04:00]         │
- *   │                                                              │
- *   │ ── only when Weekly ─────────────────────────────────────── │
- *   │ Runs on            [M] [T] [W] [Th] [F] [S] [Su]            │
- *   │ Ends on            [06/18/2026]   Up to 30 days from start   │
- *   ├─────────────────────────────────────────────────────────────┤
- *   │ ⓘ Runs M · W · F starting May 20, until Jun 18 — 14 trips   │
+ *   │ Schedule label (Optional)   [Schedule A]                    │
+ *   │ Weekdays + times                                            │
+ *   │   Monday    ▾  [6 AM] [7 AM] [9 AM] [4 PM]                  │
+ *   │   Tuesday   ▸  off                                          │
+ *   │   …                                                         │
  *   └─────────────────────────────────────────────────────────────┘
  */
 
-export type Recurrence = "once" | "weekly";
 export type DayKey = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 
+// Selected times per weekday. An empty array means the schedule doesn't
+// run that day. Times are stored as 24h hours (4–23); the UI surfaces them
+// as 12h labels ("4 AM", "11 PM").
 export type ScheduleValue = {
-  recurrence: Recurrence;
-  departureDate: string;  // YYYY-MM-DD
-  departureTime: string;  // HH:MM (24h)
-  runsOn: DayKey[];       // only meaningful when recurrence === "weekly"
-  endDate: string;        // YYYY-MM-DD — only meaningful when recurrence === "weekly"
+  dayTimes: Partial<Record<DayKey, number[]>>;
+  /** Optional operator label shown on each generated voyage card. */
+  label?: string;
 };
 
 const DAYS: { key: DayKey; short: string; long: string }[] = [
-  { key: "Mon", short: "M",  long: "Monday" },
-  { key: "Tue", short: "T",  long: "Tuesday" },
-  { key: "Wed", short: "W",  long: "Wednesday" },
-  { key: "Thu", short: "Th", long: "Thursday" },
-  { key: "Fri", short: "F",  long: "Friday" },
-  { key: "Sat", short: "S",  long: "Saturday" },
-  { key: "Sun", short: "Su", long: "Sunday" },
+  { key: "Mon", short: "Mon", long: "Monday" },
+  { key: "Tue", short: "Tue", long: "Tuesday" },
+  { key: "Wed", short: "Wed", long: "Wednesday" },
+  { key: "Thu", short: "Thu", long: "Thursday" },
+  { key: "Fri", short: "Fri", long: "Friday" },
+  { key: "Sat", short: "Sat", long: "Saturday" },
+  { key: "Sun", short: "Sun", long: "Sunday" },
 ];
 
-const MAX_RANGE_DAYS = 30;
+// Operating hours window — 4 AM through 11 PM inclusive.
+const MIN_HOUR = 4;
+const MAX_HOUR = 23;
+const HOUR_RANGE = Array.from({ length: MAX_HOUR - MIN_HOUR + 1 }, (_, i) => MIN_HOUR + i);
 
 // ─────────── Quick presets ───────────
-// One-tap weekday templates for the most common ferry-schedule patterns.
-// "Weekdays" = Mon–Fri, "Weekends" = Sat+Sun, plus a couple of staffing-driven
-// patterns (M·W·F and T·Th) that operators frequently configure.
+// One-tap weekday templates. Each preset just toggles which weekdays are
+// active; per-day times persist so the admin can pick "Weekdays" then tune
+// times per row.
 const DAY_PRESETS: { id: string; label: string; days: DayKey[] }[] = [
-  { id: "weekdays", label: "Weekdays", days: ["Mon", "Tue", "Wed", "Thu", "Fri"] },
-  { id: "weekends", label: "Weekends", days: ["Sat", "Sun"] },
+  { id: "weekdays", label: "Weekdays",  days: ["Mon", "Tue", "Wed", "Thu", "Fri"] },
+  { id: "weekends", label: "Weekends",  days: ["Sat", "Sun"] },
   { id: "mwf",      label: "M · W · F", days: ["Mon", "Wed", "Fri"] },
   { id: "tth",      label: "T · Th",    days: ["Tue", "Thu"] },
-  { id: "daily",    label: "Daily",    days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] },
+  { id: "daily",    label: "Daily",     days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] },
 ];
 
-// Equality check for two day-key sets — order-insensitive, treats duplicates as equal.
+const inputCls =
+  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] tabular-nums text-slate-900 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-100";
+
+function fmtHourLabel(h: number): string {
+  const period = h < 12 ? "AM" : "PM";
+  const display = ((h + 11) % 12) + 1;
+  return `${display} ${period}`;
+}
+
+// Days that have at least one time slot selected.
+function activeDays(v: ScheduleValue): DayKey[] {
+  return DAYS.map((d) => d.key).filter((k) => (v.dayTimes[k]?.length ?? 0) > 0);
+}
+
 function sameDaySet(a: DayKey[], b: DayKey[]): boolean {
   if (a.length !== b.length) return false;
   const setA = new Set(a);
   return b.every((d) => setA.has(d));
 }
 
-const inputCls =
-  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] tabular-nums text-slate-900 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-100";
+// True when every active day shares an identical set of times (or there are
+// none yet) — i.e. the schedule can be represented by the shared-times mode
+// without losing information.
+function isUniform(dayTimes: Partial<Record<DayKey, number[]>>): boolean {
+  const sets = (Object.values(dayTimes) as number[][]).filter((a) => a && a.length > 0);
+  if (sets.length <= 1) return true;
+  const ref = [...sets[0]].sort((a, b) => a - b).join(",");
+  return sets.every((s) => [...s].sort((a, b) => a - b).join(",") === ref);
+}
 
 export default function ScheduleStep({
   value,
@@ -74,166 +94,212 @@ export default function ScheduleStep({
   value: ScheduleValue;
   onChange: (next: ScheduleValue) => void;
 }) {
-  // Derived: clamp the end-date so it can never exceed 30 days from departure.
-  // We don't auto-rewrite the user's input — just expose the max for the input's
-  // `max` attr and surface a hint inline.
-  const maxEndDate = useMemo(() => {
-    const d = parseISO(value.departureDate);
-    if (!d) return "";
-    const m = new Date(d); m.setDate(m.getDate() + MAX_RANGE_DAYS);
-    return toISO(m);
-  }, [value.departureDate]);
+  const active = activeDays(value);
 
-  // When the user picks a new departure date or recurrence, normalize the end date
-  // so it stays inside the 30-day window. We only nudge if the existing end is
-  // outside the window — never overwrite a still-valid choice.
-  useEffect(() => {
-    if (value.recurrence !== "weekly") return;
-    const dep = parseISO(value.departureDate);
-    const end = parseISO(value.endDate);
-    if (!dep) return;
-    if (!end || end < dep) {
-      // Default to dep + 7 (a reasonable initial week-long window).
-      const next = new Date(dep); next.setDate(next.getDate() + 7);
-      onChange({ ...value, endDate: toISO(next) });
-      return;
-    }
-    const cap = new Date(dep); cap.setDate(cap.getDate() + MAX_RANGE_DAYS);
-    if (end > cap) onChange({ ...value, endDate: toISO(cap) });
-  }, [value.departureDate, value.recurrence]);  // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Mode: shared times (one grid for every selected day) vs custom
+  // per-day. Default is shared — that's the overwhelmingly common ferry
+  // schedule ("same departures every operating day"), and it collapses the
+  // repetitive per-day tapping. We seed the initial mode from the data: if
+  // the existing schedule already has differing times per day, open in
+  // custom so we don't silently flatten it.
+  const [mode, setMode] = useState<"shared" | "custom">(() =>
+    isUniform(value.dayTimes) ? "shared" : "custom"
+  );
 
-  const toggleDay = (key: DayKey) => {
-    const has = value.runsOn.includes(key);
-    onChange({
-      ...value,
-      runsOn: has ? value.runsOn.filter((d) => d !== key) : [...value.runsOn, key],
-    });
+  // The shared time set = union of all active days' times (they're identical
+  // in shared mode; the union is a safe read even right after switching).
+  const sharedHours = useMemo(() => {
+    const set = new Set<number>();
+    active.forEach((k) => (value.dayTimes[k] ?? []).forEach((h) => set.add(h)));
+    return Array.from(set).sort((a, b) => a - b);
+  }, [value.dayTimes, active]);
+
+  // Toggle which weekdays the schedule runs on (shared mode). Newly-enabled
+  // days inherit the shared time set; disabled days are dropped.
+  const toggleSharedDay = (key: DayKey) => {
+    const on = (value.dayTimes[key]?.length ?? 0) > 0;
+    const next = { ...value.dayTimes };
+    if (on) delete next[key];
+    else next[key] = sharedHours.length ? [...sharedHours] : [8];
+    onChange({ ...value, dayTimes: next });
   };
 
-  const summary = buildSummary(value);
+  // Toggle an hour in shared mode → applies to every active day at once.
+  // Never invents days: if nothing is selected yet, picking a time is a no-op
+  // (the user must choose the weekdays first, otherwise voyages would appear on
+  // days that were never selected).
+  const toggleSharedHour = (hour: number) => {
+    if (active.length === 0) return;
+    const has = sharedHours.includes(hour);
+    const nextHours = (has ? sharedHours.filter((h) => h !== hour) : [...sharedHours, hour]).sort((a, b) => a - b);
+    const next: Partial<Record<DayKey, number[]>> = {};
+    active.forEach((k) => { next[k] = [...nextHours]; });
+    onChange({ ...value, dayTimes: next });
+  };
+
+  // Switching to shared flattens every active day onto the shared set so the
+  // single grid is the source of truth.
+  const switchToShared = () => {
+    if (sharedHours.length > 0) {
+      const next: Partial<Record<DayKey, number[]>> = {};
+      active.forEach((k) => { next[k] = [...sharedHours]; });
+      onChange({ ...value, dayTimes: next });
+    }
+    setMode("shared");
+  };
+
+  // Apply a preset — sets the selected weekdays. New weekdays default to
+  // a single 8 AM slot so the schedule isn't empty after toggling; existing
+  // selections keep their times.
+  const applyPreset = (days: DayKey[]) => {
+    const next: Partial<Record<DayKey, number[]>> = {};
+    DAYS.forEach((d) => {
+      if (days.includes(d.key)) {
+        // In shared mode every new day inherits the shared set; in custom
+        // mode keep each day's existing times.
+        next[d.key] = mode === "shared"
+          ? (sharedHours.length ? [...sharedHours] : [8])
+          : (value.dayTimes[d.key]?.length ? value.dayTimes[d.key]! : [8]);
+      }
+    });
+    onChange({ ...value, dayTimes: next });
+  };
+
+  // Toggle a weekday on/off. Turning a day on seeds it with a single 8 AM
+  // slot; turning it off clears the times for that day.
+  const toggleDay = (key: DayKey) => {
+    const has = (value.dayTimes[key]?.length ?? 0) > 0;
+    const next = { ...value.dayTimes };
+    if (has) delete next[key];
+    else next[key] = [8];
+    onChange({ ...value, dayTimes: next });
+  };
+
+  // Toggle a specific hour on a weekday — no-op if the weekday isn't
+  // active yet. Sorts the resulting array so the chip display stays in
+  // chronological order.
+  const toggleHour = (key: DayKey, hour: number) => {
+    const cur = value.dayTimes[key] ?? [];
+    const next = cur.includes(hour) ? cur.filter((h) => h !== hour) : [...cur, hour].sort((a, b) => a - b);
+    onChange({ ...value, dayTimes: { ...value.dayTimes, [key]: next } });
+  };
+
+  const totalTrips = useMemo(() => {
+    // Count of weekday × time combos × 30 days / 7 ≈ trips generated by
+    // the server over the rolling 30-day window. The server is authoritative;
+    // this is a quick admin-side preview.
+    const slotsPerWeek = Object.values(value.dayTimes).reduce((s, arr) => s + (arr?.length ?? 0), 0);
+    return Math.round((slotsPerWeek * 30) / 7);
+  }, [value.dayTimes]);
 
   return (
     <div className="space-y-6">
-      {/* ─── Recurrence choice cards ─── */}
-      <div>
-        <label className="mb-2 block text-[11.5px] font-medium uppercase tracking-[0.08em] text-slate-500">
-          Recurrence
-        </label>
-        <div role="radiogroup" aria-label="Recurrence" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <RecurrenceCard
-            active={value.recurrence === "once"}
-            onClick={() => onChange({ ...value, recurrence: "once" })}
-            title="One-time trip"
-            description="A single trip on a specific date."
-            icon={
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                <rect x="3.5" y="5" width="17" height="16" rx="2" />
-                <path d="M8 3v4M16 3v4M3.5 10h17" />
-                <circle cx="12" cy="15" r="1.25" fill="currentColor" stroke="none" />
-              </svg>
-            }
-          />
-          <RecurrenceCard
-            active={value.recurrence === "weekly"}
-            onClick={() => onChange({ ...value, recurrence: "weekly" })}
-            title="Recurring weekly"
-            description="Repeats on selected days each week."
-            icon={
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                <path d="M21 12a9 9 0 1 1-3-6.7" />
-                <path d="M21 4v5h-5" />
-              </svg>
-            }
-          />
+      {/* Heads-up banner — explains the 30-day recurrence policy so the
+          admin doesn't look for start/end pickers. */}
+      <div className="flex items-center gap-2.5 rounded-lg border border-brand-200/80 bg-brand-50/60 px-3.5 py-2.5">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 text-brand-600">
+          <path d="M21 12a9 9 0 1 1-3-6.7" />
+          <path d="M21 4v5h-5" />
+        </svg>
+        <div className="text-[12.5px] tracking-tight">
+          <span className="font-semibold text-brand-700">Recurring schedule.</span>{" "}
+          <span className="text-slate-600">
+            The server will automatically generate voyages for the next 30 days based on the weekdays and times you pick below.
+          </span>
         </div>
       </div>
 
-      {/* ─── Departure date + time ─── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_260px]">
-        <Field label="Departure date">
-          <DatePicker
-            value={value.departureDate}
-            onChange={(iso) => onChange({ ...value, departureDate: iso })}
-            ariaLabel="Departure date"
-            className="w-full"
-          />
-        </Field>
-        <Field label="Time">
-          <TimePicker
-            value={value.departureTime}
-            onChange={(hhmm) => onChange({ ...value, departureTime: hhmm })}
-            ariaLabel="Departure time"
-            className="w-full"
-          />
-        </Field>
+      {/* Schedule label — optional operator-friendly name (e.g. "Schedule A"). */}
+      <div>
+        <div className="mb-1.5 flex items-baseline justify-between gap-3">
+          <label className="text-[11.5px] font-medium uppercase tracking-[0.08em] text-slate-500">
+            Schedule label <span className="text-slate-400 normal-case tracking-normal">(Optional)</span>
+          </label>
+          <span className="text-[11px] text-slate-400">Shown on each voyage card.</span>
+        </div>
+        <input
+          type="text"
+          value={value.label ?? ""}
+          onChange={(e) => onChange({ ...value, label: e.target.value })}
+          placeholder="e.g. Schedule A"
+          maxLength={32}
+          className={inputCls}
+        />
       </div>
 
-      {/* ─── Weekly-only controls ───
-          We always render the wrapper so the modal's height doesn't jump as the
-          user toggles. When Once is selected, the slot is empty + collapses to 0 height. */}
-      <div
-        className={
-          "grid transition-[grid-template-rows,opacity] duration-200 ease-out " +
-          (value.recurrence === "weekly" ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")
-        }
-        aria-hidden={value.recurrence !== "weekly"}
-      >
-        <div className="min-h-0 overflow-hidden">
-          {/* Single REPEATS row — weekday pills on the left, "until <date>" on the right.
-              Reads as onea sentence: "Repeats M·W·F until Thu, May 28". The hint moves
-              into the section header so the inputs stay clean. */}
-          <div className="border-t border-slate-100 pt-5">
-            <div className="mb-2 flex items-baseline justify-between gap-3">
-              <label className="text-[11.5px] font-medium uppercase tracking-[0.08em] text-slate-500">
-                Repeats
-              </label>
-              <span className="text-[11px] text-slate-400">
-                {value.runsOn.length === 0
-                  ? "Up to 30 days from departure."
-                  : `Up to ${MAX_RANGE_DAYS} days from departure.`}
-              </span>
-            </div>
+      {/* Quick weekday presets */}
+      <div>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <label className="text-[11.5px] font-medium uppercase tracking-[0.08em] text-slate-500">
+            Weekdays
+          </label>
+          {/* Mode switch — whether each day shares the same departure times
+              or is configured individually. Verb-led labels read as the
+              choice being made, not a status. */}
+          <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 text-[11px] font-medium">
+            <button
+              type="button"
+              onClick={switchToShared}
+              className={"rounded-md px-2.5 py-1 transition-colors " + (mode === "shared" ? "bg-white text-slate-900 shadow-[0_1px_2px_rgba(15,23,42,0.08)]" : "text-slate-500 hover:text-slate-700")}
+            >
+              One time set
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("custom")}
+              className={"rounded-md px-2.5 py-1 transition-colors " + (mode === "custom" ? "bg-white text-slate-900 shadow-[0_1px_2px_rgba(15,23,42,0.08)]" : "text-slate-500 hover:text-slate-700")}
+            >
+              Per day
+            </button>
+          </div>
+        </div>
 
-            {/* Quick-pick presets — one-tap weekday templates. Active when the
-                currently-selected set matches the preset exactly (order-insensitive). */}
-            <div className="mb-2.5 flex flex-wrap gap-1.5" role="group" aria-label="Quick presets">
-              {DAY_PRESETS.map((p) => {
-                const active = sameDaySet(value.runsOn, p.days);
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => onChange({ ...value, runsOn: p.days })}
-                    className={
-                      "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors focus:outline-none " +
-                      (active
-                        ? "bg-brand-50 text-brand-700"
-                        : "bg-white text-slate-600 hover:bg-slate-50")
-                    }
-                  >
-                    {p.label}
-                  </button>
-                );
-              })}
-            </div>
+        {/* Presets */}
+        <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Quick presets">
+          {DAY_PRESETS.map((p) => {
+            const isActive = sameDaySet(active, p.days);
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => applyPreset(p.days)}
+                className={
+                  "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none " +
+                  (isActive
+                    ? "bg-brand-50 text-brand-700"
+                    : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50")
+                }
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
 
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
-              {/* Weekday pills */}
-              <div role="group" aria-label="Days of the week" className="flex shrink-0 flex-wrap gap-1.5">
+        {mode === "shared" ? (
+          /* ── Shared mode ──
+             Step 1: pick which weekdays as a single chip row.
+             Step 2: pick the departure times once — applied to all of them. */
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            {/* Weekday row — circular day toggles so they read as distinct
+                from the rectangular time tiles below. */}
+            <div className="border-b border-slate-100 px-3.5 py-3">
+              <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.08em] text-brand-500">Runs on</div>
+              <div className="flex flex-wrap gap-1.5">
                 {DAYS.map((d) => {
-                  const active = value.runsOn.includes(d.key);
+                  const on = (value.dayTimes[d.key]?.length ?? 0) > 0;
                   return (
                     <button
                       key={d.key}
                       type="button"
-                      role="checkbox"
-                      aria-checked={active}
+                      aria-pressed={on}
                       aria-label={d.long}
-                      onClick={() => toggleDay(d.key)}
+                      title={d.long}
+                      onClick={() => toggleSharedDay(d.key)}
                       className={
-                        "grid h-8 w-8 place-items-center rounded-full text-[11.5px] font-semibold transition-colors " +
-                        (active
-                          ? "bg-brand-500 text-white shadow-[0_1px_0_rgba(0,0,0,0.04)]"
+                        "rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors focus-visible:outline-none " +
+                        (on
+                          ? "bg-brand-500 text-white"
                           : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50")
                       }
                     >
@@ -242,191 +308,161 @@ export default function ScheduleStep({
                   );
                 })}
               </div>
+            </div>
 
-              {/* Sentence connector */}
-              <span className="shrink-0 text-[12.5px] font-medium text-slate-500">until</span>
-
-              {/* End date — fills the remaining row width so there's no dead gutter on the right */}
-              <DatePicker
-                value={value.endDate}
-                onChange={(iso) => onChange({ ...value, endDate: iso })}
-                min={value.departureDate || undefined}
-                max={maxEndDate || undefined}
-                ariaLabel="End date"
-                className="min-w-[220px] flex-1"
-              />
+            {/* Shared hour grid — tinted panel so the times zone reads as a
+                distinct step from the day chips above. */}
+            <div className="border-t border-slate-200 bg-slate-50/70 px-3.5 py-3.5">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-brand-500">
+                  Departure times {active.length > 0
+                    ? `· applies to ${active.length} day${active.length === 1 ? "" : "s"}`
+                    : <span className="text-slate-400">· pick days first</span>}
+                </span>
+                {sharedHours.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { const next: Partial<Record<DayKey, number[]>> = {}; active.forEach((k) => { next[k] = []; }); onChange({ ...value, dayTimes: next }); }}
+                    className="text-[10.5px] font-medium text-slate-400 transition-colors hover:text-rose-500"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <div className={"grid grid-cols-5 gap-1.5 sm:grid-cols-10 " + (active.length === 0 ? "opacity-50" : "")}>
+                {HOUR_RANGE.map((h) => {
+                  const selected = sharedHours.includes(h);
+                  const disabled = active.length === 0;
+                  return (
+                    <button
+                      key={h}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => toggleSharedHour(h)}
+                      className={
+                        "rounded-md px-2 py-1 text-[11.5px] font-medium tabular-nums tracking-tight transition-colors focus-visible:outline-none " +
+                        (selected
+                          ? "bg-brand-500 text-white"
+                          : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50") +
+                        (disabled ? " cursor-not-allowed" : "")
+                      }
+                    >
+                      {fmtHourLabel(h)}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          /* ── Custom mode ── per-day rows, each with its own hour grid. */
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            {DAYS.map((d, i) => {
+              const hours = value.dayTimes[d.key] ?? [];
+              const on = hours.length > 0;
+              return (
+                <div key={d.key} className={i === 0 ? "" : "border-t border-slate-100"}>
+                  <div className={"flex items-center gap-3 px-3.5 " + (on ? "py-2.5" : "py-2")}>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={on}
+                      aria-label={`Toggle ${d.long}`}
+                      onClick={() => toggleDay(d.key)}
+                      className={
+                        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors duration-150 " +
+                        (on ? "bg-brand-500" : "bg-slate-200")
+                      }
+                    >
+                      <span
+                        aria-hidden
+                        className={
+                          "block h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(15,23,42,0.2)] transition-transform duration-150 " +
+                          (on ? "translate-x-4" : "translate-x-0")
+                        }
+                      />
+                    </button>
+                    <span className={"text-[13px] font-semibold tracking-tight " + (on ? "text-slate-900" : "text-slate-400")}>
+                      {d.long}
+                    </span>
+                    {on ? (
+                      <div className="ml-auto flex items-center gap-1.5">
+                        <span className="hidden items-center gap-1 sm:flex">
+                          {hours.slice(0, 3).map((h) => (
+                            <span key={h} className="rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-brand-700">
+                              {fmtHourLabel(h)}
+                            </span>
+                          ))}
+                          {hours.length > 3 && (
+                            <span className="font-mono text-[10px] tabular-nums text-slate-400">+{hours.length - 3}</span>
+                          )}
+                        </span>
+                        <span className="font-mono text-[11px] tabular-nums text-slate-400 sm:hidden">{hours.length}</span>
+                      </div>
+                    ) : (
+                      <span className="ml-auto text-[11px] font-medium uppercase tracking-[0.08em] text-slate-300">Off</span>
+                    )}
+                  </div>
+
+                  {on && (
+                    <div className="border-t border-dashed border-slate-200/80 bg-slate-50/40 px-3.5 py-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">Departure times</span>
+                        <button
+                          type="button"
+                          onClick={() => onChange({ ...value, dayTimes: { ...value.dayTimes, [d.key]: [] } })}
+                          className="text-[10.5px] font-medium text-slate-400 transition-colors hover:text-rose-500"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-5 gap-1.5 sm:grid-cols-10">
+                        {HOUR_RANGE.map((h) => {
+                          const selected = hours.includes(h);
+                          return (
+                            <button
+                              key={h}
+                              type="button"
+                              onClick={() => toggleHour(d.key, h)}
+                              className={
+                                "rounded-md px-2 py-1 text-[11.5px] font-medium tabular-nums tracking-tight transition-colors focus-visible:outline-none " +
+                                (selected
+                                  ? "bg-brand-500 text-white"
+                                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50")
+                              }
+                            >
+                              {fmtHourLabel(h)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* ─── Live schedule summary — textual readback only ─── */}
+      {/* Live summary — count of weekly slots + the rolling-30-day trip projection. */}
       <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={"h-4 w-4 shrink-0 " + (summary.tripCount === null ? "text-slate-400" : "text-emerald-600")}>
-          {summary.tripCount === null
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={"h-4 w-4 shrink-0 " + (totalTrips === 0 ? "text-slate-400" : "text-emerald-600")}>
+          {totalTrips === 0
             ? <><circle cx="12" cy="12" r="9" /><path d="M12 8v4M12 16v.01" /></>
             : <path d="M5 12l5 5L20 7" />}
         </svg>
         <span className="text-[12.5px] tracking-tight text-slate-700">
           <span className="font-semibold text-slate-900">
-            {summary.tripCount === null ? "Schedule incomplete." : "Schedule set."}
+            {totalTrips === 0 ? "Schedule incomplete." : "Schedule set."}
           </span>{" "}
-          <span className="text-slate-500">{summary.body}</span>
+          <span className="text-slate-500">
+            {totalTrips === 0
+              ? "Toggle at least one weekday and pick at least one hour."
+              : `${active.length} weekday${active.length === 1 ? "" : "s"} · ${Object.values(value.dayTimes).reduce((s, arr) => s + (arr?.length ?? 0), 0)} slot${Object.values(value.dayTimes).reduce((s, arr) => s + (arr?.length ?? 0), 0) === 1 ? "" : "s"} / week · ~${totalTrips} trip${totalTrips === 1 ? "" : "s"} over the next 30 days.`}
+          </span>
         </span>
       </div>
     </div>
-  );
-}
-
-// ─────────── Field — label + optional hint + control slot ───────────
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string | null;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="mb-1.5 flex items-baseline justify-between gap-3">
-        <label className="text-[11.5px] font-medium uppercase tracking-[0.08em] text-slate-500">{label}</label>
-        {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-// ─────────── Helpers ───────────
-function parseISO(s: string): Date | null {
-  if (!s) return null;
-  const d = new Date(s + "T00:00:00");
-  return isNaN(d.getTime()) ? null : d;
-}
-function toISO(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function buildSummary(v: ScheduleValue): { body: string; tripCount: number | null } {
-  const dep = parseISO(v.departureDate);
-  if (!dep || !v.departureTime) {
-    return { body: "Pick a departure date and time to get started.", tripCount: null };
-  }
-  const depLabel = dep.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const timeLabel = formatTime12h(v.departureTime);
-
-  if (v.recurrence === "once") {
-    return {
-      body: `Runs once on ${depLabel} at ${timeLabel}.`,
-      tripCount: 1,
-    };
-  }
-
-  // Weekly
-  if (v.runsOn.length === 0) {
-    return { body: `Pick at least one day of the week.`, tripCount: null };
-  }
-  const end = parseISO(v.endDate);
-  if (!end || end < dep) {
-    return { body: `Pick when the schedule should end.`, tripCount: null };
-  }
-
-  const orderedDays = DAYS.filter((d) => v.runsOn.includes(d.key)).map((d) => d.short);
-  const daysLabel = orderedDays.join(" · ");
-  const endLabel = end.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-
-  // Count trips: every day from dep to end (inclusive) whose weekday matches runsOn.
-  let trips = 0;
-  const cursor = new Date(dep);
-  while (cursor.getTime() <= end.getTime()) {
-    const dow = (cursor.getDay() + 6) % 7; // Mon=0..Sun=6 to match DAYS order
-    if (v.runsOn.includes(DAYS[dow].key)) trips++;
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
-  return {
-    body: `Runs ${daysLabel} at ${timeLabel} from ${depLabel} until ${endLabel}.`,
-    tripCount: trips,
-  };
-}
-
-function formatTime12h(hhmm: string): string {
-  const [h, m] = hhmm.split(":").map(Number);
-  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
-  const period = h < 12 ? "AM" : "PM";
-  const display = ((h + 11) % 12) + 1;
-  return `${display}:${String(m).padStart(2, "0")} ${period}`;
-}
-
-// ─────────── RecurrenceCard ───────────
-// Two-up clickable cards for the recurrence choice. Active gets a brand-orange
-// ring + tinted background + filled brand check; inactive sits white with a
-// slate hairline, lifting subtly on hover.
-function RecurrenceCard({
-  active,
-  onClick,
-  title,
-  description,
-  icon,
-}: {
-  active: boolean;
-  onClick: () => void;
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      onClick={onClick}
-      className={
-        "group relative flex items-start gap-3 rounded-xl border bg-white px-4 py-3.5 text-left transition-all duration-150 " +
-        (active
-          ? "border-brand-500 ring-2 ring-brand-500/15"
-          : "border-slate-200 hover:border-slate-300 hover:bg-slate-50/60")
-      }
-    >
-      {/* Icon tile */}
-      <span
-        className={
-          "grid h-8 w-8 shrink-0 place-items-center rounded-lg transition-colors " +
-          (active ? "bg-brand-100 text-brand-700" : "bg-slate-100 text-slate-500 group-hover:text-slate-700")
-        }
-      >
-        {icon}
-      </span>
-
-      {/* Title + description */}
-      <div className="min-w-0 flex-1">
-        <div
-          className={
-            "text-[13.5px] font-semibold tracking-tight " +
-            (active ? "text-slate-900" : "text-slate-700")
-          }
-        >
-          {title}
-        </div>
-        <p className="mt-0.5 text-[11.5px] leading-relaxed text-slate-500">{description}</p>
-      </div>
-
-      {/* Check / radio indicator (top-right) */}
-      <span
-        className={
-          "absolute right-3 top-3 grid h-4 w-4 place-items-center rounded-full transition-colors " +
-          (active
-            ? "bg-brand-500 text-white"
-            : "border border-slate-300 bg-white text-transparent group-hover:border-slate-400")
-        }
-        aria-hidden
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
-          <path d="M5 12l5 5 9-11" />
-        </svg>
-      </span>
-    </button>
   );
 }

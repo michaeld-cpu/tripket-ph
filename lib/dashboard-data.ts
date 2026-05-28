@@ -56,6 +56,9 @@ export type VehicleClass = {
   enabled: boolean;
   maxWeightKg?: number;
   maxLengthM?: number;
+  /** Default fare for this vehicle class, set at vessel registration. The
+      Voyages → Fares step pre-fills from this (mirrors AddOn.defaultPrice). */
+  defaultPrice?: number;
 };
 
 export type PassengerType = {

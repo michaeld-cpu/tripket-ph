@@ -9,6 +9,8 @@ import { TableSkeleton } from "@/components/Skeleton";
 import Select from "@/components/Select";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
+import Modal from "@/components/Modal";
+import ActivityLog from "@/components/ActivityLog";
 import DateRangePicker, { type DateRange } from "@/components/DateRangePicker";
 import { useToast } from "@/components/ToastContext";
 import {
@@ -17,10 +19,13 @@ import {
   ticketStatusTone,
   type Booking,
   type FareClass,
-  type StoredVoyage,
   type Ticket,
   type TicketStatus,
+  type PaxType,
+  PAX_TYPE_LABELS,
+  deriveTicketActivity,
 } from "@/lib/bookings-data";
+import { loadScopedVoyages } from "@/lib/line-scope";
 
 // ─────────── Flat ticket row shape ───────────
 // Each ticket gets flattened into a row that carries enough of its parent
@@ -108,7 +113,7 @@ function SortIcon() {
 }
 
 export default function TicketsPage() {
-  const { active } = useShippingLine();
+  const { active, locked } = useShippingLine();
   const { showToast } = useToast();
 
   const [bookings, setBookings] = useState<Booking[] | null>(null);
@@ -117,10 +122,13 @@ export default function TicketsPage() {
   const [vesselFilter, setVesselFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | TicketStatus>("all");
   const [classFilter, setClassFilter] = useState<"all" | FareClass>("all");
-  // Passenger-role filter — distinguishes the lead pax (booking owner) from
-  // the comped vehicle Driver / Companion seats.
-  const [roleFilter, setRoleFilter] = useState<"all" | "Lead" | "Driver" | "Companion">("all");
+  // Passenger-type filter — discount categories drawn from vessel creation
+  // (Senior / PWD / Student / Infant) plus Regular.
+  const [paxTypeFilter, setPaxTypeFilter] = useState<"all" | PaxType>("all");
   const [page, setPage] = useState(1);
+  // Row whose "Mark Paid" was triggered from the row menu — opens the
+  // ticket-number prompt before committing the Paid status.
+  const [paidTarget, setPaidTarget] = useState<TicketRow | null>(null);
 
   // Copy-to-clipboard state for ticket IDs.
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -147,14 +155,13 @@ export default function TicketsPage() {
   // `tripket.voyages` localStorage on mount so the two pages stay in sync.
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem("tripket.voyages");
-      const voyages: StoredVoyage[] = raw ? JSON.parse(raw) : [];
+      const voyages = loadScopedVoyages(active.id, locked);
       const t = setTimeout(() => setBookings(deriveBookings(voyages)), 180);
       return () => clearTimeout(t);
     } catch {
       setBookings([]);
     }
-  }, [active.id]);
+  }, [active.id, locked]);
 
   // ?booking=TKT-#### deep link from the bookings row popover. Pre-loads the
   // booking ref into the search query so the table filters to just that
@@ -165,7 +172,7 @@ export default function TicketsPage() {
     if (bookingRef) setQuery(bookingRef);
   }, []);
 
-  useEffect(() => { setPage(1); }, [query, routeFilter, vesselFilter, statusFilter, classFilter, roleFilter, dateRange]);
+  useEffect(() => { setPage(1); }, [query, routeFilter, vesselFilter, statusFilter, classFilter, paxTypeFilter, dateRange]);
 
   const rows = useMemo(() => bookings ? flattenTickets(bookings) : [], [bookings]);
   const openTicket = useMemo(
@@ -199,11 +206,7 @@ export default function TicketsPage() {
       if (vesselFilter !== "all" && r.vesselName !== vesselFilter) return false;
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (classFilter !== "all" && r.fareClass !== classFilter) return false;
-      if (roleFilter !== "all") {
-        // "Lead" = pax with no vehicleRole (the booking ticketholder + any
-        // extras beyond the comped 2). Driver/Companion match the field.
-        if (roleFilter === "Lead" ? r.vehicleRole : r.vehicleRole !== roleFilter) return false;
-      }
+      if (paxTypeFilter !== "all" && r.paxType !== paxTypeFilter) return false;
       if (r.bookingDate < dateRange.start || r.bookingDate > dateRange.end) return false;
       if (q) {
         const hay = `${r.id} ${r.bookingRef} ${r.name} ${r.routeOriginCode} ${r.routeDestinationCode} ${r.vesselName}`.toLowerCase();
@@ -211,7 +214,7 @@ export default function TicketsPage() {
       }
       return true;
     });
-  }, [rows, query, routeFilter, vesselFilter, statusFilter, classFilter, roleFilter, dateRange]);
+  }, [rows, query, routeFilter, vesselFilter, statusFilter, classFilter, paxTypeFilter, dateRange]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const isEmpty = bookings !== null && rows.length === 0;
@@ -246,7 +249,7 @@ export default function TicketsPage() {
           <h2 className="mt-4 text-[15px] font-semibold tracking-tight text-slate-900">No tickets yet</h2>
           <p className="mt-1.5 max-w-sm text-center text-[12.5px] leading-relaxed text-slate-500">
             Tickets appear here once bookings are created. Each passenger gets their own ticket under a booking.
-          </p>
+          </p>7
         </section>
       ) : (
         <section className="rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
@@ -305,15 +308,13 @@ export default function TicketsPage() {
               />
               <Select
                 size="sm"
-                value={roleFilter}
-                onChange={setRoleFilter}
-                ariaLabel="Filter by passenger role"
-                className="w-36"
+                value={paxTypeFilter}
+                onChange={setPaxTypeFilter}
+                ariaLabel="Filter by passenger type"
+                className="w-44"
                 options={[
-                  { value: "all", label: "All passengers" },
-                  { value: "Lead", label: "Lead" },
-                  { value: "Driver", label: "Driver" },
-                  { value: "Companion", label: "Companion" },
+                  { value: "all", label: "All passenger types" },
+                  ...(Object.keys(PAX_TYPE_LABELS) as PaxType[]).map((k) => ({ value: k, label: PAX_TYPE_LABELS[k] })),
                 ]}
               />
 
@@ -327,7 +328,7 @@ export default function TicketsPage() {
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
                   <th className="whitespace-nowrap px-6 py-3 text-center font-medium">#</th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">Ticket ID</th>
+                  <th className="whitespace-nowrap px-6 py-3 font-medium">Ticket number</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Status</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Passenger <SortIcon /></button>
@@ -338,9 +339,7 @@ export default function TicketsPage() {
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Departure <SortIcon /></button>
                   </th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Class</th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Rate <SortIcon /></button>
-                  </th>
+                  <th className="whitespace-nowrap px-6 py-3 font-medium">Amount</th>
                   <th className="sticky right-0 z-10 w-10 bg-slate-50 px-6 py-3 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)]" />
                 </tr>
               </thead>
@@ -368,28 +367,32 @@ export default function TicketsPage() {
                         {rowNo}
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 align-middle">
-                        <div className="inline-flex items-center gap-1.5">
-                          <span className="font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-900">{r.id}</span>
-                          {copiedId === r.id ? (
-                            <span aria-label="Copied" className="grid h-5 w-5 place-items-center rounded text-emerald-600">
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                                <path d="M5 12l5 5 9-11" />
-                              </svg>
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); handleCopyId(r.id); }}
-                              aria-label={`Copy ${r.id}`}
-                              className="grid h-5 w-5 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-90"
-                            >
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                                <rect x="9" y="9" width="11" height="11" rx="2" />
-                                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                              </svg>
-                            </button>
-                          )}
-                        </div>
+                        {r.ticketNumber ? (
+                          <div className="inline-flex items-center gap-1.5">
+                            <span className="font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-900">{r.ticketNumber}</span>
+                            {copiedId === r.ticketNumber ? (
+                              <span aria-label="Copied" className="grid h-5 w-5 place-items-center rounded text-emerald-600">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                                  <path d="M5 12l5 5 9-11" />
+                                </svg>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleCopyId(r.ticketNumber!); }}
+                                aria-label={`Copy ${r.ticketNumber}`}
+                                className="grid h-5 w-5 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-90"
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                                  <rect x="9" y="9" width="11" height="11" rx="2" />
+                                  <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-300" title="Assigned when the ticket is marked paid">—</span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 align-middle">
                         <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[r.status]}`}>
@@ -397,14 +400,7 @@ export default function TicketsPage() {
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 align-middle">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[13.5px] font-semibold tracking-tight text-slate-900">{r.name}</span>
-                          {r.vehicleRole && (
-                            <span className="inline-flex items-center rounded bg-brand-50 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-brand-700">
-                              {r.vehicleRole}
-                            </span>
-                          )}
-                        </div>
+                        <span className="text-[13.5px] font-semibold tracking-tight text-slate-900">{r.name}</span>
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 align-middle">
                         <div className="inline-flex items-center gap-1.5">
@@ -449,9 +445,17 @@ export default function TicketsPage() {
                         <span className="text-[12.5px] font-medium tracking-tight text-slate-700">{r.fareClass}</span>
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 align-middle">
-                        <span className="font-mono text-[13px] font-semibold tabular-nums text-slate-900">
-                          {r.comped ? <span className="text-emerald-600">Comped</span> : `₱${r.fare.toLocaleString()}`}
-                        </span>
+                        {r.comped ? (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-sky-700 ring-1 ring-sky-100" title="Free seat — covered by the vehicle fare">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
+                              <path d="M3 14h18l-2 5a2 2 0 0 1-1.9 1.3H6.9A2 2 0 0 1 5 19l-2-5Z" />
+                              <path d="M5 14V8a1 1 0 0 1 1-1h7l5 4" />
+                            </svg>
+                            Comped
+                          </span>
+                        ) : (
+                          <span className="font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">₱{r.fare.toLocaleString()}</span>
+                        )}
                       </td>
                       <td
                         className="sticky right-0 z-10 whitespace-nowrap bg-white px-6 py-4 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] transition-colors duration-150 group-hover:bg-slate-50 has-[[role=menu]]:z-30"
@@ -487,17 +491,16 @@ export default function TicketsPage() {
                             {
                               label: "Mark Paid",
                               disabled: r.status === "Cancelled" || r.status === "Refunded" || r.status === "Paid",
-                              onClick: () => { mutateTicket(r.id, { status: "Paid" }); showToast(`Ticket ${r.id} marked Paid`); },
+                              onClick: () => setPaidTarget(r),
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                   <path d="M5 12l5 5 9-11" />
                                 </svg>
                               ),
                             },
-                            // Refund — only meaningful if there was a charge to begin with.
                             {
                               label: "Refund",
-                              disabled: r.status === "Cancelled" || r.status === "Refunded" || r.comped,
+                              disabled: r.status === "Cancelled" || r.status === "Refunded",
                               onClick: () => { mutateTicket(r.id, { status: "Refunded" }); showToast(`Ticket ${r.id} refunded`); },
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -554,6 +557,18 @@ export default function TicketsPage() {
           window.location.href = `/bookings?ref=${openTicket.bookingRef}`;
         }}
       />
+
+      <MarkPaidDialog
+        open={!!paidTarget}
+        existingNumber={paidTarget?.ticketNumber}
+        onClose={() => setPaidTarget(null)}
+        onConfirm={(ticketNumber) => {
+          if (!paidTarget) return;
+          mutateTicket(paidTarget.id, { status: "Paid", ticketNumber });
+          showToast(`Ticket ${ticketNumber} marked Paid`);
+          setPaidTarget(null);
+        }}
+      />
     </div>
   );
 }
@@ -586,6 +601,10 @@ function TicketDetailDialog({
   onGoToBooking: () => void;
 }) {
   const [preview, setPreview] = useState<{ title: string; url: string } | null>(null);
+  const ticketActivity = useMemo(
+    () => (ticket ? deriveTicketActivity(ticket, ticket.bookingRef, ticket.bookingDate) : []),
+    [ticket]
+  );
   return (
     <AnimatePresence>
       {ticket && (
@@ -604,40 +623,43 @@ function TicketDetailDialog({
             exit={{ opacity: 0, scale: 0.97, y: 8 }}
             transition={{ type: "spring", stiffness: 320, damping: 30, mass: 0.8 }}
             onClick={(e) => e.stopPropagation()}
-            className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] ring-1 ring-slate-200/70"
+            className="flex max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] ring-1 ring-slate-200/70"
           >
-            {/* Header — Ticket ID (copyable), status pill, passenger name + booking ref */}
+          {/* Left column — ticket content (header · scroll body · footer). */}
+          <div className="flex min-w-0 flex-1 flex-col">
+            {/* Header — Ticket number (copyable), status pill, passenger name + booking ref */}
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-900">{ticket.id}</span>
-                  {copiedId === ticket.id ? (
-                    <span className="grid h-5 w-5 place-items-center rounded text-emerald-600">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                        <path d="M5 12l5 5 9-11" />
-                      </svg>
-                    </span>
+                  {ticket.ticketNumber ? (
+                    <>
+                      <span className="font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-900">{ticket.ticketNumber}</span>
+                      {copiedId === ticket.ticketNumber ? (
+                        <span className="grid h-5 w-5 place-items-center rounded text-emerald-600">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                            <path d="M5 12l5 5 9-11" />
+                          </svg>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onCopyId(ticket.ticketNumber!)}
+                          aria-label={`Copy ${ticket.ticketNumber}`}
+                          className="grid h-5 w-5 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-90"
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                            <rect x="9" y="9" width="11" height="11" rx="2" />
+                            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                          </svg>
+                        </button>
+                      )}
+                    </>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => onCopyId(ticket.id)}
-                      aria-label={`Copy ${ticket.id}`}
-                      className="grid h-5 w-5 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-90"
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                        <rect x="9" y="9" width="11" height="11" rx="2" />
-                        <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                      </svg>
-                    </button>
+                    <span className="font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-400" title="Assigned when the ticket is marked paid">No ticket number yet</span>
                   )}
                   <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[ticket.status]}`}>
                     {ticket.status}
                   </span>
-                  {ticket.vehicleRole && (
-                    <span className="inline-flex items-center rounded bg-brand-50 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-brand-700">
-                      {ticket.vehicleRole}
-                    </span>
-                  )}
                 </div>
                 <h2 className="mt-1.5 truncate text-[17px] font-semibold tracking-tight text-slate-900">{ticket.name}</h2>
                 <p className="mt-0.5 text-[12px] text-slate-500">
@@ -766,23 +788,9 @@ function TicketDetailDialog({
                 </ul>
               </div>
 
-              {/* Payment line — single-row summary, since this is one ticket. */}
-              <div className="rounded-xl bg-white p-4 ring-1 ring-slate-200/70">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Payment</div>
-                    <div className="mt-1 text-[12.5px] font-semibold tracking-tight text-slate-900">{ticket.fareClass}</div>
-                    {ticket.comped && (
-                      <div className="mt-0.5 text-[11px] text-emerald-700">Comped under the vehicle fee</div>
-                    )}
-                  </div>
-                  <div className="text-right">
-                    <div className="font-mono text-[15px] font-bold tabular-nums text-slate-900">
-                      {ticket.comped ? <span className="text-emerald-600">Comped</span> : `₱${ticket.fare.toLocaleString()}`}
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {/* Payment Information — mirrors the booking dialog's section,
+                  scoped to this single ticket. */}
+              <TicketPaymentInformation ticket={ticket} />
             </div>
 
             {/* Footer — status-aware ticket mutations + jump back to booking. */}
@@ -806,17 +814,97 @@ function TicketDetailDialog({
                     ClickUp-style chevron menu, keeping the footer compact. */}
                 <StatusPicker
                   current={ticket.status}
-                  comped={!!ticket.comped}
-                  onChange={(next: TicketStatus) => { onMutate({ status: next }); onClose(); }}
+                  existingNumber={ticket.ticketNumber}
+                  onChange={(patch) => { onMutate(patch); onClose(); }}
                 />
               </div>
             </div>
+          </div>
+
+          {/* Right rail — activity / audit log, bottom-anchored. */}
+          <div className="hidden w-[280px] shrink-0 border-l border-slate-100 sm:flex">
+            <ActivityLog entries={ticketActivity} />
+          </div>
           </motion.div>
 
           <DocumentPreviewDialog doc={preview} onClose={() => setPreview(null)} />
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+// ─────────── TicketPaymentInformation ───────────
+// Per-ticket payment breakdown mirroring the booking dialog's section: header
+// + status pill, a method/issued strip, the fare line (or a comped marker),
+// and a total strip. Scoped to this single passenger.
+function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
+  const payTone =
+    ticket.status === "Paid" ? "bg-emerald-100 text-emerald-800"
+    : ticket.status === "Refunded" ? "bg-sky-50 text-sky-700"
+    : ticket.status === "Cancelled" ? "bg-slate-100 text-slate-500"
+    : "bg-brand-50 text-brand-700";
+  const payLabel =
+    ticket.status === "Paid" ? "Paid"
+    : ticket.status === "Refunded" ? "Refunded"
+    : ticket.status === "Cancelled" ? "Unpaid"
+    : "Pending";
+
+  return (
+    <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
+      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
+        <h3 className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Payment Information</h3>
+        <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${payTone}`}>
+          {payLabel}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100">
+        <div className="px-4 py-3">
+          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Method</div>
+          <div className="mt-1 text-[12.5px] font-semibold tracking-tight text-slate-900">
+            {ticket.comped ? "Vehicle fare" : "Tripket Wallet"}
+          </div>
+        </div>
+        <div className="px-4 py-3">
+          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Booked on</div>
+          <div className="mt-1 text-[12.5px] font-semibold tracking-tight text-slate-900">{fmtDepartureDate(ticket.bookingDate)}</div>
+        </div>
+      </div>
+
+      <dl className="divide-y divide-slate-100 px-4 py-1">
+        <div className="flex items-baseline justify-between py-2.5 text-[12.5px]">
+          <dt className="min-w-0 flex-1">
+            <span className="font-medium tracking-tight text-slate-900">{ticket.fareClass} ticket</span>
+            {ticket.comped && (
+              <div className="mt-0.5 text-[11px] text-slate-400">Comped — covered by the vehicle fare</div>
+            )}
+          </dt>
+          <dd className="shrink-0 pl-3">
+            {ticket.comped ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-sky-700 ring-1 ring-sky-100">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
+                  <path d="M3 14h18l-2 5a2 2 0 0 1-1.9 1.3H6.9A2 2 0 0 1 5 19l-2-5Z" />
+                  <path d="M5 14V8a1 1 0 0 1 1-1h7l5 4" />
+                </svg>
+                Comped
+              </span>
+            ) : (
+              <span className="font-mono text-[13px] font-semibold tabular-nums text-slate-900">₱{ticket.fare.toLocaleString()}</span>
+            )}
+          </dd>
+        </div>
+      </dl>
+
+      <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3">
+        <div className="flex items-baseline justify-between">
+          <span className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-slate-500">Total</span>
+          <span className="font-mono text-[16px] font-bold tabular-nums tracking-tight text-slate-900">
+            ₱{(ticket.comped ? 0 : ticket.fare).toLocaleString()}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -828,14 +916,17 @@ function TicketDetailDialog({
 // one are rendered disabled so the surface stays consistent across tickets.
 function StatusPicker({
   current,
-  comped,
+  existingNumber,
   onChange,
 }: {
   current: TicketStatus;
-  comped: boolean;
-  onChange: (next: TicketStatus) => void;
+  existingNumber?: string;
+  onChange: (patch: Partial<Ticket>) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // When the admin picks "Paid", we intercept to collect the ticket number
+  // before committing the status change.
+  const [askPaid, setAskPaid] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -852,12 +943,11 @@ function StatusPicker({
     };
   }, [open]);
 
-  // Terminal states block every transition; comped tickets can't be refunded.
+  // Terminal states block every transition.
   const isTerminal = current === "Cancelled" || current === "Refunded";
   const canPick = (s: TicketStatus): boolean => {
     if (s === current) return false;
     if (isTerminal) return false;
-    if (s === "Refunded" && comped) return false;
     return true;
   };
 
@@ -907,7 +997,14 @@ function StatusPicker({
                   type="button"
                   role="menuitem"
                   disabled={disabled}
-                  onClick={() => { if (!disabled) { onChange(o.value); setOpen(false); } }}
+                  onClick={() => {
+                    if (disabled) return;
+                    setOpen(false);
+                    // Paid requires an admin-entered ticket number — prompt for it
+                    // instead of committing the status outright.
+                    if (o.value === "Paid") { setAskPaid(true); return; }
+                    onChange({ status: o.value });
+                  }}
                   // Fixed three-column layout: label · pill · 16px check slot.
                   // The check slot is reserved (empty when not current) so the
                   // pill column stays put across rows.
@@ -936,7 +1033,82 @@ function StatusPicker({
           </motion.div>
         )}
       </AnimatePresence>
+
+      <MarkPaidDialog
+        open={askPaid}
+        existingNumber={existingNumber}
+        onClose={() => setAskPaid(false)}
+        onConfirm={(ticketNumber) => { onChange({ status: "Paid", ticketNumber }); setAskPaid(false); }}
+      />
     </div>
+  );
+}
+
+// ─────────── MarkPaidDialog ───────────
+// Captures the real-world ticket number when an admin marks a ticket Paid.
+// The status only flips once a number is entered.
+function MarkPaidDialog({
+  open,
+  existingNumber,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  existingNumber?: string;
+  onClose: () => void;
+  onConfirm: (ticketNumber: string) => void;
+}) {
+  const [num, setNum] = useState("");
+  useEffect(() => { if (open) setNum(existingNumber ?? ""); }, [open, existingNumber]);
+  const trimmed = num.trim();
+
+  return (
+    <Modal open={open} onClose={onClose} maxWidth="max-w-sm">
+      <div className="px-6 pb-5 pt-6">
+        <div className="flex items-start gap-3.5">
+          <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200/70">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+              <path d="M5 12l5 5 9-11" />
+            </svg>
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Mark as paid</h2>
+            <p className="mt-1 text-[13px] leading-relaxed text-slate-600">
+              Enter the ticket number issued when payment was collected. This is recorded on the ticket.
+            </p>
+            <div className="mt-4">
+              <label className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Ticket number</label>
+              <input
+                type="text"
+                value={num}
+                onChange={(e) => setNum(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && trimmed) { e.preventDefault(); onConfirm(trimmed); } }}
+                autoFocus
+                placeholder="e.g. T1234567"
+                className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-3.5">
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-slate-300"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => trimmed && onConfirm(trimmed)}
+          disabled={!trimmed}
+          className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-emerald-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Confirm payment
+        </button>
+      </div>
+    </Modal>
   );
 }
 

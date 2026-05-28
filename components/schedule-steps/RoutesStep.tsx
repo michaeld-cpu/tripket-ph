@@ -29,6 +29,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
  *  - Inline validation when origin === destination.
  */
 
+export type RouteStatus = "Active" | "Inactive";
+
 export type RoutesValue = {
   originCode: string;
   destinationCode: string;
@@ -36,6 +38,8 @@ export type RoutesValue = {
   durationLowHrs: string;
   durationHighHrs: string;
   createReturn: boolean;
+  /** Operational status. Only surfaced/edited in edit mode; new routes start Active. */
+  status?: RouteStatus;
 };
 
 export type Port = { code: string; city: string };
@@ -77,9 +81,15 @@ function lookupCrossing(a: string, b: string): Crossing | null {
 export default function RoutesStep({
   value,
   onChange,
+  hideReturnToggle = false,
+  showStatus = false,
 }: {
   value: RoutesValue;
   onChange: (next: RoutesValue) => void;
+  /** Hide the "create return route" toggle (e.g. when editing an existing route). */
+  hideReturnToggle?: boolean;
+  /** Show the Active/Inactive status segmented control (edit mode). */
+  showStatus?: boolean;
 }) {
   const origin = PORTS.find((p) => p.code === value.originCode) ?? null;
   const destination = PORTS.find((p) => p.code === value.destinationCode) ?? null;
@@ -107,6 +117,8 @@ export default function RoutesStep({
     [value.originCode],
   );
 
+  const status: RouteStatus = value.status ?? "Active";
+
   return (
     <div className="space-y-5">
       {/* Origin / Destination selects with the route-line visual sitting between them. */}
@@ -116,7 +128,7 @@ export default function RoutesStep({
             ariaLabel="Origin port"
             value={value.originCode}
             options={PORTS.filter((p) => p.code !== value.destinationCode)}
-            placeholder="— Select origin port —"
+            placeholder="Select origin"
             onChange={(code) => onChange({ ...value, originCode: code })}
           />
         </FieldGroup>
@@ -131,7 +143,7 @@ export default function RoutesStep({
             ariaLabel="Destination port"
             value={value.destinationCode}
             options={destinationOptions}
-            placeholder="— Select destination port —"
+            placeholder="Select destination"
             onChange={(code) => onChange({ ...value, destinationCode: code })}
           />
         </FieldGroup>
@@ -182,12 +194,41 @@ export default function RoutesStep({
         </FieldGroup>
       </div>
 
-      {/* Return-leg toggle — clone of the legacy "Create Return Route" card, refined. */}
-      <ReturnRouteCard
-        on={value.createReturn}
-        disabled={sameOriginDest || !origin || !destination}
-        onToggle={(v) => onChange({ ...value, createReturn: v })}
-      />
+      {/* Return-leg toggle — clone of the legacy "Create Return Route" card, refined.
+          Hidden when editing an existing route (the return leg is its own record). */}
+      {!hideReturnToggle && (
+        <ReturnRouteCard
+          on={value.createReturn}
+          disabled={sameOriginDest || !origin || !destination}
+          onToggle={(v) => onChange({ ...value, createReturn: v })}
+        />
+      )}
+
+      {/* Status — pill toggle matching the edit-vessel dialog's status field
+          (plain pills, label above, rendered as the last card). */}
+      {showStatus && (
+        <div>
+          <span className="block pb-1.5 text-[12.5px] font-semibold tracking-tight text-slate-700">Status</span>
+          <div className="flex flex-wrap gap-1">
+            {(["Active", "Inactive"] as RouteStatus[]).map((opt) => {
+              const selected = opt === status;
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => onChange({ ...value, status: opt })}
+                  className={
+                    "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] focus-visible:outline-none " +
+                    (selected ? "bg-brand-50 text-brand-700" : "text-slate-500 hover:bg-slate-100 hover:text-slate-700")
+                  }
+                >
+                  {opt}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -206,7 +247,7 @@ function FieldGroup({
   return (
     <label className="block">
       <span className="flex items-baseline justify-between pb-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">{label}</span>
+        <span className="text-[12.5px] font-semibold tracking-tight text-slate-700">{label}</span>
         {suffix && <span className="text-[10.5px] font-medium text-slate-400">{suffix}</span>}
       </span>
       {children}
@@ -336,10 +377,10 @@ function PortSelect({
               </span>
             </span>
           ) : (
-            <span className="block truncate text-[13px] text-slate-400">{placeholder}</span>
+            <span className="block truncate text-[14px] font-medium tracking-tight text-slate-400">{placeholder}</span>
           )}
-          <span className="mt-0.5 block truncate text-[10.5px] font-medium uppercase tracking-[0.1em] text-slate-400">
-            {selected ? "Tap to change" : "Choose a port"}
+          <span className="mt-0.5 block truncate text-[11.5px] text-slate-400">
+            {selected ? "Tap to change" : "Search by city or code"}
           </span>
         </span>
 
@@ -417,27 +458,21 @@ function PortSelect({
   );
 }
 
-// Dashed orange arrow between the two port pickers. Goes solid + animated once
-// both are selected so the screen reads "you've completed the pair."
+// Soft connector between the two port pickers — a quiet line with a small
+// ferry glyph that warms to brand orange once both ends are chosen, so the
+// pair reads as joined rather than wired together.
 function ConnectorArrow({ active }: { active: boolean }) {
+  const tint = active ? "text-brand-500" : "text-slate-300";
   return (
-    <svg viewBox="0 0 48 24" className="h-6 w-12" aria-hidden>
-      <path
-        d="M4 12 H40"
-        stroke={active ? "#f97316" : "#cbd5e1"}
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeDasharray={active ? "0" : "3 4"}
-      />
-      <path
-        d="M36 6 L42 12 L36 18"
-        stroke={active ? "#f97316" : "#cbd5e1"}
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
-    </svg>
+    <span className={"flex items-center gap-1.5 transition-colors " + tint} aria-hidden>
+      <span className="h-px w-3 bg-current" />
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+        <path d="M3 14h18l-2 5a2 2 0 0 1-1.9 1.3H6.9A2 2 0 0 1 5 19l-2-5Z" />
+        <path d="M5 14V8a1 1 0 0 1 1-1h7l5 4" />
+        <path d="M9 7V4h2" />
+      </svg>
+      <span className="h-px w-3 bg-current" />
+    </span>
   );
 }
 

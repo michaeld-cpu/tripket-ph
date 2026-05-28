@@ -19,9 +19,9 @@ export function ShippingLineProvider({ children }: { children: ReactNode }) {
 
   // Operators see only their assigned line; admin uses the local switcher state.
   const effectiveId =
-    user.role === "operator" && user.shippingLineId ? user.shippingLineId : activeId;
+    user?.role === "operator" && user.shippingLineId ? user.shippingLineId : activeId;
   const active = lines.find(l => l.id === effectiveId) ?? lines[0];
-  const locked = user.role === "operator";
+  const locked = user?.role === "operator";
 
   return (
     <ShippingLineContext.Provider

@@ -1,14 +1,19 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import Sidebar from "@/components/Sidebar";
-import Topbar from "@/components/Topbar";
+import AppChrome from "@/components/AppChrome";
 import { ShippingLineProvider } from "@/components/ShippingLineContext";
 import { ToastProvider } from "@/components/ToastContext";
 import { UserProvider } from "@/components/UserContext";
 
 export const metadata: Metadata = {
-  title: "Tripket PH — Admin",
-  description: "Operations dashboard for Tripket PH",
+  title: {
+    default: "Tripket PH",
+    template: "%s · Tripket PH",
+  },
+  description: "Operations dashboard for Tripket PH — manage voyages, bookings, routes, and fleet across shipping lines.",
+  applicationName: "Tripket PH",
+  // Favicon comes from app/icon.svg (white logo on a brand-orange tile,
+  // matching the sidebar mark) via Next's file convention.
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -18,13 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <UserProvider>
           <ShippingLineProvider>
             <ToastProvider>
-              <div className="flex h-screen">
-                <Sidebar />
-                <div className="flex flex-1 flex-col overflow-hidden">
-                  <Topbar />
-                  <main className="flex-1 overflow-y-auto px-8 py-6">{children}</main>
-                </div>
-              </div>
+              <AppChrome>{children}</AppChrome>
             </ToastProvider>
           </ShippingLineProvider>
         </UserProvider>

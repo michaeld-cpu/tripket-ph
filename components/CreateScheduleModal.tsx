@@ -4,13 +4,14 @@ import Modal from "@/components/Modal";
 import Stepper from "@/components/Stepper";
 import WizardHeader from "@/components/wizard/WizardHeader";
 import WizardFooter from "@/components/wizard/WizardFooter";
-import ScheduleStep, { type ScheduleValue } from "@/components/schedule-steps/ScheduleStep";
+import ScheduleStep, { type ScheduleValue, type DayKey } from "@/components/schedule-steps/ScheduleStep";
 import RoutesStep, { type RoutesValue } from "@/components/schedule-steps/RoutesStep";
 import VesselStep, { type VesselValue, MOCK_FLEET } from "@/components/schedule-steps/VesselStep";
 import { defaultVehicleClasses, defaultPassengerTypes } from "@/components/AddVesselModal";
 import { defaultAddOns } from "@/components/vessel-extras/AddOnsSection";
 import FaresStep, { type FaresValue, initialFaresValue } from "@/components/schedule-steps/FaresStep";
 import ReviewStep from "@/components/schedule-steps/ReviewStep";
+import { useShippingLine } from "@/components/ShippingLineContext";
 
 function initialVesselValue(): VesselValue {
   return {
@@ -42,20 +43,19 @@ function initialRoutesValue(): RoutesValue {
   };
 }
 
-// Reasonable initial defaults — today's date, 4 AM, weekday picker empty.
+// Reasonable initial defaults — empty weekday/time map. If the operator
+// clicked a calendar slot to open the wizard, seed that weekday + hour so
+// they don't have to retap their starting point.
 function initialScheduleValue(seed?: { date?: Date; hour?: number }): ScheduleValue {
-  const base = seed?.date ?? new Date();
-  const iso = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
-  const end = new Date(base); end.setDate(end.getDate() + 7);
-  const endIso = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
-  const hh = seed?.hour != null ? String(seed.hour).padStart(2, "0") : "04";
-  return {
-    recurrence: "once",
-    departureDate: iso,
-    departureTime: `${hh}:00`,
-    runsOn: [],
-    endDate: endIso,
-  };
+  if (seed?.date != null) {
+    const dow = seed.date.getDay();
+    // JS getDay: Sun=0..Sat=6; map to our Mon-first DayKey order.
+    const keys: DayKey[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const key = keys[dow];
+    const hour = seed.hour ?? 8;
+    return { dayTimes: { [key]: [hour] } };
+  }
+  return { dayTimes: {} };
 }
 
 /**
@@ -109,6 +109,7 @@ export default function CreateScheduleModal({
    *  becomes the start date, the operator can pick the runs-on weekdays. */
   prefill?: { date: Date; hour: number };
 }) {
+  const { active } = useShippingLine();
   const [stepIdx, setStepIdx] = useState(0);
   const [schedule, setSchedule] = useState<ScheduleValue>(initialScheduleValue);
   const [routes, setRoutes] = useState<RoutesValue>(initialRoutesValue);
@@ -127,7 +128,9 @@ export default function CreateScheduleModal({
     setStepIdx(0);
     setSchedule(initialScheduleValue(prefill));
     setRoutes(initialRoutesValue());
-    setVessel(initialVesselValue());
+    // Stamp the active shipping line so created voyages are owned by it and
+    // survive the line-scoped reload (operators are locked to their line).
+    setVessel({ ...initialVesselValue(), lineId: active.id });
     setFares(initialFaresValue());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, prefillKey]);

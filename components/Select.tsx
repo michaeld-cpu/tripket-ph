@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type SelectOption<T extends string = string> = {
   value: T;
@@ -28,15 +29,22 @@ export default function Select<T extends string>({
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<"down" | "up">("down");
+  // Menu is portaled to <body> with fixed coords so it never gets clipped
+  // by an ancestor `overflow-hidden` (e.g. a Modal). Coords come from the
+  // trigger's rect and recompute on scroll/resize.
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const current = options.find(o => o.value === value);
 
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (wrapRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", onClick);
@@ -49,11 +57,26 @@ export default function Select<T extends string>({
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    const estimatedHeight = options.length * ITEM_H + MENU_PADDING;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    setPlacement(spaceBelow < estimatedHeight && spaceAbove > spaceBelow ? "up" : "down");
+    const compute = () => {
+      const rect = triggerRef.current!.getBoundingClientRect();
+      const estimatedHeight = Math.min(options.length * ITEM_H + MENU_PADDING, 280);
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const up = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+      setPlacement(up ? "up" : "down");
+      setCoords({
+        top: up ? rect.top - estimatedHeight - 4 : rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+      });
+    };
+    compute();
+    window.addEventListener("scroll", compute, true);
+    window.addEventListener("resize", compute);
+    return () => {
+      window.removeEventListener("scroll", compute, true);
+      window.removeEventListener("resize", compute);
+    };
   }, [open, options.length]);
 
   const padding = size === "sm" ? "px-3 py-1.5" : "px-3 py-2";
@@ -87,11 +110,13 @@ export default function Select<T extends string>({
         </svg>
       </button>
 
-      {open && (
+      {open && coords && typeof document !== "undefined" && createPortal(
         <div
+          ref={menuRef}
           role="listbox"
-          className={`absolute left-0 right-0 z-30 min-w-full overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-[0_8px_24px_rgba(0,0,0,0.08)] ${
-            placement === "up" ? "bottom-full mb-1" : "top-full mt-1"
+          style={{ position: "fixed", top: coords.top, left: coords.left, width: coords.width, maxHeight: 280 }}
+          className={`z-[100] overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)] ${
+            placement === "up" ? "origin-bottom" : "origin-top"
           }`}
         >
           {options.map(opt => {
@@ -115,7 +140,8 @@ export default function Select<T extends string>({
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

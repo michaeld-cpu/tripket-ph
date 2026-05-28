@@ -25,10 +25,19 @@ export type Ticket = {
   documentType: string;
   /** Document number — formatted to match Philippine ID conventions. */
   documentRef: string;
-  /** Fare paid for this ticket — fareClass-multiplied off the voyage's base fare. */
+  /** Fare paid for this ticket — zero when the seat is comped under a
+      vehicle fare. Used for sums on the booking total. */
   fare: number;
+  /** Original published rate for this ticket's fare class, always positive.
+      Used for per-passenger display since comping is an aggregate property
+      of the booking, not an attribute we expose on individual rows. */
+  grossFare: number;
   /** Per-ticket gate status, distinct from the booking-level status. */
   status: TicketStatus;
+  /** Real-world ticket number the admin assigns when collecting payment.
+      Distinct from `id` (the system reference). Absent while unpaid — the
+      UI shows a dash until it's captured on the Pending → Paid transition. */
+  ticketNumber?: string;
   /** Optional per-pax contact. Lead pax usually inherits the booking's
       contact details; companions may or may not have their own captured. */
   phone?: string;
@@ -37,13 +46,27 @@ export type Ticket = {
   idFrontUrl: string;
   /** Required photo of the valid ID, back side. */
   idBackUrl: string;
-  /** Whether this ticket is bundled with a vehicle booking and what role it
-      plays. Driver/Companion seats ride with the vehicle and may be comped
-      depending on the shipping line's policy. */
-  vehicleRole?: "Driver" | "Companion";
-  /** True when the ticket was bundled free under the vehicle fee. Surfaces
-      in the payment breakdown as "Comped (vehicle)". */
+  /** True when this passenger seat is one of the N free seats bundled into
+      the vehicle fee (configured per route on the schedule's fare). The
+      assignment is deterministic — comped seats go to the lowest fare-class
+      passengers so the customer saves the most. */
   comped?: boolean;
+  /** Discount category the passenger booked under, drawn from the vessel's
+      configured passenger types (Senior/PWD/Student/Infant) or "regular"
+      for full-fare adults. Distinct from fareClass (cabin) and comped. */
+  paxType: PaxType;
+};
+
+// Mirrors the vessel-creation passenger types (defaultPassengerTypes) plus
+// "regular" for the undiscounted base fare.
+export type PaxType = "regular" | "senior" | "pwd" | "student" | "infant";
+
+export const PAX_TYPE_LABELS: Record<PaxType, string> = {
+  regular: "Regular",
+  senior: "Senior Citizen",
+  pwd: "Person with Disability (PWD)",
+  student: "Student",
+  infant: "Infant",
 };
 
 // Per-booking vehicle details. Present only when the booking includes a
@@ -52,7 +75,9 @@ export type Ticket = {
 export type Vehicle = {
   class: string;
   plateNumber: string;
-  driverName: string;
+  /** Number of passenger seats bundled free into the vehicle fee. Set per
+      route via the schedule's fare config (FaresStep's includedCompanions). */
+  includedSeats: number;
   /** Vehicle registration year. */
   year: number;
   /** Manufacturer / brand (Toyota, Honda, Mitsubishi…). */
@@ -145,7 +170,114 @@ export type Booking = {
   paymentStatus: "Paid" | "Pending" | "Refunded";
   /** Per-pax tickets. tickets.length === pax. */
   tickets: Ticket[];
+  /** Audit trail. Seeded from history on first load, then appended to live as
+      the admin acts (approvals, ticket-number entry, refunds, cancellations). */
+  activity?: ActivityEntry[];
 };
+
+// Build a fresh activity entry — used when appending live admin actions.
+let activitySeq = 0;
+export function makeActivity(
+  kind: ActivityKind,
+  title: string,
+  actor: string,
+  detail?: string
+): ActivityEntry {
+  return { id: `act-live-${Date.now()}-${activitySeq++}`, kind, title, detail, actor, at: new Date() };
+}
+
+// ─────────── Activity log ───────────
+// A ClickUp-style audit trail shown in the booking/ticket dialogs. Entries are
+// derived deterministically from a booking's lifecycle until a real audit
+// backend feeds them. Newest first.
+export type ActivityKind =
+  | "created" | "approved" | "paid" | "ticket_paid" | "refunded" | "cancelled" | "edited" | "note";
+
+export type ActivityEntry = {
+  id: string;
+  kind: ActivityKind;
+  /** Headline, e.g. "Marked as paid". */
+  title: string;
+  /** Optional supporting detail, e.g. "Ticket no. TKT-0001-A". */
+  detail?: string;
+  /** Who performed it — staff name or "System". */
+  actor: string;
+  at: Date;
+};
+
+const ACTORS = ["Ada Reyes", "Marco Santos", "Liza Cruz", "System"];
+
+// Build a believable activity trail for a booking from its dates + status.
+export function deriveActivity(b: Booking): ActivityEntry[] {
+  // Seed a tiny PRNG off the ref so a booking's log is stable across renders.
+  let h = 2166136261;
+  for (let i = 0; i < b.ref.length; i++) { h ^= b.ref.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const rand = () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 1000) / 1000; };
+  const staff = () => ACTORS[Math.floor(rand() * (ACTORS.length - 1))]; // exclude System
+
+  const out: ActivityEntry[] = [];
+  const base = new Date(b.bookingDate);
+  let cursor = new Date(base);
+  const step = (mins: number) => { cursor = new Date(cursor.getTime() + mins * 60_000); return new Date(cursor); };
+  let n = 0;
+  const push = (kind: ActivityKind, title: string, actor: string, detail?: string) =>
+    out.push({ id: `${b.ref}-act-${n++}`, kind, title, detail, actor, at: new Date(cursor) });
+
+  // 1. Created (system, at booking time).
+  push("created", "Booking created", "System", `${b.pax} passenger${b.pax === 1 ? "" : "s"} · ${b.routeOriginCode} → ${b.routeDestinationCode}`);
+
+  // 2. Approval / payment depending on status.
+  if (b.status === "Confirmed" || b.status === "Refunded") {
+    step(30 + Math.floor(rand() * 240));
+    push("approved", "Booking approved", staff());
+    // Per-paid-ticket entries.
+    b.tickets.filter((t) => t.status === "Paid" && t.ticketNumber).forEach((t) => {
+      step(2 + Math.floor(rand() * 20));
+      push("ticket_paid", "Ticket marked paid", staff(), `Ticket no. ${t.ticketNumber} · ${t.name}`);
+    });
+  }
+
+  // 3. Terminal transitions.
+  if (b.status === "Cancelled") {
+    step(60 + Math.floor(rand() * 600));
+    push("cancelled", "Booking cancelled", staff(), "Cancelled by operator");
+  }
+  if (b.status === "Refunded") {
+    step(120 + Math.floor(rand() * 1200));
+    push("refunded", "Payment refunded", staff(), `₱${b.amount.toLocaleString()} returned to wallet`);
+  }
+
+  // Newest first.
+  return out.reverse();
+}
+
+// Ticket-scoped activity — a focused trail for a single passenger ticket.
+// Derived from the ticket's own status + number so the rail in the ticket
+// dialog reads sensibly without the full booking context.
+export function deriveTicketActivity(t: Ticket, ref: string, createdAt: Date): ActivityEntry[] {
+  let h = 2166136261;
+  for (let i = 0; i < t.id.length; i++) { h ^= t.id.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const rand = () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 1000) / 1000; };
+  const staff = () => ACTORS[Math.floor(rand() * (ACTORS.length - 1))];
+
+  const out: ActivityEntry[] = [];
+  let cursor = new Date(createdAt);
+  const step = (mins: number) => { cursor = new Date(cursor.getTime() + mins * 60_000); };
+  let n = 0;
+  const push = (kind: ActivityKind, title: string, actor: string, detail?: string) =>
+    out.push({ id: `${t.id}-act-${n++}`, kind, title, detail, actor, at: new Date(cursor) });
+
+  push("created", "Ticket issued", "System", `${t.name} · ${t.fareClass}`);
+  if (t.status === "Paid" || t.status === "Refunded") {
+    step(20 + Math.floor(rand() * 200));
+    push("ticket_paid", "Marked as paid", staff(), t.ticketNumber ? `Ticket no. ${t.ticketNumber}` : undefined);
+  }
+  if (t.status === "Cancelled") { step(60 + Math.floor(rand() * 400)); push("cancelled", "Ticket cancelled", staff()); }
+  if (t.status === "Refunded") { step(120 + Math.floor(rand() * 800)); push("refunded", "Ticket refunded", staff(), `Fare ₱${t.grossFare.toLocaleString()} returned`); }
+
+  void ref;
+  return out.reverse();
+}
 
 // ─────────── Voyage shape (slice of what we need from localStorage) ───────────
 // Mirrors the fields VoyagesPage writes. Defensive — fields may be missing on
@@ -155,6 +287,8 @@ export type StoredVoyage = {
   date: string;
   hour: number;
   minute: number;
+  /** Shipping line that owns this voyage — used to scope operator views. */
+  lineId?: string;
   vesselName?: string;
   originCode?: string;
   destinationCode?: string;
@@ -239,7 +373,10 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         vehicle = {
           class: vehicleClass!,
           plateNumber: `${String.fromCharCode(65 + Math.floor(rand() * 26))}${String.fromCharCode(65 + Math.floor(rand() * 26))}${String.fromCharCode(65 + Math.floor(rand() * 26))} ${String(1000 + Math.floor(rand() * 8999))}`,
-          driverName: "", // finalized after the tickets loop
+          // Vehicle fare bundles 2 free passenger seats by default. In real
+          // data this comes from the schedule's fare config (includedCompanions);
+          // mock uses a fixed 2 until that's wired through.
+          includedSeats: 2,
           year: 2015 + Math.floor(rand() * 11), // 2015 – 2025
           make,
           model,
@@ -292,38 +429,51 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       for (let p = 0; p < pax; p++) {
         const isLead = p === 0;
         const tFirst = isLead ? first : FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
-        // Vehicle role: first ticket is the Driver, second is the
-        // Companion. Both are comped (fare = 0) under the vehicle fee.
-        const vehicleRole: Ticket["vehicleRole"] | undefined = hasVehicle
-          ? p === 0 ? "Driver" : p === 1 ? "Companion" : undefined
-          : undefined;
-        const comped = !!vehicleRole;
         const fareClass: FareClass = rand() < 0.55 ? "Economy" : rand() < 0.85 ? "Tourist" : "Business";
         const sex: PassengerSex = rand() < 0.5 ? "Female" : "Male";
-        // Driver must be of driving age — bump if the roll came in low.
-        let age = 3 + Math.floor(rand() * 70);
-        if (vehicleRole === "Driver" && age < 21) age = 21 + Math.floor(rand() * 30);
-        // Driver's valid ID is forced to Professional Driver's License so
-        // the document type aligns with the role.
-        const idType = vehicleRole === "Driver"
-          ? ID_TYPES.find((t) => t.label === "Professional Driver's License")!
-          : ID_TYPES[Math.floor(rand() * ID_TYPES.length)];
+        const age = 1 + Math.floor(rand() * 72); // 1–72
+        // Discount category, drawn to mirror the vessel's passenger types.
+        // Age decides infant/senior; otherwise a small share are student/PWD.
+        const paxType: PaxType = (() => {
+          if (age <= 2) return "infant";
+          if (age >= 60) return "senior";
+          const roll = rand();
+          if (age >= 6 && age <= 24 && roll < 0.2) return "student";
+          if (roll >= 0.95) return "pwd";
+          return "regular";
+        })();
+        const idType = ID_TYPES[Math.floor(rand() * ID_TYPES.length)];
         // Lead pax inherits the booking contact; companions get their own
-        // ~45% of the time so the dialog has a believable mix of filled and
-        // blank cells.
-        // Every passenger gets phone + email captured so the dialog always
-        // has channels to surface. Lead pax inherits the booking contact;
-        // companions get their own minted off their name.
+        // mint so the dialog has a believable per-pax contact spread.
         const paxPhone = isLead
           ? contactMobile
           : `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14);
         const paxEmail = isLead
           ? contactEmail
           : `${tFirst.toLowerCase()}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`;
+        const ticketStatus: TicketStatus = (() => {
+          if (status === "Cancelled") return "Cancelled";
+          if (status === "Refunded")  return "Refunded";
+          if (status === "Pending")   return "Pending";
+          if (forceTicketMix17) {
+            if (p === 2) return "Cancelled";
+            if (p === 3) return "Refunded";
+            return "Paid";
+          }
+          return "Paid";
+        })();
+        // The ticket number is the public identifier (TKT-####-X), but it's
+        // only assigned once a ticket is Paid. Pending/unpaid tickets carry
+        // none — the UI shows a dash until payment is collected.
+        const ticketNumber = ticketStatus === "Paid"
+          ? `${ref}-${String.fromCharCode(65 + p)}`
+          : undefined;
         tickets.push({
           id: `${ref}-${String.fromCharCode(65 + p)}`, // A, B, C, …
           name: `${tFirst} ${last}`,
           fareClass,
+          paxType,
+          ticketNumber,
           age,
           sex,
           nationality: "Filipino",
@@ -331,35 +481,35 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           documentRef: idType.format(rand),
           idFrontUrl: pickMockImage("idFront", rand),
           idBackUrl: pickMockImage("idBack", rand),
-          fare: comped ? 0 : Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
+          // Provisional fare; comping pass below zeros out the seats
+          // covered by the vehicle fee. grossFare stays at the published
+          // rate so the per-passenger display can stay neutral.
+          fare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
+          grossFare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
           phone: paxPhone,
           email: paxEmail,
-          vehicleRole,
-          comped: comped || undefined,
-          // Per-ticket lifecycle. Cancelled/Refunded bookings push every
-          // ticket into the matching terminal state. Otherwise tickets are
-          // Paid by default.
-          status: (() => {
-            if (status === "Cancelled") return "Cancelled" as TicketStatus;
-            if (status === "Refunded")  return "Refunded"  as TicketStatus;
-            if (status === "Pending")   return "Pending"   as TicketStatus;
-            if (forceTicketMix17) {
-              // pax 0+1 → Paid, pax 2 → Cancelled, pax 3 → Refunded
-              if (p === 2) return "Cancelled" as TicketStatus;
-              if (p === 3) return "Refunded"  as TicketStatus;
-              return "Paid" as TicketStatus;
-            }
-            return "Paid" as TicketStatus;
-          })(),
+          status: ticketStatus,
         });
         void fareClasses; // silence lint
       }
 
-      // Finalize the driver name on the vehicle record now that we know who
-      // got assigned the Driver role.
+      // Apply vehicle comping — N free seats from the vehicle fare go to the
+      // cheapest-class tickets first so the customer saves the most. Stable
+      // sort by original index keeps the comping deterministic when several
+      // passengers share a fare class.
       if (vehicle) {
-        const driverTicket = tickets.find((t) => t.vehicleRole === "Driver");
-        if (driverTicket) vehicle.driverName = driverTicket.name;
+        const indexed = tickets.map((t, i) => ({ t, i }));
+        indexed.sort((a, b) => {
+          const af = FARE_CLASS_MULTIPLIER[a.t.fareClass];
+          const bf = FARE_CLASS_MULTIPLIER[b.t.fareClass];
+          return af !== bf ? af - bf : a.i - b.i;
+        });
+        const compCount = Math.min(vehicle.includedSeats, tickets.length);
+        for (let c = 0; c < compCount; c++) {
+          const target = indexed[c].t;
+          target.comped = true;
+          target.fare = 0;
+        }
       }
 
       // Payment metadata — deterministic per booking via the same rng.

@@ -375,7 +375,29 @@ function VoyageMap({
 
   return (
     <div className="relative h-[340px] overflow-hidden rounded-2xl bg-[#dde9f2] shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
-      <div ref={containerRef} className="voyage-map-canvas absolute inset-0 h-full w-full" />
+      {/* Canvas fades in once tiles are loaded so there's no bare blur-to-sharp
+          pop on refresh — the loading veil below covers the gap. */}
+      <div
+        ref={containerRef}
+        className={
+          "voyage-map-canvas absolute inset-0 h-full w-full transition-opacity duration-500 " +
+          (mapReady ? "opacity-100" : "opacity-0")
+        }
+      />
+
+      {/* Loading veil — a calm tinted cover with a small spinner, shown until
+          the basemap reports loaded. Replaces the bare placeholder flash. */}
+      {!mapReady && (
+        <div className="absolute inset-0 z-[3] grid place-items-center bg-[#dde9f2]">
+          <span className="inline-flex items-center gap-2 text-[12px] font-medium text-slate-500">
+            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 animate-spin text-slate-400" aria-hidden>
+              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.3" strokeWidth="3" />
+              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+            </svg>
+            Loading map…
+          </span>
+        </div>
+      )}
       {/* SVG route overlay — rendered above the basemap canvas (which is filtered) so the
           orange route is unaffected by the basemap desaturation. */}
       {projected && (

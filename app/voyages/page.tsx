@@ -8,6 +8,7 @@ import CreateScheduleModal from "@/components/CreateScheduleModal";
 import { MOCK_FLEET, type VesselType } from "@/components/schedule-steps/VesselStep";
 import { PORTS } from "@/components/schedule-steps/RoutesStep";
 import Modal from "@/components/Modal";
+import DateRangePicker, { type DateRange } from "@/components/DateRangePicker";
 import { lines as allLines } from "@/lib/shipping-lines";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
 
@@ -55,6 +56,9 @@ type Voyage = {
   /** Confirmed bookings count — defaults to 0 until a booking system lands. */
   paxConfirmed: number;
   status: VoyageStatus;
+  /** Optional operator label for recurring schedules (e.g. "Schedule A").
+      Carried from the schedule wizard; surfaces on the calendar card. */
+  scheduleLabel?: string;
 };
 
 // Helper — turn a CreatedSchedule payload into one-or-many calendar Voyages.
@@ -118,35 +122,35 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
       fareLines.push({ key: `addon-${a.key}`, label: a.label, sublabel: a.descriptor, amount: Number(row?.price) || a.defaultPrice, group: "addon" });
     });
 
-  const [hh, mm] = schedule.departureTime.split(":").map(Number);
   const avgDuration =
     (Number(routes.durationLowHrs) + Number(routes.durationHighHrs)) / 2 || 1.5;
 
-  const baseDate = new Date(schedule.departureDate + "T00:00:00");
-  if (isNaN(baseDate.getTime())) return [];
+  // Schedules are always recurring. Generate the next 30 days starting
+  // today; for each day in that window, expand every selected weekday+hour
+  // slot into a voyage. The server does this for real; this is the
+  // client-side preview that lights up the calendar immediately.
+  const RANGE_DAYS = 30;
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const dowKeys = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
-  // Build the list of dates this schedule actually runs.
-  const dates: Date[] = [];
-  if (schedule.recurrence === "once") {
-    dates.push(baseDate);
-  } else {
-    const end = new Date(schedule.endDate + "T00:00:00");
-    if (isNaN(end.getTime())) return [];
-    const runsKey = new Set(schedule.runsOn);
-    const cursor = new Date(baseDate);
-    while (cursor <= end) {
-      const dow = (cursor.getDay() + 6) % 7;
-      const key = (["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const)[dow];
-      if (runsKey.has(key)) dates.push(new Date(cursor));
-      cursor.setDate(cursor.getDate() + 1);
-    }
+  const expansions: { date: Date; hour: number }[] = [];
+  for (let offset = 0; offset < RANGE_DAYS; offset++) {
+    const cursor = new Date(start);
+    cursor.setDate(cursor.getDate() + offset);
+    const dow = (cursor.getDay() + 6) % 7; // Mon=0..Sun=6
+    const key = dowKeys[dow];
+    const hours = schedule.dayTimes[key] ?? [];
+    hours.forEach((h) => expansions.push({ date: cursor, hour: h }));
   }
 
-  return dates.map((d, i) => ({
+  const scheduleLabel = schedule.label?.trim() || undefined;
+
+  return expansions.map(({ date, hour }, i) => ({
     id: `vy-${Date.now()}-${i}`,
-    date: d,
-    hour: hh,
-    minute: mm,
+    date,
+    hour,
+    minute: 0,
     durationHours: avgDuration,
     vesselName,
     vesselType,
@@ -161,6 +165,7 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
     fareLines,
     paxConfirmed: 0,
     status: "Scheduled" as const,
+    scheduleLabel,
   }));
 }
 
@@ -188,22 +193,31 @@ function fmtHour(h: number): string {
   return `${display}:00 ${period}`;
 }
 
-function fmtRange(start: Date, end: Date): string {
-  const sameMonth = start.getMonth() === end.getMonth();
-  const startStr = start.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const endStr = sameMonth
-    ? end.toLocaleDateString("en-US", { day: "numeric" })
-    : end.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  return `${startStr} – ${endStr}, ${end.getFullYear()}`;
+// Humanize a crossing duration in hours → "3h 30m" / "2h" / "45m".
+function fmtDuration(hours: number): string {
+  const total = Math.round(hours * 60);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 export default function VoyagesPage() {
-  const { active } = useShippingLine();
-  const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(TODAY));
+  const { active, locked } = useShippingLine();
+  const [weekStart] = useState<Date>(() => startOfWeek(TODAY));
   const [vesselFilter, setVesselFilter] = useState<string>("all");
-  const [routeFilter, setRouteFilter] = useState<string>("all");
   const [portFilter, setPortFilter] = useState<string>("all");
-  const [query, setQuery] = useState("");
+
+  // Deep-link support: the Routes page links here pre-filtered by a route's
+  // origin port and assigned vessel (?origin=CEB&vessel=MV%20Filipinas%20Cebu).
+  // Read those once on mount and seed the filters.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const origin = params.get("origin");
+    const vessel = params.get("vessel");
+    if (origin) setPortFilter(origin);
+    if (vessel) setVesselFilter(vessel);
+  }, []);
   // Voyages persisted in localStorage. SSR-safe sequencing:
   //  1. Initial state is empty on both server and client → no hydration drift.
   //  2. After mount, read localStorage and (if anything's stored) push it into
@@ -218,7 +232,10 @@ export default function VoyagesPage() {
     try {
       const raw = window.localStorage.getItem("tripket.voyages");
       if (raw) {
-        const parsed: (Omit<Voyage, "date"> & { date: string })[] = JSON.parse(raw);
+        const parsedAll: (Omit<Voyage, "date"> & { date: string })[] = JSON.parse(raw);
+        // Operators only see their own line's voyages; admins see all (the
+        // switcher governs which line they're acting as).
+        const parsed = locked ? parsedAll.filter((v) => (v as { lineId?: string }).lineId === active.id) : parsedAll;
         // Defensive backfills for fields that may not exist on older stored
         // voyages (the schema has grown over time).
         setVoyages(parsed.map((v) => {
@@ -242,14 +259,23 @@ export default function VoyagesPage() {
   useEffect(() => {
     if (!hasHydrated) return;
     try {
-      window.localStorage.setItem(
-        "tripket.voyages",
-        JSON.stringify(voyages.map((v) => ({ ...v, date: v.date.toISOString() }))),
-      );
+      const mine = voyages.map((v) => ({ ...v, date: v.date.toISOString() }));
+      // When operating inside a single line (operator, or admin scoped to a
+      // line), `voyages` only holds this line's records — so merge them back
+      // over the stored set without clobbering other lines' voyages.
+      let payload = mine;
+      if (locked) {
+        const rawAll = window.localStorage.getItem("tripket.voyages");
+        const others = rawAll
+          ? (JSON.parse(rawAll) as { lineId?: string }[]).filter((v) => v.lineId !== active.id)
+          : [];
+        payload = [...others, ...mine] as typeof mine;
+      }
+      window.localStorage.setItem("tripket.voyages", JSON.stringify(payload));
     } catch {
       // Quota or serialization error — drop silently.
     }
-  }, [voyages, hasHydrated]);
+  }, [voyages, hasHydrated, locked, active.id]);
   // Which voyage's detail dialog is open (null = closed).
   const [openVoyageId, setOpenVoyageId] = useState<string | null>(null);
   const openVoyage = useMemo(
@@ -257,88 +283,108 @@ export default function VoyagesPage() {
     [voyages, openVoyageId],
   );
 
-  // Auto-saves status changes on the voyage in the list.
-  const updateVoyageStatus = (id: string, status: VoyageStatus) =>
-    setVoyages((prev) => prev.map((v) => (v.id === id ? { ...v, status } : v)));
+  // The calendar shows one block per recurring weekly slot (weekday + time +
+  // vessel), even though that slot expands into ~4 dated voyages over 30 days.
+  // So edits/removals must act on the whole slot, not a single occurrence —
+  // otherwise the block reappears from the next remaining occurrence.
+  const slotKey = (v: Voyage) => `${(v.date.getDay() + 6) % 7}|${v.hour}|${v.minute}|${v.vesselName}`;
+  const sameSlot = (a: Voyage, b: Voyage) => slotKey(a) === slotKey(b);
 
-  // Removes a single voyage occurrence (the dialog handles the confirm flow).
+  // Auto-saves status changes across every occurrence of the slot.
+  const updateVoyageStatus = (id: string, status: VoyageStatus) =>
+    setVoyages((prev) => {
+      const target = prev.find((v) => v.id === id);
+      if (!target) return prev;
+      return prev.map((v) => (sameSlot(v, target) ? { ...v, status } : v));
+    });
+
+  // Removes the whole recurring slot (all its dated occurrences).
   const removeVoyage = (id: string) => {
-    setVoyages((prev) => prev.filter((v) => v.id !== id));
+    setVoyages((prev) => {
+      const target = prev.find((v) => v.id === id);
+      if (!target) return prev;
+      return prev.filter((v) => !sameSlot(v, target));
+    });
     setOpenVoyageId(null);
   };
 
-  const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
+  // ── Batch select / delete ──
+  // In select mode, clicking a slot toggles it (by slotKey) instead of opening
+  // the detail dialog. Deleting clears every occurrence of the chosen slots.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedSlots, setSelectedSlots] = useState<Set<string>>(new Set());
+
+  const toggleSlot = (key: string) =>
+    setSelectedSlots((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+
+  const exitSelectMode = () => { setSelectMode(false); setSelectedSlots(new Set()); };
+
+  const deleteSelectedSlots = () => {
+    setVoyages((prev) => prev.filter((v) => !selectedSlots.has(slotKey(v))));
+    exitSelectMode();
+  };
+
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
 
-  const goToday = () => { setWeekStart(startOfWeek(TODAY)); setUsedCustom(false); };
-  const prev = () => { setWeekStart((w) => addDays(w, -7)); setUsedCustom(false); };
-  const next = () => { setWeekStart((w) => addDays(w, 7));  setUsedCustom(false); };
-
-  // ─── Week-jump presets ───
-  // Each preset resolves to a weekStart so the calendar can show the right 7-day window.
-  // The trigger label below picks the preset whose start matches the current weekStart,
-  // falling back to "Custom range" so users always know what they're looking at.
-  const presets = useMemo(() => {
-    const thisWeek = startOfWeek(TODAY);
+  // Port + vessel filter options, derived from the voyages that actually exist
+  // so the dropdowns never offer dead choices.
+  const portOptions = useMemo(() => {
+    const seen = new Map<string, string>(); // code → city
+    voyages.forEach((v) => { seen.set(v.originCode, v.originCity); seen.set(v.destinationCode, v.destinationCity); });
     return [
-      { id: "this",  label: "This week", start: thisWeek },
-      { id: "next",  label: "Next week", start: addDays(thisWeek, 7) },
-      { id: "last",  label: "Last week", start: addDays(thisWeek, -7) },
-      { id: "in30",  label: "In 30 days",  start: startOfWeek(addDays(TODAY, 30)) },
-      { id: "ago30", label: "30 days ago", start: startOfWeek(addDays(TODAY, -30)) },
+      { value: "all", label: "All ports" },
+      ...Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1])).map(([code, city]) => ({ value: code, label: `${city} (${code})` })),
     ];
-  }, []);
-  // When the user picks a date through the custom picker, we lock the trigger to
-  // "Custom range" even if their picked week happens to coincide with a named preset.
-  // The flag clears whenever a named preset is selected or the navigator (‹/›/Jump to today)
-  // is used.
-  const [usedCustom, setUsedCustom] = useState(false);
+  }, [voyages]);
+
+  const vesselOptions = useMemo(() => {
+    const seen = new Set<string>();
+    voyages.forEach((v) => seen.add(v.vesselName));
+    return [{ value: "all", label: "All vessels" }, ...Array.from(seen).sort().map((n) => ({ value: n, label: n }))];
+  }, [voyages]);
+
+  // Calendar voyages, scoped to the active port + vessel filters. A port match
+  // is either end of the crossing (origin or destination).
+  const filteredVoyages = useMemo(
+    () =>
+      voyages
+        .filter((v) => portFilter === "all" || v.originCode === portFilter || v.destinationCode === portFilter)
+        .filter((v) => vesselFilter === "all" || v.vesselName === vesselFilter),
+    [voyages, portFilter, vesselFilter]
+  );
+
+  // Group voyages into one representative card per recurring slot, bucketed by
+  // weekday + hour. A "slot" is a distinct route + vessel + time — the SAME
+  // weekday+hour can hold several (different routes/vessels), which is exactly
+  // why cells stack rather than overlay. Key: "weekday|hour".
+  const cellSlots = useMemo(() => {
+    const map = new Map<string, Voyage[]>();
+    const seen = new Set<string>();
+    const weekdayOf = (d: Date) => (d.getDay() + 6) % 7;
+    [...filteredVoyages]
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .forEach((v) => {
+        const wd = weekdayOf(v.date);
+        // One card per distinct slot (route + vessel + exact time).
+        const dedupe = `${wd}|${v.hour}|${v.minute}|${v.vesselName}|${v.originCode}-${v.destinationCode}`;
+        if (seen.has(dedupe)) return;
+        seen.add(dedupe);
+        const bucket = `${wd}|${v.hour}`;
+        const arr = map.get(bucket);
+        if (arr) arr.push(v); else map.set(bucket, [v]);
+      });
+    return map;
+  }, [filteredVoyages]);
+
   const [createOpen, setCreateOpen] = useState(false);
+  const [manifestOpen, setManifestOpen] = useState(false);
   // Slot the operator clicked to seed the wizard's Schedule step. Cleared on
   // close so the next plain-button create starts fresh.
   const [createPrefill, setCreatePrefill] = useState<{ date: Date; hour: number } | null>(null);
-  const activePresetLabel = useMemo(() => {
-    if (usedCustom) return "Custom range";
-    const hit = presets.find((p) => sameDay(p.start, weekStart));
-    return hit?.label ?? "Custom range";
-  }, [presets, weekStart, usedCustom]);
-
-  const [presetOpen, setPresetOpen] = useState(false);
-  // When the preset menu's "Custom range…" item is picked, swap to the date-picker view
-  // *inside the same popover surface* so it feels like a single, connected control.
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerMonth, setPickerMonth] = useState<Date>(() => new Date(weekStart.getFullYear(), weekStart.getMonth(), 1));
-  const presetWrapRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!presetOpen && !pickerOpen) return;
-    const onClick = (e: MouseEvent) => {
-      if (presetWrapRef.current && !presetWrapRef.current.contains(e.target as Node)) {
-        setPresetOpen(false);
-        setPickerOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        // Back out of the date picker into the preset menu first; second Escape closes.
-        if (pickerOpen) setPickerOpen(false);
-        else setPresetOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [presetOpen, pickerOpen]);
-
-  // Custom-range trigger label — "Week of MMM D" when the visible week doesn't match a preset.
-  const customLabel = useMemo(
-    () => `Week of ${weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
-    [weekStart],
-  );
-  const triggerLabel = activePresetLabel === "Custom range" ? customLabel : activePresetLabel;
 
   return (
     // Fill the scroll container — the page itself never scrolls.
@@ -348,41 +394,60 @@ export default function VoyagesPage() {
         title="Voyages"
         subtitle={active.name}
         showDateFilter={false}
+        showExport={false}
         right={
-          <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            Create schedule
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Manifest browser — everyday audit artifact. Opens a dialog
+                listing each dated departure's manifest as a downloadable card. */}
+            <button
+              type="button"
+              onClick={() => setManifestOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z" />
+                <path d="M14 3v6h6" />
+                <path d="M8 13h8M8 17h5" />
+              </svg>
+              Manifest
+            </button>
+            {/* Export — placeholder for a CSV/PDF dump of the schedule. */}
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                <path d="M12 3v12" />
+                <path d="m7 10 5 5 5-5" />
+                <path d="M5 21h14" />
+              </svg>
+              Export
+            </button>
+            <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Create schedule
+            </button>
+          </div>
         }
       />
 
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
         {/* ─── Toolbar ─── */}
+        {/* Scoped to Port + Vessel filters per backend spec. The calendar
+            below is a weekday × time template, so there's no search, route
+            filter, or date picker — the view itself doesn't have specific
+            days, just recurring weekday slots. */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm focus-within:border-slate-300 focus-within:ring-2 focus-within:ring-brand-100">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-slate-400">
-                <circle cx="11" cy="11" r="7" />
-                <path d="m20 20-3.5-3.5" />
-              </svg>
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search vessel or route"
-                className="w-52 bg-transparent placeholder:text-slate-400 focus:outline-none"
-              />
-            </div>
-
             <Select
               size="sm"
               value={portFilter}
               onChange={setPortFilter}
               ariaLabel="Filter by port"
-              className="w-36"
-              options={[{ value: "all", label: "All ports" }]}
+              className="w-44"
+              options={portOptions}
             />
 
             <Select
@@ -390,211 +455,55 @@ export default function VoyagesPage() {
               value={vesselFilter}
               onChange={setVesselFilter}
               ariaLabel="Filter by vessel"
-              className="w-40"
-              options={[{ value: "all", label: "All vessels" }]}
-            />
-
-            <Select
-              size="sm"
-              value={routeFilter}
-              onChange={setRouteFilter}
-              ariaLabel="Filter by route"
-              className="w-36"
-              options={[{ value: "all", label: "All routes" }]}
+              className="w-48"
+              options={vesselOptions}
             />
           </div>
 
-          {/* Week navigator */}
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={prev}
-              aria-label="Previous week"
-              className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-50"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-            </button>
-            {/* Preset dropdown — replaces the plain Today button.
-                Label reflects whatever range is currently shown; menu lets users jump
-                to common week windows. The "Jump to today" item resets to the current week. */}
-            <div className="relative" ref={presetWrapRef}>
+          {/* Select-mode toggle for batch deleting slots. */}
+          {selectMode ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] font-medium text-slate-600">
+                {selectedSlots.size} selected
+              </span>
               <button
                 type="button"
-                onClick={() => {
-                  // Toggle: if already open in either mode, close both. Otherwise open preset list.
-                  if (presetOpen || pickerOpen) {
-                    setPresetOpen(false);
-                    setPickerOpen(false);
-                  } else {
-                    setPresetOpen(true);
-                  }
-                }}
-                aria-haspopup="menu"
-                aria-expanded={presetOpen || pickerOpen}
-                className={
-                  "inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[12.5px] font-medium transition-colors " +
-                  // When the visible week is a custom range, paint the trigger brand orange
-                  // so the user sees at a glance that they're on a hand-picked range.
-                  (activePresetLabel === "Custom range"
-                    ? presetOpen || pickerOpen
-                      ? "border-brand-300 bg-brand-100 text-brand-700"
-                      : "border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"
-                    : presetOpen || pickerOpen
-                      ? "border-slate-300 bg-slate-50 text-slate-900"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50")
-                }
+                onClick={deleteSelectedSlots}
+                disabled={selectedSlots.size === 0}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors duration-150 hover:bg-rose-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-rose-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {activePresetLabel === "Custom range" && (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-brand-600">
-                    <rect x="3.5" y="5" width="17" height="16" rx="2" />
-                    <path d="M8 3v4M16 3v4M3.5 10h17" />
-                  </svg>
-                )}
-                {triggerLabel}
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className={
-                    "h-3 w-3 " +
-                    (activePresetLabel === "Custom range" ? "text-brand-500" : "text-slate-400")
-                  }
-                >
-                  <path d="M6 9l6 6 6-6" />
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                  <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
                 </svg>
+                Delete{selectedSlots.size > 0 ? ` (${selectedSlots.size})` : ""}
               </button>
-
-              {presetOpen && (
-                <div
-                  role="menu"
-                  aria-orientation="vertical"
-                  className="absolute right-0 z-40 mt-1.5 w-44 overflow-hidden rounded-xl bg-white p-1 ring-1 ring-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-8px_rgba(15,23,42,0.18)]"
-                  style={{ animation: "row-menu-in 120ms cubic-bezier(0.16, 1, 0.3, 1)" }}
-                >
-                  {/* Quick reset — sits above the named presets so users always have a
-                      one-tap path back to "now", even when on a Custom range. */}
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { goToday(); setPresetOpen(false); }}
-                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] font-medium text-slate-700 transition-colors hover:bg-slate-100/80 hover:text-slate-900"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-400">
-                      <circle cx="12" cy="12" r="9" />
-                      <path d="M12 7v5l3 2" />
-                    </svg>
-                    Jump to today
-                  </button>
-                  <div className="my-1 h-px bg-slate-100" />
-                  {presets.map((p) => {
-                    const active = sameDay(p.start, weekStart);
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        role="menuitem"
-                        onClick={() => { setWeekStart(p.start); setUsedCustom(false); setPresetOpen(false); }}
-                        className={
-                          "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] font-medium transition-colors " +
-                          (active
-                            ? "bg-brand-50 text-brand-700"
-                            : "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900")
-                        }
-                      >
-                        <span>{p.label}</span>
-                        {active && (
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-brand-500">
-                            <path d="M5 12l5 5 9-11" />
-                          </svg>
-                        )}
-                      </button>
-                    );
-                  })}
-
-                  {/* Custom range — opens a single-date picker. We pick a date, snap to
-                      the start of that week, and close. Simpler than a from/to flow
-                      since the calendar's atomic unit is already a week. */}
-                  <div className="my-1 h-px bg-slate-100" />
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setPickerMonth(new Date(weekStart.getFullYear(), weekStart.getMonth(), 1));
-                      setPresetOpen(false);
-                      setPickerOpen(true);
-                    }}
-                    className={
-                      "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] font-medium transition-colors " +
-                      (activePresetLabel === "Custom range"
-                        ? "bg-brand-50 text-brand-700"
-                        : "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900")
-                    }
-                  >
-                    <span className="inline-flex items-center gap-2">
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.75"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className={
-                          "h-3.5 w-3.5 " +
-                          (activePresetLabel === "Custom range" ? "text-brand-500" : "text-slate-400")
-                        }
-                      >
-                        <rect x="3.5" y="5" width="17" height="16" rx="2" />
-                        <path d="M8 3v4M16 3v4M3.5 10h17" />
-                      </svg>
-                      Custom range…
-                    </span>
-                    {activePresetLabel === "Custom range" && (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-brand-500">
-                        <path d="M5 12l5 5 9-11" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              )}
-
-              {/* Date picker popover — single date select, snaps to the containing week */}
-              {pickerOpen && (
-                <MiniDatePicker
-                  month={pickerMonth}
-                  onMonthChange={setPickerMonth}
-                  selected={weekStart}
-                  today={TODAY}
-                  onPick={(d) => {
-                    setWeekStart(startOfWeek(d));
-                    setUsedCustom(true);
-                    setPickerOpen(false);
-                  }}
-                  onBack={() => { setPickerOpen(false); setPresetOpen(true); }}
-                />
-              )}
+              <button
+                type="button"
+                onClick={exitSelectMode}
+                className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-slate-300"
+              >
+                Cancel
+              </button>
             </div>
+          ) : (
             <button
               type="button"
-              onClick={next}
-              aria-label="Next week"
-              className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-50"
+              onClick={() => setSelectMode(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                <path d="M9 6l6 6-6 6" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-500">
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
               </svg>
+              Select
             </button>
-          </div>
+          )}
         </div>
 
-        {/* ─── Week summary ─── */}
+        {/* ─── Schedule summary ─── */}
         <div className="border-b border-slate-100 px-5 py-3">
-          <h2 className="text-base font-semibold tracking-tight text-slate-900">All schedules</h2>
-          <p className="mt-0.5 font-mono text-[11.5px] tabular-nums text-slate-500">{fmtRange(weekStart, weekEnd)}</p>
+          <h2 className="text-base font-semibold tracking-tight text-slate-900">Weekly schedule template</h2>
+          <p className="mt-0.5 text-[11.5px] text-slate-500">Recurring departures by weekday + time.</p>
         </div>
 
         {/* ─── Calendar grid ───
@@ -620,28 +529,12 @@ export default function VoyagesPage() {
                     {isToday && (
                       <span aria-hidden className="absolute inset-x-0 top-0 h-[2px] bg-brand-500" />
                     )}
-                    <div
-                      className={
-                        "text-[10.5px] font-semibold uppercase tracking-[0.12em] " +
-                        (isToday ? "text-brand-700" : "text-slate-600")
-                      }
-                    >
-                      {DAY_NAMES[i]}
-                    </div>
-                    <div className="flex items-baseline gap-1.5">
-                      <span
-                        className={
-                          "text-[15px] font-semibold tracking-tight " +
-                          (isToday ? "text-brand-700" : "text-slate-900")
-                        }
-                      >
-                        {d.getDate()}
-                      </span>
-                      <span className={"text-[11px] " + (isToday ? "text-brand-600" : "text-slate-500")}>
-                        {d.toLocaleDateString("en-US", { month: "short" })}
+                    <div className="flex items-center gap-2">
+                      <span className={"text-[15px] font-semibold tracking-tight " + (isToday ? "text-brand-700" : "text-slate-900")}>
+                        {DAY_NAMES[i]}
                       </span>
                       {isToday && (
-                        <span className="ml-0.5 inline-flex items-center rounded-full bg-brand-500 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.1em] text-white">
+                        <span className="inline-flex items-center rounded-full bg-brand-500 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-white shadow-[0_1px_2px_rgba(249,115,22,0.4)]">
                           Today
                         </span>
                       )}
@@ -651,19 +544,14 @@ export default function VoyagesPage() {
               })}
             </div>
 
-            {/* Hour rows — vertically scrollable inside the card.
-                Voyage blocks render as an absolutely-positioned overlay so
-                they can span fractional hours and sit on top of the cells. */}
+            {/* Hour rows — vertically scrollable inside the card. Cells render
+                their voyage cards inline and grow to fit, so multiple
+                routes/vessels at the same weekday+hour stack instead of
+                overlapping. */}
             <div className="relative min-h-0 flex-1 overflow-y-auto">
-              {/* ── Voyage overlay ── */}
-              <VoyageOverlay voyages={voyages} days={days} onOpenVoyage={setOpenVoyageId} />
-
               {HOURS.map((h, rowIdx) => (
                 <div
                   key={h}
-                  // Inset shadow instead of border-top so the row's box-model
-                  // stays exactly 56px tall — keeps the voyage overlay's math
-                  // (hour × 56) accurate regardless of how many rows precede.
                   className={
                     "grid grid-cols-[120px_repeat(7,minmax(0,1fr))] " +
                     (rowIdx !== 0 ? "shadow-[inset_0_1px_0_rgba(226,232,240,0.7)]" : "")
@@ -688,50 +576,63 @@ export default function VoyagesPage() {
                     )}
                   </div>
 
-                  {/* Day cells — empty by default, brand-tinted hover with a plus glyph
-                      invites the user to schedule a new voyage at that day+hour slot. */}
+                  {/* Day cells — render any voyage cards for this weekday+hour
+                      stacked vertically; the cell grows to fit. Empty cells
+                      show a hover "add" affordance. */}
                   {days.map((d, dayIdx) => {
                     const isToday = sameDay(d, TODAY);
+                    const wd = (d.getDay() + 6) % 7;
+                    const slots = cellSlots.get(`${wd}|${h}`) ?? [];
                     return (
-                      <Tooltip
+                      <div
                         key={dayIdx}
-                        variant="light"
-                        delay={250}
-                        className="block"
-                        content="Add schedule"
+                        className={
+                          "group/cell relative min-h-14 w-full border-l border-slate-200 " +
+                          (slots.length > 0 ? "p-1 " : "") +
+                          (isToday ? "bg-brand-50/30" : "")
+                        }
                       >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCreatePrefill({ date: d, hour: h });
-                            setCreateOpen(true);
-                          }}
-                          aria-label={`Add schedule on ${d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} at ${fmtHour(h)}`}
-                          className={
-                            "group relative h-14 w-full border-l border-slate-200 transition-colors duration-100 " +
-                            "hover:bg-brand-50/40 focus-visible:bg-brand-50/40 focus-visible:outline-none " +
-                            (isToday ? "bg-brand-50/30" : "")
-                          }
-                        >
-                          {/* Plus glyph — fades in only on hover/focus */}
-                          <span
-                            aria-hidden
-                            className="pointer-events-none absolute inset-0 grid place-items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
-                          >
-                            <svg
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              className="h-4 w-4 text-brand-500"
+                        {slots.length > 0 ? (
+                          <div className="flex flex-col gap-1">
+                            {slots.map((v) => {
+                              const key = slotKey(v);
+                              return (
+                                <VoyageCard
+                                  key={v.id}
+                                  voyage={v}
+                                  selectMode={selectMode}
+                                  selected={selectedSlots.has(key)}
+                                  onClick={() => (selectMode ? toggleSlot(key) : setOpenVoyageId(v.id))}
+                                />
+                              );
+                            })}
+                            {/* Quiet add-more affordance under the stack */}
+                            {!selectMode && (
+                              <button
+                                type="button"
+                                onClick={() => { setCreatePrefill({ date: d, hour: h }); setCreateOpen(true); }}
+                                aria-label={`Add another schedule at ${fmtHour(h)}`}
+                                className="flex items-center justify-center rounded-md py-0.5 text-slate-300 opacity-0 transition-opacity duration-150 hover:bg-brand-50/60 hover:text-brand-500 group-hover/cell:opacity-100 focus-visible:opacity-100 focus-visible:outline-none"
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M12 5v14M5 12h14" /></svg>
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <Tooltip variant="light" delay={250} className="!absolute inset-0 !block" content="Add schedule">
+                            <button
+                              type="button"
+                              onClick={() => { setCreatePrefill({ date: d, hour: h }); setCreateOpen(true); }}
+                              aria-label={`Add schedule on ${d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} at ${fmtHour(h)}`}
+                              className="group flex h-full w-full items-center justify-center transition-colors duration-100 hover:bg-brand-50/40 focus-visible:bg-brand-50/40 focus-visible:outline-none"
                             >
-                              <path d="M12 5v14M5 12h14" />
-                            </svg>
-                          </span>
-                        </button>
-                      </Tooltip>
+                              <span aria-hidden className="pointer-events-none opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-brand-500"><path d="M12 5v14M5 12h14" /></svg>
+                              </span>
+                            </button>
+                          </Tooltip>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -740,25 +641,23 @@ export default function VoyagesPage() {
           </div>
         </div>
 
-        {/* ─── Footer — voyage tally + create CTA. Copy adapts to whether
-             the operator has any voyages at all, none in this week, or
-             some in view. ─── */}
+        {/* ─── Footer — template tally + create CTA. The calendar is a weekday
+             template, so we count distinct weekly departure slots and the
+             total generated voyages they expand into. ─── */}
         {(() => {
-          const visibleCount = voyages.filter((v) => v.date >= weekStart && v.date <= weekEnd).length;
-          const totalCount = voyages.length;
+          const slotKeys = new Set(
+            filteredVoyages.map((v) => `${(v.date.getDay() + 6) % 7}|${v.hour}|${v.minute}|${v.vesselName}`)
+          );
+          const slotCount = slotKeys.size;
+          const totalCount = filteredVoyages.length;
           let primary: string;
           let secondary: string | null = null;
           if (totalCount === 0) {
             primary = "No voyages yet.";
             secondary = "Get started with your first schedule.";
-          } else if (visibleCount === 0) {
-            primary = `Nothing this week.`;
-            secondary = `${totalCount.toLocaleString()} voyage${totalCount === 1 ? "" : "s"} on other weeks — use the navigator to find them.`;
           } else {
-            primary = `${visibleCount.toLocaleString()} voyage${visibleCount === 1 ? "" : "s"} this week.`;
-            if (totalCount > visibleCount) {
-              secondary = `${(totalCount - visibleCount).toLocaleString()} more on other weeks.`;
-            }
+            primary = `${slotCount.toLocaleString()} weekly departure${slotCount === 1 ? "" : "s"}.`;
+            secondary = `Generating ${totalCount.toLocaleString()} voyage${totalCount === 1 ? "" : "s"} over the next 30 days.`;
           }
           return (
             <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-2.5">
@@ -786,18 +685,11 @@ export default function VoyagesPage() {
         onClose={() => { setCreateOpen(false); setCreatePrefill(null); }}
         prefill={createPrefill ?? undefined}
         onCreate={(payload) => {
-          // Append voyages to whatever's already on the calendar. We only
-          // jump the visible week if the new voyage falls *outside* the
-          // current view — otherwise Today stays anchored in place.
+          // The calendar is a weekday template, so newly-created voyages land
+          // on their weekday columns immediately — no week-jump needed.
           const newVoyages = expandSchedulePayload(payload);
           if (newVoyages.length === 0) return;
           setVoyages((prev) => [...prev, ...newVoyages]);
-          const first = newVoyages[0].date;
-          const currentEnd = addDays(weekStart, 6);
-          if (first < weekStart || first > currentEnd) {
-            setWeekStart(startOfWeek(first));
-            setUsedCustom(false);
-          }
         }}
       />
 
@@ -808,340 +700,16 @@ export default function VoyagesPage() {
         onStatusChange={updateVoyageStatus}
         onRemove={removeVoyage}
       />
+
+      <ManifestDialog
+        open={manifestOpen}
+        onClose={() => setManifestOpen(false)}
+        voyages={voyages}
+      />
     </div>
   );
 }
 
-// ─────────── MiniDatePicker ───────────
-// Mirrors the dashboard's DateRangePicker UX: From/To inputs at the top, a single
-// month with prev/next chevrons, two-click range selection with a hover preview,
-// and a Clear / Today footer. Picking a complete range hands the *start date* back
-// to the parent, which snaps the calendar to that day's week (the voyages page
-// always shows one week at a time).
-function MiniDatePicker({ 
-  month,
-  onMonthChange,
-  selected,
-  today,
-  onPick,
-  onBack,
-}: {
-  month: Date;
-  onMonthChange: (m: Date) => void;
-  /** The currently-visible week start — used to seed the From/To range. */
-  selected: Date;
-  today: Date;
-  /** Called with the range start once the user finalises a selection. */
-  onPick: (d: Date) => void;
-  onBack: () => void;
-}) {
-  // Local range state — committed up to the parent only when the user clicks the
-  // second date (or hits the inputs' Enter/blur).
-  const seedEnd = addDays(selected, 6);
-  const [range, setRange] = useState<{ start: Date; end: Date }>({ start: selected, end: seedEnd });
-  const [pickStart, setPickStart] = useState<Date | null>(null);
-  const [hoverDate, setHoverDate] = useState<Date | null>(null);
-  const [fromInput, setFromInput] = useState(fmtMDY(range.start));
-  const [toInput, setToInput] = useState(fmtMDY(range.end));
-
-  useEffect(() => {
-    setFromInput(fmtMDY(range.start));
-    setToInput(fmtMDY(range.end));
-  }, [range.start, range.end]);
-
-  const previewRange = useMemo<{ start: Date; end: Date } | null>(() => {
-    if (pickStart && hoverDate) {
-      const start = hoverDate < pickStart ? hoverDate : pickStart;
-      const end = hoverDate < pickStart ? pickStart : hoverDate;
-      return { start, end };
-    }
-    return null;
-  }, [pickStart, hoverDate]);
-  const activeRange = previewRange ?? range;
-
-  const handleDayClick = (d: Date) => {
-    if (!pickStart) {
-      setPickStart(d);
-      setHoverDate(d);
-      return;
-    }
-    const start = d < pickStart ? d : pickStart;
-    const end = d < pickStart ? pickStart : d;
-    setRange({ start, end });
-    setPickStart(null);
-    setHoverDate(null);
-    // Commit upward — the parent snaps to the start of this week.
-    onPick(start);
-  };
-
-  const handleInputCommit = (which: "from" | "to", raw: string) => {
-    const parsed = parseMDY(raw);
-    if (!parsed) {
-      if (which === "from") setFromInput(fmtMDY(range.start));
-      else setToInput(fmtMDY(range.end));
-      return;
-    }
-    let nextStart = range.start, nextEnd = range.end;
-    if (which === "from") {
-      nextStart = parsed;
-      if (parsed > range.end) nextEnd = parsed;
-    } else {
-      nextEnd = parsed;
-      if (parsed < range.start) nextStart = parsed;
-    }
-    setRange({ start: nextStart, end: nextEnd });
-    onPick(nextStart);
-  };
-
-  const handleClear = () => {
-    setRange({ start: today, end: today });
-    setPickStart(null);
-    setHoverDate(null);
-  };
-  const handleTodayBtn = () => {
-    setRange({ start: today, end: today });
-    onMonthChange(new Date(today.getFullYear(), today.getMonth(), 1));
-    setPickStart(null);
-    setHoverDate(null);
-    onPick(today);
-  };
-
-  // Build a 6×7 month grid, Monday-first to match the calendar's ISO week.
-  const firstWeekday = (new Date(month.getFullYear(), month.getMonth(), 1).getDay() + 6) % 7;
-  const cells = Array.from({ length: 42 }, (_, i) => {
-    const day = i - firstWeekday + 1;
-    return new Date(month.getFullYear(), month.getMonth(), day);
-  });
-
-  return (
-    <div
-      role="dialog"
-      aria-label="Choose a date range"
-      className="absolute right-0 z-40 mt-1.5 w-[320px] overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-8px_rgba(15,23,42,0.18)]"
-      style={{ animation: "row-menu-in 120ms cubic-bezier(0.16, 1, 0.3, 1)" }}
-    >
-      {/* Top strip — back arrow + title */}
-      <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label="Back to presets"
-          className="grid h-6 w-6 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
-            <path d="M15 18l-6-6 6-6" />
-          </svg>
-        </button>
-        <div className="text-[12.5px] font-semibold tracking-tight text-slate-900">Date range</div>
-      </div>
-
-      {/* From / To inputs */}
-      <div className="grid grid-cols-2 gap-2 px-3 pb-3">
-        <MDYField label="From" value={fromInput} onChange={setFromInput} onCommit={(v) => handleInputCommit("from", v)} />
-        <MDYField label="To"   value={toInput}   onChange={setToInput}   onCommit={(v) => handleInputCommit("to", v)} />
-      </div>
-
-      <div className="h-px bg-slate-100" />
-
-      {/* Month header + nav */}
-      <div className="flex items-center justify-between px-3 pt-3 pb-1.5">
-        <div className="text-[12.5px] font-semibold tracking-tight text-slate-900">
-          {month.toLocaleDateString("en-US", { month: "long" })}
-          <span className="ml-1 tabular-nums text-slate-500">{month.getFullYear()}</span>
-        </div>
-        <div className="flex items-center gap-0.5">
-          <button
-            type="button"
-            onClick={() => onMonthChange(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
-            aria-label="Previous month"
-            className="grid h-6 w-6 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => onMonthChange(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
-            aria-label="Next month"
-            className="grid h-6 w-6 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
-              <path d="M9 6l6 6-6 6" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      {/* Weekday headers */}
-      <div className="grid grid-cols-7 px-3 pb-1 text-center text-[10px] font-medium text-slate-400">
-        {["M", "T", "W", "T", "F", "S", "S"].map((w, i) => <div key={i}>{w}</div>)}
-      </div>
-
-      {/* Day cells — two-click range with hover preview */}
-      <div className="grid grid-cols-7 gap-y-0.5 px-3 pb-2 text-center">
-        {cells.map((d, ci) => {
-          const inMonth = d.getMonth() === month.getMonth();
-          const isStart = sameDay(d, activeRange.start);
-          const isEnd = sameDay(d, activeRange.end);
-          const isInRange = isBetween(d, activeRange.start, activeRange.end);
-          const isEdge = isStart || isEnd;
-          const isSinglePick = sameDay(activeRange.start, activeRange.end);
-          const isCellToday = sameDay(d, today);
-
-          return (
-            <button
-              key={ci}
-              type="button"
-              onClick={() => handleDayClick(d)}
-              onMouseEnter={() => pickStart && setHoverDate(d)}
-              disabled={!inMonth}
-              className={
-                "relative grid h-8 place-items-center text-[12px] tabular-nums transition-colors duration-100 disabled:cursor-default " +
-                (isInRange && !isEdge && !isSinglePick ? "bg-brand-50 text-brand-700 " : "") +
-                (isEdge ? "z-10 rounded-md bg-brand-500 font-semibold text-white " : "") +
-                (!isInRange && !isEdge && inMonth ? "rounded-md text-slate-700 hover:bg-slate-100 " : "") +
-                (!inMonth ? "text-slate-300 " : "")
-              }
-            >
-              {d.getDate()}
-              {isCellToday && !isEdge && (
-                <span className="absolute bottom-1 h-0.5 w-3 rounded-full bg-brand-500" />
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Footer — Clear / Today */}
-      <div className="flex items-center justify-between border-t border-slate-100 px-3 py-2">
-        <button
-          type="button"
-          onClick={handleClear}
-          className="text-[12px] font-medium text-slate-500 transition-colors hover:text-slate-900"
-        >
-          Clear
-        </button>
-        <button
-          type="button"
-          onClick={handleTodayBtn}
-          className="text-[12px] font-medium text-brand-600 transition-opacity hover:opacity-80"
-        >
-          Today
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─────────── Date input helpers ───────────
-function fmtMDY(d: Date): string {
-  return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
-}
-function parseMDY(s: string): Date | null {
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return null;
-  const d = new Date(parseInt(m[3]), parseInt(m[1]) - 1, parseInt(m[2]));
-  return isNaN(d.getTime()) ? null : d;
-}
-function isBetween(d: Date, a: Date, b: Date): boolean {
-  const t = d.getTime();
-  return t >= Math.min(a.getTime(), b.getTime()) && t <= Math.max(a.getTime(), b.getTime());
-}
-
-function MDYField({
-  label,
-  value,
-  onChange,
-  onCommit,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  onCommit: (v: string) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-slate-500">{label}</span>
-      <div className="mt-1 flex items-center rounded-lg border border-slate-200 bg-white pl-2 pr-1.5 transition-[box-shadow,border-color] duration-150 ease-out focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100">
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={(e) => onCommit(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-          placeholder="MM/DD/YYYY"
-          className="w-full bg-transparent py-1 text-[12px] tabular-nums text-slate-900 placeholder:text-slate-400 focus:outline-none"
-        />
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0 text-slate-400">
-          <rect x="3.5" y="5" width="17" height="16" rx="2" />
-          <path d="M8 3v4M16 3v4M3.5 10h17" />
-        </svg>
-      </div>
-    </label>
-  );
-}
-
-
-// ─────────── VoyageOverlay — calendar blocks for created voyages ───────────
-// Absolutely positioned over the hour grid. Each block:
-//  - Sits in the column matching its date (one of the 7 days currently shown)
-//  - Top offset = (voyage.hour + minute/60 - 4) × HOUR_ROW_HEIGHT
-//  - Height    = voyage.durationHours × HOUR_ROW_HEIGHT, with a minimum
-// HOUR_ROW_HEIGHT must match the calendar's row height (h-14 = 56px).
-function VoyageOverlay({
-  voyages,
-  days,
-  onOpenVoyage,
-}: {
-  voyages: Voyage[];
-  days: Date[];
-  onOpenVoyage: (id: string) => void;
-}) {
-  const HOUR_ROW = 56;       // matches h-14 on each hour cell
-  const MIN_HOUR = 4;        // matches HOURS[0]
-  const TIME_AXIS_W = 120;   // matches grid-cols-[120px_repeat(7,…)]
-
-  // Map each visible day to its column index 0..6 for fast lookup.
-  const dayCol = new Map<string, number>();
-  days.forEach((d, i) => dayCol.set(d.toDateString(), i));
-
-  const visible = voyages.filter((v) => dayCol.has(v.date.toDateString()));
-
-  return (
-    <div className="pointer-events-none absolute inset-0 z-10">
-      <div
-        className="grid h-full"
-        style={{ gridTemplateColumns: `${TIME_AXIS_W}px repeat(7, minmax(0, 1fr))` }}
-      >
-        <div />
-        {days.map((_, i) => (
-          <div key={i} className="relative">
-            {visible
-              .filter((v) => dayCol.get(v.date.toDateString()) === i)
-              .map((v) => {
-                // Each block sits in its **departure hour cell**. Top offset
-                // aligns with the hour row; height is fixed to the row height
-                // so the card always fits inside one slot — never bleeds down.
-                // Duration is represented by the left accent bar's pseudo
-                // length below, not by stretching the card.
-                const top = (v.hour + v.minute / 60 - MIN_HOUR) * HOUR_ROW;
-                return (
-                  <VoyageBlock
-                    key={v.id}
-                    voyage={v}
-                    top={top}
-                    rowHeight={HOUR_ROW}
-                    onOpen={() => onOpenVoyage(v.id)}
-                  />
-                );
-              })}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 type StatusCardToneKey = VoyageStatus | "ScheduledFuture";
 
@@ -1207,95 +775,115 @@ const STATUS_CARD_TONE: Record<StatusCardToneKey, {
   },
 };
 
-function VoyageBlock({
+// Per-vessel card tone — deterministic from the vessel name so stacked cards
+// (same day+time, different vessels) are distinguishable by their whole-card
+// color. Cool/neutral families only, to avoid clashing with the brand orange
+// (Today) and the status tones (rose = cancelled, etc.).
+type CardTone = { bg: string; accent: string; hoverShadow: string; routeText: string; arrow: string; vesselText: string };
+const VESSEL_TONES: CardTone[] = [
+  { bg: "bg-brand-50 ring-1 ring-brand-200",     accent: "bg-brand-500",   hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(249,115,22,0.3)]",  routeText: "text-brand-800",   arrow: "text-brand-500",   vesselText: "text-brand-700" },
+  { bg: "bg-blue-100 ring-1 ring-blue-200",      accent: "bg-blue-600",    hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(37,99,235,0.35)]",  routeText: "text-blue-800",    arrow: "text-blue-600",    vesselText: "text-blue-700" },
+  { bg: "bg-violet-50 ring-1 ring-violet-200",   accent: "bg-violet-500",  hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(139,92,246,0.3)]", routeText: "text-violet-800",  arrow: "text-violet-500",  vesselText: "text-violet-600" },
+  { bg: "bg-sky-50 ring-1 ring-sky-200",         accent: "bg-sky-500",     hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(14,165,233,0.3)]",  routeText: "text-sky-800",     arrow: "text-sky-500",     vesselText: "text-sky-600" },
+  { bg: "bg-indigo-50 ring-1 ring-indigo-200",   accent: "bg-indigo-500",  hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(99,102,241,0.3)]",  routeText: "text-indigo-800",  arrow: "text-indigo-500",  vesselText: "text-indigo-600" },
+  { bg: "bg-fuchsia-50 ring-1 ring-fuchsia-200", accent: "bg-fuchsia-500", hoverShadow: "hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_6px_12px_-8px_rgba(217,70,239,0.3)]",  routeText: "text-fuchsia-800", arrow: "text-fuchsia-500", vesselText: "text-fuchsia-600" },
+];
+// Weighted assignment so brand orange (index 0) is the MAIN tone — most
+// vessels land on it — while the accent colors (blue + others) are used
+// sparingly. Roughly: ~half map to orange, the rest spread across the accents.
+function vesselTone(name: string): CardTone {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  const accents = VESSEL_TONES.length - 1; // tones after orange
+  // Bucket into (accents + accents) slots: the first `accents` buckets all map
+  // to orange, the rest map 1:1 to each accent → orange ≈ 50% share.
+  const bucket = h % (accents * 2);
+  return bucket < accents ? VESSEL_TONES[0] : VESSEL_TONES[1 + (bucket - accents)];
+}
+
+// ─────────── VoyageCard — inline, stacking card for one slot ───────────
+// Rendered inside its weekday+hour cell (no absolute positioning), so multiple
+// routes/vessels at the same time stack and the cell grows to fit.
+function VoyageCard({
   voyage,
-  top,
-  rowHeight,
-  onOpen,
+  onClick,
+  selectMode = false,
+  selected = false,
 }: {
   voyage: Voyage;
-  top: number;
-  rowHeight: number;
-  onOpen: () => void;
+  onClick: () => void;
+  selectMode?: boolean;
+  selected?: boolean;
 }) {
-  // The card sits inside the hour cell with a 2px gutter so it doesn't kiss
-  // the cell border (and 4px horizontal so it doesn't cover the day divider).
-  const cardHeight = rowHeight - 4;
-
-  // ── Past / today / future classification ──
-  // Past voyages always ghost regardless of status. For `Scheduled` voyages
-  // we further split today vs. future so the today column anchors in brand
-  // orange while the rest of the week reads in sky blue.
-  const nowMinutes = TODAY.getTime() / 60000 + NOW_HOUR * 60;
-  const voyageMinutes =
-    new Date(voyage.date.getFullYear(), voyage.date.getMonth(), voyage.date.getDate()).getTime() / 60000 +
-    voyage.hour * 60 +
-    voyage.minute;
-  const isPast = voyageMinutes < nowMinutes;
-  const isToday = sameDay(voyage.date, TODAY);
-  const toneKey: StatusCardToneKey =
-    voyage.status === "Scheduled" && !isToday ? "ScheduledFuture" : voyage.status;
-  const tone = STATUS_CARD_TONE[toneKey];
+  // Card color priority:
+  //  1. Departed/Arrived/Cancelled → their lifecycle status tone
+  //  2. Otherwise (scheduled) → per-vessel color, so cards stacked in the same
+  //     day+time slot are each distinct. (Today is signaled by the column's
+  //     tint + header pill, not by recoloring every card orange.)
+  const tone: CardTone =
+    voyage.status !== "Scheduled"
+      ? STATUS_CARD_TONE[voyage.status]
+      : vesselTone(voyage.vesselName);
+  const strike = voyage.status === "Cancelled";
 
   return (
-    <div
-      className="pointer-events-auto absolute left-0.5 right-0.5"
-      style={{ top: top + 2, height: cardHeight }}
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selectMode ? selected : undefined}
+      aria-label={
+        selectMode
+          ? `${selected ? "Deselect" : "Select"} ${voyage.originCode} to ${voyage.destinationCode} on ${voyage.vesselName}`
+          : `Open ${voyage.originCode} to ${voyage.destinationCode} on ${voyage.vesselName} — ${voyage.status.toLowerCase()}`
+      }
+      className={
+        "group/voyage relative flex w-full flex-col overflow-hidden rounded-lg py-1.5 pl-3 pr-2.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[box-shadow,transform] duration-150 ease-out " +
+        `${tone.bg} hover:-translate-y-px ${tone.hoverShadow} ` +
+        (selectMode && selected ? "ring-2 ring-brand-500 ring-offset-1 ring-offset-white " : "") +
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+      }
     >
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label={`Open ${voyage.originCode} to ${voyage.destinationCode} on ${voyage.vesselName} — ${voyage.status.toLowerCase()}${isPast ? " (past)" : ""}`}
-        className={
-          // Past voyages use a solid muted slate fill — no opacity, no
-          // grayscale. Those filters caused sub-pixel double-rendering on the
-          // text and let the cell border bleed through behind the card.
-          "group/voyage relative flex h-full w-full flex-col justify-center overflow-hidden rounded-lg pl-3 pr-2.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[box-shadow,transform] duration-150 ease-out " +
-          (isPast
-            ? "bg-slate-50 hover:bg-slate-100 "
-            : `${tone.bg} hover:-translate-y-px ${tone.hoverShadow} `) +
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-        }
-      >
-        {/* Solid left accent stripe — colored per status (brand / sky /
-            emerald / rose). Ghosted past voyages get a slate accent to keep
-            the silhouette consistent without competing for attention. */}
+      {/* Selection checkbox — only in select mode. */}
+      {selectMode && (
         <span
           aria-hidden
           className={
-            "pointer-events-none absolute inset-y-0 left-0 w-[3px] " +
-            (isPast ? "bg-slate-300" : tone.accent)
-          }
-        />
-        {/* Route — headline. */}
-        <span
-          className={
-            "truncate font-mono text-[11.5px] font-bold uppercase tabular-nums tracking-[0.08em] " +
-            (isPast
-              ? "text-slate-500 "
-              : `${tone.routeText} ${tone.strike ? "line-through decoration-rose-400/70 " : ""}`)
+            "absolute right-1.5 top-1.5 z-10 grid h-4 w-4 place-items-center rounded-[5px] border transition-colors " +
+            (selected ? "border-brand-500 bg-brand-500 text-white" : "border-slate-300 bg-white/90")
           }
         >
-          {voyage.originCode}
-          <span
-            className={"mx-1 " + (isPast ? "text-slate-400" : tone.arrow)}
-            aria-hidden
-          >
-            →
-          </span>
-          {voyage.destinationCode}
+          {selected && (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
+              <path d="M5 12l5 5 9-11" />
+            </svg>
+          )}
         </span>
-        {/* Vessel — supporting caption. */}
-        <span
-          className={
-            "truncate text-[10.5px] font-medium tracking-tight " +
-            (isPast ? "text-slate-400" : tone.vesselText)
-          }
-        >
-          {voyage.vesselName}
+      )}
+      {/* Solid left accent stripe — colored per status. */}
+      <span aria-hidden className={"pointer-events-none absolute inset-y-0 left-0 w-[3px] " + tone.accent} />
+
+      {/* Route — headline. */}
+      <span
+        className={
+          "truncate font-mono text-[11.5px] font-bold uppercase tabular-nums tracking-[0.08em] " +
+          `${tone.routeText} ${strike ? "line-through decoration-rose-400/70 " : ""}`
+        }
+      >
+        {voyage.originCode}
+        <span className={"mx-1 " + tone.arrow} aria-hidden>→</span>
+        {voyage.destinationCode}
+      </span>
+      {/* Vessel — supporting caption. The whole card is tinted per vessel so
+          stacked cards (same day+time, different vessels) read as distinct. */}
+      <span className={"truncate text-[10.5px] font-medium tracking-tight " + tone.vesselText}>
+        {voyage.vesselName}
+      </span>
+      {voyage.scheduleLabel && (
+        <span className="truncate text-[10px] font-medium tracking-tight text-slate-500">
+          {voyage.scheduleLabel}
         </span>
-      </button>
-    </div>
+      )}
+    </button>
   );
 }
 
@@ -1420,6 +1008,86 @@ function VoyageStatusPicker({
   );
 }
 
+// ─────────── VoyageFooter ───────────
+// Footer for the voyage detail dialog. Owns the entire footer surface so
+// the destructive-confirm flow can transform the row in-place instead of
+// stacking another modal on top. Two states:
+//   • Idle    — Remove (secondary ghost) on the left, Status picker on the right
+//   • Confirm — full-row takeover: icon + question + Cancel / Remove voyage
+// Reads as a focused micro-interaction rather than dialog-over-dialog.
+function VoyageFooter({
+  voyage,
+  onRemove,
+  onStatusChange,
+}: {
+  voyage: Voyage;
+  onRemove: (id: string) => void;
+  onStatusChange: (id: string, next: VoyageStatus) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    if (!confirming) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setConfirming(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [confirming]);
+
+  if (confirming) {
+    return (
+      <div className="flex items-center gap-3 border-t border-rose-100 bg-rose-50/40 px-5 py-3">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-rose-100 text-rose-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+            <path d="M12 9v4M12 17h.01" />
+            <circle cx="12" cy="12" r="9" />
+          </svg>
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold tracking-tight text-slate-900">Remove this voyage?</div>
+          <div className="mt-0.5 text-[11.5px] leading-snug text-slate-500">
+            It will disappear from the template. Bookings stay intact.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setConfirming(false)}
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors hover:bg-slate-50"
+          style={{ boxShadow: "none" }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => { setConfirming(false); onRemove(voyage.id); }}
+          className="rounded-lg bg-rose-600 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-rose-700"
+          style={{ boxShadow: "none" }}
+        >
+          Remove voyage
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 px-5 py-4">
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-rose-600 transition-colors duration-150 hover:bg-rose-50"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6" />
+        </svg>
+        Remove
+      </button>
+      <VoyageStatusPicker
+        current={voyage.status}
+        onChange={(next) => onStatusChange(voyage.id, next)}
+      />
+    </div>
+  );
+}
+
 function VoyageDetailDialog({
   voyage,
   open,
@@ -1437,11 +1105,6 @@ function VoyageDetailDialog({
   // switcher — voyages always read from the live context, never the stored
   // lineId. Keeps the org identity in sync with the rest of the app.
   const { active: activeLine } = useShippingLine();
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
-  // Reset confirm state any time the dialog closes or the voyage changes.
-  useEffect(() => {
-    if (!open) setConfirmingRemove(false);
-  }, [open, voyage?.id]);
 
   if (!voyage) return null;
 
@@ -1462,9 +1125,25 @@ function VoyageDetailDialog({
     .filter(Boolean)
     .join(" · ");
 
+  // Estimated arrival = departure + crossing duration, rendered in the same
+  // 12h clock as the departure time. Flags an overnight crossing.
+  const etaLabel = (() => {
+    const startMin = voyage.hour * 60 + voyage.minute;
+    const total = Math.round(startMin + voyage.durationHours * 60);
+    const eh = Math.floor(total / 60) % 24;
+    const em = total % 60;
+    const p = eh < 12 ? "AM" : "PM";
+    const e12 = ((eh + 11) % 12) + 1;
+    const overnight = total >= 24 * 60;
+    return `${e12}:${String(em).padStart(2, "0")} ${p}${overnight ? " (+1)" : ""}`;
+  })();
+
   return (
     <Modal open={open} onClose={onClose} maxWidth="max-w-lg">
-      <div className="flex flex-col">
+      {/* Capped height with a scrollable middle so the footer (Remove +
+          Status) is always pinned and visible, no matter how many fare
+          lines the voyage carries. */}
+      <div className="flex max-h-[88vh] flex-col">
         {/* Small left-aligned dialog title + close button. */}
         <div className="flex items-center justify-between gap-3 px-5 pt-6 pb-3">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -1525,17 +1204,31 @@ function VoyageDetailDialog({
 
         <div className="border-t border-slate-100" />
 
-        {/* Detail rows */}
+        {/* Scrollable middle — detail rows + fare breakdown. Keeps the footer
+            pinned below regardless of how long the fare list is. */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+        {/* Detail rows — template-level facts (no bookings; those live on the
+            generated dated departures, not the recurring template). */}
         <dl className="divide-y divide-slate-100 px-5 py-2">
           <DetailRow label="Vessel" value={vesselLine || "—"} />
+          {voyage.scheduleLabel && (
+            <DetailRow label="Schedule" value={voyage.scheduleLabel} />
+          )}
           <DetailRow
-            label="Bookings"
+            label="Crossing"
             value={
               <span>
-                <span className="font-mono font-semibold tabular-nums text-slate-900">
-                  {voyage.paxConfirmed.toLocaleString()}
-                </span>
-                <span className="text-slate-400"> / {voyage.paxCapacity.toLocaleString()}</span>
+                <span className="font-mono font-semibold tabular-nums text-slate-900">{fmtDuration(voyage.durationHours)}</span>
+                <span className="text-slate-400"> · ETA {etaLabel}</span>
+              </span>
+            }
+          />
+          <DetailRow
+            label="Capacity"
+            value={
+              <span>
+                <span className="font-mono font-semibold tabular-nums text-slate-900">{voyage.paxCapacity.toLocaleString()}</span>
+                <span className="text-slate-400"> pax</span>
               </span>
             }
           />
@@ -1545,59 +1238,15 @@ function VoyageDetailDialog({
             group separated by a small slate eyebrow so the breakdown reads
             top-down without crowding the rows above. */}
         <FareBreakdown lines={voyage.fareLines} />
-
-        <div className="border-t border-slate-100" />
-
-        {/* Status — compact ClickUp-style picker, auto-saves on selection */}
-        <div className="flex items-center justify-between gap-3 px-5 py-4">
-          <div className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-            Status
-          </div>
-          <VoyageStatusPicker
-            current={voyage.status}
-            onChange={(next) => onStatusChange(voyage.id, next)}
-          />
         </div>
 
         <div className="border-t border-slate-100" />
 
-        {/* Destructive footer — two-step remove. First click reveals a confirm
-            row; second click actually deletes. Keeps an accidental dismissal
-            cheap (Cancel beside Remove). */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3">
-          {confirmingRemove ? (
-            <>
-              <span className="mr-auto text-[12px] text-slate-600">
-                Remove this voyage?
-              </span>
-              <button
-                type="button"
-                onClick={() => setConfirmingRemove(false)}
-                className="rounded-md px-2.5 py-1 text-[12px] font-medium text-slate-600 transition-colors hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => onRemove(voyage.id)}
-                className="rounded-md bg-rose-600 px-2.5 py-1 text-[12px] font-medium text-white shadow-[0_1px_2px_rgba(15,23,42,0.06)] transition-colors hover:bg-rose-700"
-              >
-                Yes, remove
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirmingRemove(true)}
-              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium text-rose-600 transition-colors hover:bg-rose-50"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6" />
-              </svg>
-              Remove voyage
-            </button>
-          )}
-        </div>
+        <VoyageFooter
+          voyage={voyage}
+          onRemove={onRemove}
+          onStatusChange={onStatusChange}
+        />
       </div>
     </Modal>
   );
@@ -1707,5 +1356,180 @@ function FareBreakdown({
         );
       })}
     </div>
+  );
+}
+
+// ─────────── ManifestDialog ───────────
+// Everyday audit surface. Each dated departure in the schedule template
+// produces one manifest — the passenger/vehicle list the gate crew checks
+// at boarding. The dialog browses available manifests as named file cards,
+// filterable by vessel; clicking a card downloads that manifest as CSV.
+function ManifestDialog({
+  open,
+  onClose,
+  voyages,
+}: {
+  open: boolean;
+  onClose: () => void;
+  voyages: Voyage[];
+}) {
+  const [vesselFilter, setVesselFilter] = useState<string>("all");
+  // Departure-date range — manifests are audited daily, so the operator
+  // usually wants a narrow window. Defaults to the next 7 days.
+  const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
+  const [dateRange, setDateRange] = useState<DateRange>(() => ({
+    start: today,
+    end: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7),
+  }));
+
+  // Vessel filter options derived from the available voyages.
+  const vesselOptions = useMemo(() => {
+    const seen = new Set<string>();
+    voyages.forEach((v) => seen.add(v.vesselName));
+    return [
+      { value: "all", label: "All vessels" },
+      ...Array.from(seen).sort().map((v) => ({ value: v, label: v })),
+    ];
+  }, [voyages]);
+
+  // One manifest entry per dated departure, newest first, scoped to the
+  // active vessel + departure-date window.
+  const manifests = useMemo(() => {
+    const rangeStart = new Date(dateRange.start); rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = new Date(dateRange.end); rangeEnd.setHours(23, 59, 59, 999);
+    return voyages
+      .filter((v) => vesselFilter === "all" || v.vesselName === vesselFilter)
+      .filter((v) => v.date >= rangeStart && v.date <= rangeEnd)
+      .slice()
+      .sort((a, b) => {
+        const dt = b.date.getTime() - a.date.getTime();
+        return dt !== 0 ? dt : a.hour - b.hour;
+      });
+  }, [voyages, vesselFilter, dateRange]);
+
+  // Build + trigger a CSV download for a single voyage manifest. Mock data
+  // until bookings are linked to voyages by id — for now the header rows
+  // make the format obvious to the gate crew / backend dev.
+  const downloadManifest = (v: Voyage) => {
+    const dateLabel = v.date.toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit" });
+    const timeLabel = `${String(v.hour).padStart(2, "0")}:${String(v.minute).padStart(2, "0")}`;
+    const lines = [
+      `Manifest — ${v.originCode} → ${v.destinationCode}`,
+      `Vessel,${v.vesselName}`,
+      `Departure,${dateLabel} ${timeLabel}`,
+      `Capacity,${v.paxCapacity}`,
+      "",
+      "Pax #,Name,Ticket ID,Valid ID,Vehicle,Status",
+      // Placeholder rows — replaced once bookings carry a voyageId link.
+      "—,No bookings linked yet,—,—,—,—",
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `manifest-${v.originCode}-${v.destinationCode}-${dateLabel.replace(/\//g, "")}-${timeLabel.replace(":", "")}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} maxWidth="max-w-2xl">
+      {/* Fixed height so the dialog never resizes as the vessel/date filter
+          narrows the result set — the card list scrolls internally instead. */}
+      <div className="flex h-[720px] max-h-[90vh] flex-col">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold tracking-tight text-slate-900">Voyage manifests</h2>
+            <p className="mt-0.5 text-[12px] text-slate-500">
+              One manifest per dated departure. Click a card to download.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="grid h-8 w-8 place-items-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Filter bar — vessel filter grows to fill the row; the date-range
+            picker keeps its natural width on the right. */}
+        <div className="flex items-center gap-2 px-5 py-3">
+          <Select
+            size="sm"
+            value={vesselFilter}
+            onChange={setVesselFilter}
+            ariaLabel="Filter manifests by vessel"
+            className="flex-1"
+            options={vesselOptions}
+          />
+          <DateRangePicker value={dateRange} onChange={setDateRange} />
+        </div>
+
+        {/* Result count — its own line below the filters so the calendar
+            picker has room to breathe. */}
+        <div className="border-b border-slate-100 px-5 pb-3">
+          <span className="text-[11.5px] tabular-nums text-slate-500">
+            {manifests.length} manifest{manifests.length === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        {/* Manifest cards */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {manifests.length === 0 ? (
+            <div className="flex h-40 items-center justify-center text-[12.5px] text-slate-400">
+              No departures match this filter.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2.5">
+              {manifests.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => downloadManifest(v)}
+                  className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-left transition-colors duration-150 hover:border-brand-500 hover:ring-1 hover:ring-brand-500 focus:outline-none focus-visible:border-brand-500 focus-visible:ring-1 focus-visible:ring-brand-500"
+                >
+                  {/* File icon tile */}
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500 transition-colors group-hover:bg-brand-50 group-hover:text-brand-600">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z" />
+                      <path d="M14 3v6h6" />
+                    </svg>
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[12.5px] font-bold uppercase tabular-nums tracking-[0.04em] text-slate-900">
+                        {v.originCode} → {v.destinationCode}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 truncate text-[11.5px] text-slate-500">{v.vesselName}</div>
+                    <div className="mt-1 font-mono text-[11px] tabular-nums text-slate-400">
+                      {v.date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                      {" · "}
+                      {((v.hour + 11) % 12) + 1}:{String(v.minute).padStart(2, "0")} {v.hour < 12 ? "AM" : "PM"}
+                    </div>
+                  </div>
+                  {/* Download affordance */}
+                  <span className="mt-0.5 shrink-0 text-slate-300 transition-colors group-hover:text-brand-500">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                      <path d="M12 3v12" />
+                      <path d="m7 10 5 5 5-5" />
+                      <path d="M5 21h14" />
+                    </svg>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
