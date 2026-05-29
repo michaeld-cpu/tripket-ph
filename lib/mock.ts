@@ -33,7 +33,7 @@ export type Booking = {
   passenger: string;
   seats: number;
   total: number;
-  status: "Paid" | "Pending" | "Refunded" | "Cancelled";
+  status: "Issued" | "Pending" | "Refunded" | "Cancelled";
   bookedAt: string;
   vehicle?: "None" | "Motorcycle" | "Car" | "SUV" | "Truck";
 };
@@ -64,20 +64,20 @@ export const voyages: Voyage[] = [
 ];
 
 export const bookings: Booking[] = [
-  { id: "BK-50012", voyageId: "VY-9001", passenger: "Maria Santos", seats: 2, total: 1600, status: "Paid", bookedAt: "2026-05-17 10:24", vehicle: "None" },
-  { id: "BK-50013", voyageId: "VY-9002", passenger: "Juan Dela Cruz", seats: 1, total: 3200, status: "Paid", bookedAt: "2026-05-17 11:02", vehicle: "Car" },
+  { id: "BK-50012", voyageId: "VY-9001", passenger: "Maria Santos", seats: 2, total: 1600, status: "Issued", bookedAt: "2026-05-17 10:24", vehicle: "None" },
+  { id: "BK-50013", voyageId: "VY-9002", passenger: "Juan Dela Cruz", seats: 1, total: 3200, status: "Issued", bookedAt: "2026-05-17 11:02", vehicle: "Car" },
   { id: "BK-50014", voyageId: "VY-9003", passenger: "Andrea Lim", seats: 3, total: 2700, status: "Pending", bookedAt: "2026-05-17 14:18", vehicle: "None" },
-  { id: "BK-50015", voyageId: "VY-9005", passenger: "Rico Tan", seats: 1, total: 5400, status: "Paid", bookedAt: "2026-05-17 16:55", vehicle: "SUV" },
-  { id: "BK-50016", voyageId: "VY-9004", passenger: "Patricia Reyes", seats: 4, total: 4800, status: "Paid", bookedAt: "2026-05-18 06:11", vehicle: "Motorcycle" },
+  { id: "BK-50015", voyageId: "VY-9005", passenger: "Rico Tan", seats: 1, total: 5400, status: "Issued", bookedAt: "2026-05-17 16:55", vehicle: "SUV" },
+  { id: "BK-50016", voyageId: "VY-9004", passenger: "Patricia Reyes", seats: 4, total: 4800, status: "Issued", bookedAt: "2026-05-18 06:11", vehicle: "Motorcycle" },
   { id: "BK-50017", voyageId: "VY-9006", passenger: "Kyle Mendoza", seats: 2, total: 2400, status: "Cancelled", bookedAt: "2026-05-16 09:33", vehicle: "None" },
-  { id: "BK-50018", voyageId: "VY-9001", passenger: "Joanna Cruz", seats: 1, total: 800, status: "Paid", bookedAt: "2026-05-18 05:40", vehicle: "None" },
-  { id: "BK-50019", voyageId: "VY-9005", passenger: "Marco Villanueva", seats: 2, total: 6800, status: "Paid", bookedAt: "2026-05-18 07:22", vehicle: "Truck" },
+  { id: "BK-50018", voyageId: "VY-9001", passenger: "Joanna Cruz", seats: 1, total: 800, status: "Issued", bookedAt: "2026-05-18 05:40", vehicle: "None" },
+  { id: "BK-50019", voyageId: "VY-9005", passenger: "Marco Villanueva", seats: 2, total: 6800, status: "Issued", bookedAt: "2026-05-18 07:22", vehicle: "Truck" },
   { id: "BK-50020", voyageId: "VY-9003", passenger: "Liza Aquino", seats: 1, total: 900, status: "Refunded", bookedAt: "2026-05-16 18:05", vehicle: "None" },
-  { id: "BK-50021", voyageId: "VY-9002", passenger: "Noel Bautista", seats: 2, total: 3800, status: "Paid", bookedAt: "2026-05-18 08:14", vehicle: "Car" },
+  { id: "BK-50021", voyageId: "VY-9002", passenger: "Noel Bautista", seats: 2, total: 3800, status: "Issued", bookedAt: "2026-05-18 08:14", vehicle: "Car" },
 ];
 
 export function getStats() {
-  const paid = bookings.filter(b => b.status === "Paid");
+  const paid = bookings.filter(b => b.status === "Issued");
   const revenue = paid.reduce((s, b) => s + b.total, 0);
   const ticketsIssued = paid.reduce((s, b) => s + b.seats, 0);
   const cancellations = bookings.filter(b => b.status === "Cancelled" || b.status === "Refunded").length;

@@ -9,7 +9,7 @@ export type FareClass = "Economy" | "Tourist" | "Business";
 export type PassengerSex = "Male" | "Female";
 // Per-ticket lifecycle. Pending = awaiting payment/approval; Paid = settled;
 // Cancelled = refund pending; Refunded = money returned.
-export type TicketStatus = "Pending" | "Paid" | "Cancelled" | "Refunded";
+export type TicketStatus = "Pending" | "Issued" | "Cancelled" | "Refunded";
 
 // Per-pax ticket carried under one booking. Each ticket has its own ID
 // suffixed off the booking ref (TKT-0001-A, TKT-0001-B, …) so passengers can
@@ -167,7 +167,7 @@ export type Booking = {
   contactEmail: string;
   /** Payment metadata. */
   paymentMethod: "Tripket Wallet";
-  paymentStatus: "Paid" | "Pending" | "Refunded";
+  paymentStatus: "Issued" | "Pending" | "Refunded";
   /** Per-pax tickets. tickets.length === pax. */
   tickets: Ticket[];
   /** Audit trail. Seeded from history on first load, then appended to live as
@@ -231,7 +231,7 @@ export function deriveActivity(b: Booking): ActivityEntry[] {
     step(30 + Math.floor(rand() * 240));
     push("approved", "Booking approved", staff());
     // Per-paid-ticket entries.
-    b.tickets.filter((t) => t.status === "Paid" && t.ticketNumber).forEach((t) => {
+    b.tickets.filter((t) => t.status === "Issued" && t.ticketNumber).forEach((t) => {
       step(2 + Math.floor(rand() * 20));
       push("ticket_paid", "Ticket marked paid", staff(), `Ticket no. ${t.ticketNumber} · ${t.name}`);
     });
@@ -268,7 +268,7 @@ export function deriveTicketActivity(t: Ticket, ref: string, createdAt: Date): A
     out.push({ id: `${t.id}-act-${n++}`, kind, title, detail, actor, at: new Date(cursor) });
 
   push("created", "Ticket issued", "System", `${t.name} · ${t.fareClass}`);
-  if (t.status === "Paid" || t.status === "Refunded") {
+  if (t.status === "Issued" || t.status === "Refunded") {
     step(20 + Math.floor(rand() * 200));
     push("ticket_paid", "Marked as paid", staff(), t.ticketNumber ? `Ticket no. ${t.ticketNumber}` : undefined);
   }
@@ -458,14 +458,14 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           if (forceTicketMix17) {
             if (p === 2) return "Cancelled";
             if (p === 3) return "Refunded";
-            return "Paid";
+            return "Issued";
           }
-          return "Paid";
+          return "Issued";
         })();
         // The ticket number is the public identifier (TKT-####-X), but it's
         // only assigned once a ticket is Paid. Pending/unpaid tickets carry
         // none — the UI shows a dash until payment is collected.
-        const ticketNumber = ticketStatus === "Paid"
+        const ticketNumber = ticketStatus === "Issued"
           ? `${ref}-${String.fromCharCode(65 + p)}`
           : undefined;
         tickets.push({
@@ -520,7 +520,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       const paymentStatus: Booking["paymentStatus"] =
         status === "Cancelled" || status === "Refunded"
           ? "Refunded"
-          : status === "Pending" ? "Pending" : "Paid";
+          : status === "Pending" ? "Pending" : "Issued";
 
       bookings.push({
         ref,
@@ -573,7 +573,7 @@ export const statusLabel: Record<BookingStatus, string> = {
 // muted slate, Refunded matches the booking-level refund tone.
 export const ticketStatusTone: Record<TicketStatus, string> = {
   Pending:   "bg-brand-50 text-brand-700",
-  Paid:      "bg-emerald-100 text-emerald-800",
+  Issued:    "bg-emerald-100 text-emerald-800",
   Cancelled: "bg-slate-100 text-slate-500",
   Refunded:  "bg-sky-50 text-sky-700",
 };

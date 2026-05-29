@@ -7,7 +7,7 @@ const map: Record<string, string> = {
   Cancelled: "bg-red-100 text-red-700",
   Maintenance: "bg-orange-100 text-orange-700",
   Docked: "bg-gray-100 text-gray-700",
-  Paid: "bg-green-100 text-green-700",
+  Issued: "bg-green-100 text-green-700",
   Pending: "bg-amber-100 text-amber-700",
   Refunded: "bg-red-100 text-red-700",
   Inactive: "bg-gray-100 text-gray-600",

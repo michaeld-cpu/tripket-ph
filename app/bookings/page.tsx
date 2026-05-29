@@ -148,7 +148,7 @@ export default function BookingsPage() {
   // Paid; otherwise Cancelled (none settled).
   const commitApproval = (
     ref: string,
-    decisions: Record<string, { status: "Paid" | "Cancelled" | "Refunded"; number?: string }>
+    decisions: Record<string, { status: "Issued" | "Cancelled" | "Refunded"; number?: string }>
   ) => {
     setBookings((prev) =>
       prev
@@ -158,14 +158,14 @@ export default function BookingsPage() {
             const tickets = x.tickets.map((t) => {
               const d = decisions[t.id];
               if (t.status !== "Pending" || !d) return t;
-              if (d.status === "Paid") {
+              if (d.status === "Issued") {
                 entries.push(makeActivity("ticket_paid", "Ticket marked paid", ACTOR, `Ticket no. ${d.number} · ${t.name}`));
-                return { ...t, status: "Paid" as const, ticketNumber: d.number };
+                return { ...t, status: "Issued" as const, ticketNumber: d.number };
               }
               entries.push(makeActivity(d.status === "Refunded" ? "refunded" : "cancelled", `Ticket ${d.status.toLowerCase()}`, ACTOR, t.name));
               return { ...t, status: d.status };
             });
-            const hasPaid = tickets.some((t) => t.status === "Paid");
+            const hasPaid = tickets.some((t) => t.status === "Issued");
             // Booking-level entry summarising the decision, on top of the
             // per-ticket entries (newest-first order).
             entries.push(makeActivity(hasPaid ? "approved" : "cancelled", hasPaid ? "Booking approved" : "Booking cancelled", ACTOR));
@@ -173,7 +173,7 @@ export default function BookingsPage() {
               ...x,
               tickets,
               status: hasPaid ? "Confirmed" : "Cancelled",
-              paymentStatus: hasPaid ? "Paid" : x.paymentStatus,
+              paymentStatus: hasPaid ? "Issued" : x.paymentStatus,
               activity: [...entries.reverse(), ...(x.activity ?? deriveActivity(x))],
             };
           })
@@ -581,14 +581,14 @@ function ApproveBookingDialog({
   useEffect(() => {
     if (!booking) return;
     setNumbers({});
-    setDecisions(Object.fromEntries(pending.map((t) => [t.id, "Paid" as TicketDecision])));
+    setDecisions(Object.fromEntries(pending.map((t) => [t.id, "Issued" as TicketDecision])));
   }, [booking]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const statusOf = (id: string): TicketDecision => decisions[id] ?? "Paid";
-  const paidCount = pending.filter((t) => statusOf(t.id) === "Paid").length;
+  const statusOf = (id: string): TicketDecision => decisions[id] ?? "Issued";
+  const paidCount = pending.filter((t) => statusOf(t.id) === "Issued").length;
   // Only Paid tickets need a number entered.
   const ready = pending.length > 0 && pending.every((t) =>
-    statusOf(t.id) !== "Paid" || (numbers[t.id] ?? "").trim().length > 0
+    statusOf(t.id) !== "Issued" || (numbers[t.id] ?? "").trim().length > 0
   );
   const alreadyPaid = booking ? booking.tickets.length - pending.length : 0;
 
@@ -597,13 +597,13 @@ function ApproveBookingDialog({
     const payload: Record<string, { status: TicketDecision; number?: string }> = {};
     pending.forEach((t) => {
       const s = statusOf(t.id);
-      payload[t.id] = s === "Paid" ? { status: "Paid", number: numbers[t.id].trim() } : { status: s };
+      payload[t.id] = s === "Issued" ? { status: "Issued", number: numbers[t.id].trim() } : { status: s };
     });
     onConfirm(payload);
   };
 
   const ctaLabel = paidCount > 0
-    ? `Confirm · ${paidCount} paid${pending.length - paidCount > 0 ? ` · ${pending.length - paidCount} other` : ""}`
+    ? `Confirm · ${paidCount} issued${pending.length - paidCount > 0 ? ` · ${pending.length - paidCount} other` : ""}`
     : "Confirm";
   const noPaid = pending.length > 0 && paidCount === 0;
 
@@ -634,7 +634,7 @@ function ApproveBookingDialog({
             <ul className="space-y-2.5">
               {pending.map((t, i) => {
                 const s = statusOf(t.id);
-                const settled = s !== "Paid"; // cancelled/refunded → dim, no number
+                const settled = s !== "Issued"; // cancelled/refunded → dim, no number
                 return (
                   <li key={t.id} className={"rounded-xl border px-3.5 py-2.5 transition-colors " + (settled ? "border-slate-200 bg-slate-50/60" : "border-slate-200 bg-white")}>
                     <div className="flex items-center gap-3">
@@ -647,9 +647,9 @@ function ApproveBookingDialog({
                       </div>
                       {/* Per-ticket status toggle: Paid · Cancelled · Refunded */}
                       <div className="inline-flex shrink-0 rounded-lg bg-slate-100 p-0.5">
-                        {(["Paid", "Cancelled", "Refunded"] as TicketDecision[]).map((opt) => {
+                        {(["Issued", "Cancelled", "Refunded"] as TicketDecision[]).map((opt) => {
                           const on = s === opt;
-                          const onTone = opt === "Paid" ? "text-emerald-700" : opt === "Refunded" ? "text-sky-700" : "text-rose-600";
+                          const onTone = opt === "Issued" ? "text-emerald-700" : opt === "Refunded" ? "text-sky-700" : "text-rose-600";
                           return (
                             <button
                               key={opt}
@@ -663,7 +663,7 @@ function ApproveBookingDialog({
                         })}
                       </div>
                     </div>
-                    {s === "Paid" && (
+                    {s === "Issued" && (
                       <input
                         type="text"
                         value={numbers[t.id] ?? ""}
@@ -714,7 +714,7 @@ function ApproveBookingDialog({
 }
 
 // Per-ticket target status the admin can set in the review dialog.
-type TicketDecision = "Paid" | "Cancelled" | "Refunded";
+type TicketDecision = "Issued" | "Cancelled" | "Refunded";
 
 // ─────────── Booking detail dialog ───────────
 // Four sections matching the project's visual language:
@@ -1042,8 +1042,7 @@ function BookingStatusPicker({
         aria-expanded={open}
         className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-brand-600"
       >
-        <span className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-white/80">Status</span>
-        <span className="text-[12.5px] font-semibold uppercase tracking-[0.04em] text-white">{statusLabel[current]}</span>
+        <span className="text-[12.5px] font-semibold uppercase tracking-[0.04em] text-white">Update status</span>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-3.5 w-3.5 text-white/80 transition-transform duration-150 ${open ? "rotate-180" : ""}`}>
           <path d="m6 9 6 6 6-6" />
         </svg>
@@ -1063,31 +1062,32 @@ function BookingStatusPicker({
             <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">
               Update status
             </div>
-            {options.map((o) => {
-              const disabled = !canPick(o.value);
-              return (
-                <button
-                  key={o.value}
-                  type="button"
-                  role="menuitem"
-                  disabled={disabled}
-                  onClick={() => { if (!disabled) { onChange(o.value); setOpen(false); } }}
-                  className={`grid w-full grid-cols-[minmax(0,1fr)_auto_16px] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors duration-100 ${
-                    disabled
-                      ? "cursor-not-allowed text-slate-300"
-                      : o.value === "Cancelled"
-                        ? "text-rose-600 hover:bg-rose-50"
-                        : "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900"
-                  }`}
-                >
-                  <span className="truncate font-medium">{o.label}</span>
-                  <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${statusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
-                    {statusLabel[o.value]}
-                  </span>
-                  <span className="flex justify-end" />
-                </button>
-              );
-            })}
+            {options
+              .filter((o) => o.value !== current)
+              .map((o) => {
+                const disabled = !canPick(o.value);
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    role="menuitem"
+                    disabled={disabled}
+                    onClick={() => { if (!disabled) { onChange(o.value); setOpen(false); } }}
+                    className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors duration-100 ${
+                      disabled
+                        ? "cursor-not-allowed text-slate-300"
+                        : o.value === "Cancelled"
+                          ? "text-rose-600 hover:bg-rose-50"
+                          : "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900"
+                    }`}
+                  >
+                    <span className="truncate font-medium">{o.label}</span>
+                    <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${statusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
+                      {statusLabel[o.value]}
+                    </span>
+                  </button>
+                );
+              })}
           </motion.div>
         )}
       </AnimatePresence>
@@ -1116,7 +1116,7 @@ function PassengerTable({
       <div className="grid grid-cols-[28px_minmax(0,5fr)_44px_38px_64px_80px_20px] items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">
         <span className="text-center">#</span>
         <span>Passenger</span>
-        <span>Sex</span>
+        <span>Gender</span>
         <span>Age</span>
         <span>Class</span>
         <span>Status</span>
@@ -1504,7 +1504,7 @@ function PaymentInformation({ booking }: { booking: Booking }) {
   const vehicleCharge = Math.max(0, booking.amount - passengerSubtotal - bookingFee);
 
   const statusTone =
-    booking.paymentStatus === "Paid"
+    booking.paymentStatus === "Issued"
       ? "bg-emerald-100 text-emerald-800"
       : booking.paymentStatus === "Pending"
       ? "bg-brand-50 text-brand-700"

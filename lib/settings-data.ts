@@ -3,6 +3,9 @@
 // localStorage keyed by line id so each operator keeps its own setup.
 // (Per the product decision: Configurations + Booking policy are one screen.)
 
+import type { VehicleClass, PassengerType, AddOn } from "@/lib/dashboard-data";
+export type { VehicleClass, PassengerType, AddOn };
+
 export type RequirementKey =
   // Passenger
   | "fullName" | "age" | "sex" | "contactNumber" | "nationality" | "idTypeNumber" | "homeAddress" | "email"
@@ -22,7 +25,7 @@ export type Requirement = {
 export const PASSENGER_REQUIREMENTS: Requirement[] = [
   { key: "fullName",      label: "Full name",      hint: "Always required", locked: true },
   { key: "age",           label: "Age",            hint: "Always required", locked: true },
-  { key: "sex",           label: "Sex",            hint: "Male / Female" },
+  { key: "sex",           label: "Gender",         hint: "Male / Female" },
   { key: "contactNumber", label: "Contact number", hint: "Mobile number" },
   { key: "nationality",   label: "Nationality",    hint: "Filipino / Foreign" },
   { key: "idTypeNumber",  label: "ID type & number", hint: "Government-issued ID" },
@@ -95,9 +98,53 @@ export const POLICY_OPTIONS = {
   idVerification: ["Not required", "Required for senior, PWD, and student discounts", "Required for all passengers"],
 } as const;
 
+// ─────────── Line catalog ───────────
+// Master catalog of vehicle classes, passenger types, and add-ons — defined
+// once per shipping line in the Configurations tab. Vessels can only toggle
+// which of these they offer; they cannot create new entries or override
+// prices. Edits here propagate live to every vessel that has the item
+// toggled on.
+export type LineCatalog = {
+  vehicleClasses: VehicleClass[];
+  passengerTypes: PassengerType[];
+  addOns: AddOn[];
+};
+
+export const DEFAULT_VEHICLE_CLASSES: VehicleClass[] = [
+  { key: "motorcycle",  label: "Motorcycle / Tricycle", descriptor: "≤ 300 kg GVW",   enabled: true, maxWeightKg: 300,   capacity: 1, defaultPrice: 300 },
+  { key: "car",         label: "Car / SUV / Van",       descriptor: "≤ 3,500 kg GVW", enabled: true, maxWeightKg: 3500,  capacity: 2, defaultPrice: 1500 },
+  { key: "pickup",      label: "Pickup / AUV",          descriptor: "≤ 3,500 kg GVW", enabled: true, maxWeightKg: 3500,  capacity: 2, defaultPrice: 1800 },
+  { key: "light_truck", label: "Light Truck / Elf",     descriptor: "3.5 – 7 tons",   enabled: true, maxWeightKg: 7000,  capacity: 3, defaultPrice: 3500 },
+  { key: "heavy_truck", label: "Heavy Truck / Trailer", descriptor: "7+ tons",        enabled: true, maxWeightKg: 12000, capacity: 5, defaultPrice: 6500 },
+  { key: "bus",         label: "Bus / Minibus",         descriptor: "≤ 12 m length",  enabled: true, maxLengthM: 12,     capacity: 6, defaultPrice: 5000 },
+];
+
+export const DEFAULT_PASSENGER_TYPES: PassengerType[] = [
+  { key: "senior",  label: "Senior Citizen",               discountPct: 20,  requiredDoc: "OSCA ID / Senior Citizen ID" },
+  { key: "pwd",     label: "Person with Disability (PWD)", discountPct: 20,  requiredDoc: "PWD ID (national or LGU-issued)" },
+  { key: "student", label: "Student",                      discountPct: 10,  requiredDoc: "Valid school ID" },
+  { key: "infant",  label: "Infant",                       discountPct: 100, requiredDoc: "Birth certificate or PSA copy", isInfant: true },
+];
+
+export const DEFAULT_ADD_ONS: AddOn[] = [
+  { key: "extraBag",      label: "Extra Cabin Bag",      descriptor: "Beyond included carry-on",       defaultPrice: 150, enabled: true },
+  { key: "mealPack",      label: "Onboard Meal Pack",    descriptor: "Hot meal + drink mid-voyage",    defaultPrice: 250, enabled: true },
+  { key: "priorityBoard", label: "Priority Boarding",    descriptor: "Skip the gate queue",            defaultPrice: 150, enabled: true },
+  { key: "vehicleWash",   label: "Arrival Vehicle Wash", descriptor: "RoRo-only · cleaned on arrival", defaultPrice: 300, enabled: true },
+];
+
+export function defaultCatalog(): LineCatalog {
+  return {
+    vehicleClasses: DEFAULT_VEHICLE_CLASSES.map((c) => ({ ...c })),
+    passengerTypes: DEFAULT_PASSENGER_TYPES.map((p) => ({ ...p })),
+    addOns: DEFAULT_ADD_ONS.map((a) => ({ ...a })),
+  };
+}
+
 export type LineSettings = {
   requirements: Record<RequirementKey, boolean>;
   policy: BookingPolicy;
+  catalog: LineCatalog;
 };
 
 const ALL_REQUIREMENTS = [...PASSENGER_REQUIREMENTS, ...VEHICLE_DETAIL_REQUIREMENTS, ...VEHICLE_DOCUMENT_REQUIREMENTS];
@@ -141,6 +188,7 @@ export function defaultSettings(): LineSettings {
       infantAgeThreshold: "Under 2 years old",
       idVerification: "Required for senior, PWD, and student discounts",
     },
+    catalog: defaultCatalog(),
   };
 }
 
@@ -199,15 +247,29 @@ export function loadSettings(lineId: string): LineSettings {
     return {
       requirements: { ...base.requirements, ...(parsed.requirements ?? {}) },
       policy: { ...base.policy, ...(parsed.policy ?? {}) },
+      catalog: parsed.catalog
+        ? {
+            vehicleClasses: parsed.catalog.vehicleClasses ?? base.catalog.vehicleClasses,
+            passengerTypes: parsed.catalog.passengerTypes ?? base.catalog.passengerTypes,
+            addOns: parsed.catalog.addOns ?? base.catalog.addOns,
+          }
+        : base.catalog,
     };
   } catch {
     return defaultSettings();
   }
 }
 
+export function loadCatalog(lineId: string): LineCatalog {
+  return loadSettings(lineId).catalog;
+}
+
 export function saveSettings(lineId: string, settings: LineSettings) {
   try {
     window.localStorage.setItem(KEY(lineId), JSON.stringify(settings));
+    // Notify same-tab listeners (storage events only fire cross-tab). Open
+    // vessel dialogs subscribe to this to refresh their catalog view.
+    window.dispatchEvent(new CustomEvent("tripket:catalog-updated", { detail: { lineId } }));
   } catch {
     /* ignore quota errors in mock */
   }

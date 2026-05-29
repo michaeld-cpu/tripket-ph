@@ -83,6 +83,7 @@ export default function RoutesStep({
   onChange,
   hideReturnToggle = false,
   showStatus = false,
+  lockPorts = false,
 }: {
   value: RoutesValue;
   onChange: (next: RoutesValue) => void;
@@ -90,6 +91,10 @@ export default function RoutesStep({
   hideReturnToggle?: boolean;
   /** Show the Active/Inactive status segmented control (edit mode). */
   showStatus?: boolean;
+  /** Render origin + destination as a read-only details card. Used in edit
+   *  mode — once a route exists the leg is system-defined and the operator
+   *  can only tweak distance/duration/status. */
+  lockPorts?: boolean;
 }) {
   const origin = PORTS.find((p) => p.code === value.originCode) ?? null;
   const destination = PORTS.find((p) => p.code === value.destinationCode) ?? null;
@@ -121,49 +126,57 @@ export default function RoutesStep({
 
   return (
     <div className="space-y-5">
-      {/* Origin / Destination selects with the route-line visual sitting between them. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-        <FieldGroup label="Origin port">
-          <PortSelect
-            ariaLabel="Origin port"
-            value={value.originCode}
-            options={PORTS.filter((p) => p.code !== value.destinationCode)}
-            placeholder="Select origin"
-            onChange={(code) => onChange({ ...value, originCode: code })}
-          />
-        </FieldGroup>
+      {lockPorts && origin && destination ? (
+        /* Edit mode: ports are system-defined and not editable. Render a
+           read-only details card with both ends and the directional arrow. */
+        <LockedPortsCard origin={origin} destination={destination} />
+      ) : (
+        <>
+          {/* Origin / Destination selects with the route-line visual sitting between them. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+            <FieldGroup label="Origin port">
+              <PortSelect
+                ariaLabel="Origin port"
+                value={value.originCode}
+                options={PORTS.filter((p) => p.code !== value.destinationCode)}
+                placeholder="Select origin"
+                onChange={(code) => onChange({ ...value, originCode: code })}
+              />
+            </FieldGroup>
 
-        {/* Connector — orange dashed arrow that animates when both ports are set. */}
-        <div className="hidden pt-5 sm:block">
-          <ConnectorArrow active={!!origin && !!destination && !sameOriginDest} />
-        </div>
+            {/* Connector — orange dashed arrow that animates when both ports are set. */}
+            <div className="hidden pt-5 sm:block">
+              <ConnectorArrow active={!!origin && !!destination && !sameOriginDest} />
+            </div>
 
-        <FieldGroup label="Destination port">
-          <PortSelect
-            ariaLabel="Destination port"
-            value={value.destinationCode}
-            options={destinationOptions}
-            placeholder="Select destination"
-            onChange={(code) => onChange({ ...value, destinationCode: code })}
-          />
-        </FieldGroup>
-      </div>
+            <FieldGroup label="Destination port">
+              <PortSelect
+                ariaLabel="Destination port"
+                value={value.destinationCode}
+                options={destinationOptions}
+                placeholder="Select destination"
+                onChange={(code) => onChange({ ...value, destinationCode: code })}
+              />
+            </FieldGroup>
+          </div>
 
-      {/* Origin → Destination preview note (or inline error if same port picked). */}
-      {sameOriginDest ? (
-        <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 text-rose-600">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 8v4M12 16v.01" />
-          </svg>
-          <span className="text-[12.5px] tracking-tight text-slate-700">
-            <span className="font-semibold text-slate-900">Pick a different destination.</span>{" "}
-            <span className="text-slate-500">Origin and destination must be different ports.</span>
-          </span>
-        </div>
-      ) : origin && destination ? (
-        <RoutePreview origin={origin} destination={destination} />
-      ) : null}
+          {/* Origin → Destination preview note (or inline error if same port picked). */}
+          {sameOriginDest ? (
+            <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 text-rose-600">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 8v4M12 16v.01" />
+              </svg>
+              <span className="text-[12.5px] tracking-tight text-slate-700">
+                <span className="font-semibold text-slate-900">Pick a different destination.</span>{" "}
+                <span className="text-slate-500">Origin and destination must be different ports.</span>
+              </span>
+            </div>
+          ) : origin && destination ? (
+            <RoutePreview origin={origin} destination={destination} />
+          ) : null}
+        </>
+      )}
 
       {/* Distance + duration — auto-filled but editable. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1.6fr]">
@@ -473,6 +486,43 @@ function ConnectorArrow({ active }: { active: boolean }) {
       </svg>
       <span className="h-px w-3 bg-current" />
     </span>
+  );
+}
+
+// Read-only details card shown in edit mode — the route's ports are defined
+// in the system catalog and can't be reassigned here. The operator can still
+// edit distance / duration / status below.
+/** Standalone read-only Route card — used in assign mode where the form
+ *  fields are intentionally absent. */
+export function RouteContextCard({ value }: { value: RoutesValue }) {
+  const origin = PORTS.find((p) => p.code === value.originCode);
+  const destination = PORTS.find((p) => p.code === value.destinationCode);
+  if (!origin || !destination) return null;
+  return <LockedPortsCard origin={origin} destination={destination} />;
+}
+
+function LockedPortsCard({ origin, destination }: { origin: Port; destination: Port }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <div className="border-b border-slate-100 px-5 py-2.5">
+        <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-slate-400">Route</span>
+      </div>
+      <div className="flex items-center justify-between gap-4 px-5 py-5">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[18px] font-semibold tracking-tight text-slate-900">{origin.city}</div>
+          <span className="mt-1 inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold tabular-nums tracking-[0.08em] text-slate-600 ring-1 ring-slate-200/60">
+            {origin.code}
+          </span>
+        </div>
+        <span aria-hidden className="shrink-0 text-[18px] font-medium text-slate-300">→</span>
+        <div className="min-w-0 flex-1 text-right">
+          <div className="truncate text-[18px] font-semibold tracking-tight text-slate-900">{destination.city}</div>
+          <span className="mt-1 inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold tabular-nums tracking-[0.08em] text-slate-600 ring-1 ring-slate-200/60">
+            {destination.code}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 

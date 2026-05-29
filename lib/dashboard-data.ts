@@ -56,15 +56,26 @@ export type VehicleClass = {
   enabled: boolean;
   maxWeightKg?: number;
   maxLengthM?: number;
+  /** Vehicle slots this class consumes on the vessel's vehicle deck.
+      Used to project remaining capacity at booking time. */
+  capacity?: number;
   /** Default fare for this vehicle class, set at vessel registration. The
       Voyages → Fares step pre-fills from this (mirrors AddOn.defaultPrice). */
   defaultPrice?: number;
 };
 
+/** Discount on a fare. Either a flat peso amount or a percentage off. */
+export type DiscountKind = "percent" | "flat";
+
 export type PassengerType = {
   key: string;
   label: string;
+  /** How the discount is expressed. Defaults to "percent" for legacy rows. */
+  discountKind?: DiscountKind;
+  /** % discount when discountKind === "percent" (0-100). */
   discountPct: number;
+  /** Flat ₱ off when discountKind === "flat". */
+  discountFlat?: number;
   requiredDoc: string;
   isInfant?: boolean;
 };

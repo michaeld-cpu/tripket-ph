@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import type { Vessel } from "@/lib/dashboard-data";
 import { useShippingLine } from "./ShippingLineContext";
 import LinePicker from "./LinePicker";
+import NumberInput from "./NumberInput";
 
 export const typeOptions = [
   { value: "RoRo" as const,           label: "RoRo (Roll-on / Roll-off)" },
@@ -141,8 +142,7 @@ export default function VesselFormBody({ values, onChange, autoFocusName = true 
       <motion.div {...stagger(5)} className={`grid gap-4 ${isPassengerOnly ? "grid-cols-1" : "grid-cols-2"}`}>
         <Field label="Passenger capacity" required hint="MARINA-certified maximum">
           <div className={wrapperCls}>
-            <input
-              type="number"
+            <NumberInput
               required
               min={1}
               value={passengers}
@@ -157,8 +157,7 @@ export default function VesselFormBody({ values, onChange, autoFocusName = true 
         {!isPassengerOnly && (
           <Field label="Vehicle slots" required hint="Total vehicle capacity">
             <div className={wrapperCls}>
-              <input
-                type="number"
+              <NumberInput
                 required
                 min={0}
                 value={vehicleSlots}

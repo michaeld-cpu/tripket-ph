@@ -9,6 +9,7 @@ import Select from "@/components/Select";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import CreateRouteModal from "@/components/CreateRouteModal";
+import AssignVesselsEditor from "@/components/AssignVesselsEditor";
 import Modal from "@/components/Modal";
 import { PORTS, type RoutesValue } from "@/components/schedule-steps/RoutesStep";
 
@@ -117,7 +118,7 @@ const PAGE_SIZE = 10;
 
 function PortCell({ code, city }: { code: string; city: string }) {
   return (
-    <span className="inline-flex items-baseline gap-1.5">
+    <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
       <span className="text-[13.5px] font-medium tracking-tight text-slate-900">{city}</span>
       <span className="font-mono text-[11px] tabular-nums tracking-wider text-slate-400">({code})</span>
     </span>
@@ -173,6 +174,11 @@ export default function RoutesPage() {
   // Route whose vessel/departure schedule dialog is open (null = closed).
   const [scheduleRoute, setScheduleRoute] = useState<Route | null>(null);
   const [editRoute, setEditRoute] = useState<Route | null>(null);
+  // When true, the edit dialog is opened via "Assign vessel" — the same
+  // dialog, but with the assigned-vessels editor rendered alongside the form.
+  const [assignMode, setAssignMode] = useState(false);
+  // Draft selection of vessel names while the assign editor is open.
+  const [assignDraft, setAssignDraft] = useState<string[]>([]);
   const [deleteRoute, setDeleteRoute] = useState<Route | null>(null);
   const router = useRouter();
 
@@ -229,14 +235,6 @@ export default function RoutesPage() {
         title="Routes"
         subtitle={active.name}
         showDateFilter={false}
-        right={
-          <button type="button" onClick={() => setCreateOpen(true)} className="btn-primary">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            Add route
-          </button>
-        }
       />
 
       {!routes ? (
@@ -341,23 +339,23 @@ export default function RoutesPage() {
                         {r.status}
                       </span>
                     </td>
-                    <td className="px-5 py-3.5"><PortCell {...r.origin} /></td>
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-2">
+                    <td className="px-5 py-3.5 whitespace-nowrap"><PortCell {...r.origin} /></td>
+                    <td className="px-5 py-3.5 whitespace-nowrap">
+                      <div className="flex items-center gap-2 whitespace-nowrap">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 shrink-0 text-slate-300">
                           <path d="M5 12h14M13 6l6 6-6 6" />
                         </svg>
                         <PortCell {...r.destination} />
                       </div>
                     </td>
-                    <td className="px-5 py-3.5 align-middle">
+                    <td className="px-5 py-3.5 align-middle whitespace-nowrap">
                       {r.assignments.length === 0 ? (
                         <span className="text-[12px] text-slate-400">Unassigned</span>
                       ) : r.assignments.length === 1 ? (
                         <button
                           type="button"
                           onClick={() => setScheduleRoute(r)}
-                          className="text-left text-[13px] font-medium tracking-tight text-slate-900 underline-offset-2 hover:underline"
+                          className="text-left text-[13px] font-medium tracking-tight text-slate-900 underline-offset-2 hover:underline whitespace-nowrap"
                         >
                           {r.assignments[0].vessel}
                         </button>
@@ -365,7 +363,7 @@ export default function RoutesPage() {
                         <button
                           type="button"
                           onClick={() => setScheduleRoute(r)}
-                          className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2 py-0.5 text-[12px] font-medium text-slate-700 transition-colors hover:bg-slate-200"
+                          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 text-[12px] font-medium text-slate-700 transition-colors hover:bg-slate-200"
                         >
                           {r.assignments.length} vessels
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-slate-400">
@@ -374,7 +372,7 @@ export default function RoutesPage() {
                         </button>
                       )}
                     </td>
-                    <td className="px-5 py-3.5 align-middle">
+                    <td className="px-5 py-3.5 align-middle whitespace-nowrap">
                       {(() => {
                         const deps = allDepartures(r);
                         if (deps.length === 0) return <span className="text-[12px] text-slate-400">No upcoming</span>;
@@ -383,7 +381,7 @@ export default function RoutesPage() {
                           <button
                             type="button"
                             onClick={() => setScheduleRoute(r)}
-                            className="flex items-baseline gap-1.5 text-left"
+                            className="flex items-baseline gap-1.5 whitespace-nowrap text-left"
                           >
                             <span className="text-[12.5px] font-medium tracking-tight text-slate-900 underline-offset-2 hover:underline">
                               {next.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
@@ -417,11 +415,26 @@ export default function RoutesPage() {
                         items={[
                           {
                             label: "Edit route",
-                            onClick: () => setEditRoute(r),
+                            onClick: () => { setAssignMode(false); setEditRoute(r); },
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                 <path d="M12 20h9" />
                                 <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                              </svg>
+                            ),
+                          },
+                          {
+                            label: "Assign vessel",
+                            onClick: () => {
+                              setAssignDraft(r.assignments.map((a) => a.vessel));
+                              setAssignMode(true);
+                              setEditRoute(r);
+                            },
+                            icon: (
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                <path d="M3 14h18l-2 5a2 2 0 0 1-1.9 1.3H6.9A2 2 0 0 1 5 19l-2-5Z" />
+                                <path d="M5 14V8a1 1 0 0 1 1-1h7l5 4" />
+                                <path d="M9 7V4h2" />
                               </svg>
                             ),
                           },
@@ -494,10 +507,12 @@ export default function RoutesPage() {
         }}
       />
 
-      {/* ── Edit-route dialog ── reuses CreateRouteModal in edit mode. */}
+      {/* ── Edit-route dialog ── reuses CreateRouteModal in edit mode. The
+          row's "Assign vessel" action opens the same dialog but with the
+          assigned-vessels panel rendered alongside the form. */}
       <CreateRouteModal
         open={!!editRoute}
-        onClose={() => setEditRoute(null)}
+        onClose={() => { setEditRoute(null); setAssignMode(false); }}
         editValue={editRoute ? routeToValue(editRoute) : null}
         onSave={(payload) => {
           if (!editRoute) return;
@@ -506,17 +521,37 @@ export default function RoutesPage() {
           if (!origin || !destination) return;
           const lo = Number(payload.durationLowHrs) || 0;
           const hi = Number(payload.durationHighHrs) || lo;
+          // In assign mode reconcile the assignments roster with the draft:
+          // kept vessels retain their existing departures; new vessels start
+          // with an empty departure list; removed vessels drop out.
+          const nextAssignments = assignMode
+            ? assignDraft.map((name) => {
+                const prev = editRoute.assignments.find((a) => a.vessel === name);
+                return prev ?? { vessel: name, departures: [] };
+              })
+            : editRoute.assignments;
           setRoutes((prev) =>
             prev
               ? prev.map((r) =>
                   r.id === editRoute.id
-                    ? { ...r, origin, destination, distanceNm: Number(payload.distanceNm) || 0, durationHrs: [lo, hi], status: payload.status ?? r.status }
+                    ? {
+                        ...r,
+                        origin,
+                        destination,
+                        distanceNm: Number(payload.distanceNm) || 0,
+                        durationHrs: [lo, hi],
+                        status: payload.status ?? r.status,
+                        assignments: nextAssignments,
+                      }
                     : r
                 )
               : prev
           );
         }}
-        editExtra={editRoute && <AssignedVesselsSummary route={editRoute} onManage={(vessel) => goToVoyages(editRoute, vessel)} />}
+        editMode={assignMode ? "assign" : "edit"}
+        editExtra={assignMode && editRoute ? (
+          <AssignVesselsEditor value={assignDraft} onChange={setAssignDraft} />
+        ) : null}
       />
 
       <DeleteRouteDialog
