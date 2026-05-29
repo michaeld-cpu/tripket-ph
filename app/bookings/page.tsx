@@ -4,10 +4,10 @@ import { motion, AnimatePresence } from "motion/react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import { TableSkeleton } from "@/components/Skeleton";
-import Select from "@/components/Select";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
-import DateRangePicker, { type DateRange } from "@/components/DateRangePicker";
+import { type DateRange } from "@/components/DateRangePicker";
+import FiltersDialog, { FiltersButton } from "@/components/FiltersDialog";
 import { useToast } from "@/components/ToastContext";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
 import type { Line } from "@/lib/shipping-lines";
@@ -80,6 +80,7 @@ export default function BookingsPage() {
   const [vesselFilter, setVesselFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | BookingStatus>("all");
   const [page, setPage] = useState(1);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // ── Ref copy state (matches PendingAgingList on the dashboard) ──
   // Tracks the most-recently-copied ref so the button can flash a check mark
@@ -190,10 +191,19 @@ export default function BookingsPage() {
 
   // Booking-date range filter — drives the dashboard-style picker.
   const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
-  const [dateRange, setDateRange] = useState<DateRange>(() => ({
+  const defaultDateRange = useMemo<DateRange>(() => ({
     start: new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30),
     end: today,
-  }));
+  }), [today]);
+  const [dateRange, setDateRange] = useState<DateRange>(defaultDateRange);
+  const isDefaultDateRange = (r: DateRange) =>
+    r.start.getTime() === defaultDateRange.start.getTime() &&
+    r.end.getTime() === defaultDateRange.end.getTime();
+  const bookingActiveCount =
+    (routeFilter !== "all" ? 1 : 0) +
+    (vesselFilter !== "all" ? 1 : 0) +
+    (statusFilter !== "all" ? 1 : 0) +
+    (isDefaultDateRange(dateRange) ? 0 : 1);
 
   // Hydrate bookings from localStorage voyages on mount.
   useEffect(() => {
@@ -300,39 +310,7 @@ export default function BookingsPage() {
                 />
               </div>
 
-              <Select
-                size="sm"
-                value={routeFilter}
-                onChange={setRouteFilter}
-                ariaLabel="Filter by route"
-                className="w-40"
-                options={routeOptions}
-              />
-              <Select
-                size="sm"
-                value={vesselFilter}
-                onChange={setVesselFilter}
-                ariaLabel="Filter by vessel"
-                className="w-40"
-                options={vesselOptions}
-              />
-              <Select
-                size="sm"
-                value={statusFilter}
-                onChange={setStatusFilter}
-                ariaLabel="Filter by status"
-                className="w-32"
-                options={[
-                  { value: "all", label: "All status" },
-                  { value: "Confirmed", label: "Approved" },
-                  { value: "Pending", label: "Pending" },
-                  { value: "Cancelled", label: "Cancelled" },
-                  { value: "Refunded", label: "Refunded" },
-                ]}
-              />
-
-              {/* Booking-date range — pinned to the end of the toolbar. */}
-              <DateRangePicker value={dateRange} onChange={setDateRange} />
+              <FiltersButton onClick={() => setFiltersOpen(true)} activeCount={bookingActiveCount} />
             </div>
           </div>
 
@@ -551,6 +529,25 @@ export default function BookingsPage() {
           setApproveTarget(null);
           setOpenRef(null);
         }}
+      />
+
+      <FiltersDialog
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        activeCount={bookingActiveCount}
+        fields={[
+          { kind: "select", key: "route",  label: "Route",  value: routeFilter,  options: routeOptions,  onChange: setRouteFilter,  defaultValue: "all" },
+          { kind: "select", key: "vessel", label: "Vessel", value: vesselFilter, options: vesselOptions, onChange: setVesselFilter, defaultValue: "all" },
+          { kind: "select", key: "status", label: "Status", value: statusFilter, onChange: (v) => setStatusFilter(v as "all" | BookingStatus), defaultValue: "all",
+            options: [
+              { value: "all", label: "All status" },
+              { value: "Confirmed", label: "Approved" },
+              { value: "Pending", label: "Pending" },
+              { value: "Cancelled", label: "Cancelled" },
+              { value: "Refunded", label: "Refunded" },
+            ] },
+          { kind: "dateRange", key: "date", label: "Booking date", value: dateRange, onChange: setDateRange, defaultValue: defaultDateRange },
+        ]}
       />
     </div>
   );

@@ -6,7 +6,7 @@ import { useShippingLine } from "@/components/ShippingLineContext";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
 import type { Line } from "@/lib/shipping-lines";
 import { TableSkeleton } from "@/components/Skeleton";
-import Select from "@/components/Select";
+import FiltersDialog, { FiltersButton, type FilterFieldDef } from "@/components/FiltersDialog";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import Modal from "@/components/Modal";
@@ -126,6 +126,7 @@ export default function TicketsPage() {
   // (Senior / PWD / Student / Infant) plus Regular.
   const [paxTypeFilter, setPaxTypeFilter] = useState<"all" | PaxType>("all");
   const [page, setPage] = useState(1);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   // Row whose "Mark Paid" was triggered from the row menu — opens the
   // ticket-number prompt before committing the Paid status.
   const [paidTarget, setPaidTarget] = useState<TicketRow | null>(null);
@@ -146,10 +147,21 @@ export default function TicketsPage() {
 
   // Booking-date range filter.
   const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
-  const [dateRange, setDateRange] = useState<DateRange>(() => ({
+  const defaultDateRange = useMemo<DateRange>(() => ({
     start: new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30),
     end: today,
-  }));
+  }), [today]);
+  const [dateRange, setDateRange] = useState<DateRange>(defaultDateRange);
+  const isDefaultDateRange = (r: DateRange) =>
+    r.start.getTime() === defaultDateRange.start.getTime() &&
+    r.end.getTime() === defaultDateRange.end.getTime();
+  const ticketActiveCount =
+    (routeFilter !== "all" ? 1 : 0) +
+    (vesselFilter !== "all" ? 1 : 0) +
+    (statusFilter !== "all" ? 1 : 0) +
+    (classFilter !== "all" ? 1 : 0) +
+    (paxTypeFilter !== "all" ? 1 : 0) +
+    (isDefaultDateRange(dateRange) ? 0 : 1);
 
   // Hydrate the same way the bookings page does — re-derive from
   // `tripket.voyages` localStorage on mount so the two pages stay in sync.
@@ -277,48 +289,7 @@ export default function TicketsPage() {
                 />
               </div>
 
-              <Select size="sm" value={routeFilter} onChange={setRouteFilter} ariaLabel="Filter by route" className="w-32" options={routeOptions} />
-              <Select size="sm" value={vesselFilter} onChange={setVesselFilter} ariaLabel="Filter by vessel" className="w-32" options={vesselOptions} />
-              <Select
-                size="sm"
-                value={statusFilter}
-                onChange={setStatusFilter}
-                ariaLabel="Filter by status"
-                className="w-28"
-                options={[
-                  { value: "all", label: "All status" },
-                  { value: "Pending", label: "Pending" },
-                  { value: "Issued", label: "Issued" },
-                  { value: "Cancelled", label: "Cancelled" },
-                  { value: "Refunded", label: "Refunded" },
-                ]}
-              />
-              <Select
-                size="sm"
-                value={classFilter}
-                onChange={setClassFilter}
-                ariaLabel="Filter by passenger type"
-                className="w-32"
-                options={[
-                  { value: "all", label: "All classes" },
-                  { value: "Economy", label: "Economy" },
-                  { value: "Tourist", label: "Tourist" },
-                  { value: "Business", label: "Business" },
-                ]}
-              />
-              <Select
-                size="sm"
-                value={paxTypeFilter}
-                onChange={setPaxTypeFilter}
-                ariaLabel="Filter by passenger type"
-                className="w-44"
-                options={[
-                  { value: "all", label: "All passenger types" },
-                  ...(Object.keys(PAX_TYPE_LABELS) as PaxType[]).map((k) => ({ value: k, label: PAX_TYPE_LABELS[k] })),
-                ]}
-              />
-
-              <DateRangePicker value={dateRange} onChange={setDateRange} />
+              <FiltersButton onClick={() => setFiltersOpen(true)} activeCount={ticketActiveCount} />
             </div>
           </div>
 
@@ -563,6 +534,37 @@ export default function TicketsPage() {
           showToast(`Ticket ${ticketNumber} marked Issued`);
           setPaidTarget(null);
         }}
+      />
+
+      <FiltersDialog
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        activeCount={ticketActiveCount}
+        fields={[
+          { kind: "select", key: "route",  label: "Route",  value: routeFilter,  options: routeOptions,  onChange: setRouteFilter,  defaultValue: "all" },
+          { kind: "select", key: "vessel", label: "Vessel", value: vesselFilter, options: vesselOptions, onChange: setVesselFilter, defaultValue: "all" },
+          { kind: "select", key: "status", label: "Status", value: statusFilter, onChange: (v) => setStatusFilter(v as "all" | TicketStatus), defaultValue: "all",
+            options: [
+              { value: "all", label: "All status" },
+              { value: "Pending", label: "Pending" },
+              { value: "Issued", label: "Issued" },
+              { value: "Cancelled", label: "Cancelled" },
+              { value: "Refunded", label: "Refunded" },
+            ] },
+          { kind: "select", key: "class", label: "Fare class", value: classFilter, onChange: (v) => setClassFilter(v as "all" | FareClass), defaultValue: "all",
+            options: [
+              { value: "all", label: "All classes" },
+              { value: "Economy", label: "Economy" },
+              { value: "Tourist", label: "Tourist" },
+              { value: "Business", label: "Business" },
+            ] },
+          { kind: "select", key: "pax", label: "Passenger type", value: paxTypeFilter, onChange: (v) => setPaxTypeFilter(v as "all" | PaxType), defaultValue: "all",
+            options: [
+              { value: "all", label: "All passenger types" },
+              ...(Object.keys(PAX_TYPE_LABELS) as PaxType[]).map((k) => ({ value: k, label: PAX_TYPE_LABELS[k] })),
+            ] },
+          { kind: "dateRange", key: "date", label: "Booking date", value: dateRange, onChange: setDateRange, defaultValue: defaultDateRange },
+        ]}
       />
     </div>
   );
