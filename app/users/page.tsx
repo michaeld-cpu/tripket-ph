@@ -94,8 +94,13 @@ export default function UsersPage() {
   };
 
   useEffect(() => {
-    const persisted = loadStore<unknown>("users", "all");
-    if (persisted) { setUsers(reviveUsers(persisted)); return; }
+    try {
+      const persisted = loadStore<unknown>("users", "all");
+      if (persisted) {
+        const revived = reviveUsers(persisted);
+        if (revived.length > 0) { setUsers(revived); return; }
+      }
+    } catch { /* fall through to mock */ }
     const t = setTimeout(() => {
       const seeded = buildUsers();
       setUsers(seeded);

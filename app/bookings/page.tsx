@@ -208,14 +208,17 @@ export default function BookingsPage() {
 
   // Hydrate bookings. Prefer the persisted store (so admin mutations like
   // cancel / approve / refund survive a refresh); fall through to deriving
-  // from the live voyages mock and persist that seed.
+  // from the live voyages mock and persist that seed. A bad store falls
+  // through too — a stale shape shouldn't brick the page.
   useEffect(() => {
     try {
       const persisted = loadStore<unknown>("bookings", active.id);
       if (persisted) {
-        setBookings(reviveBookings(persisted));
-        return;
+        const revived = reviveBookings(persisted);
+        if (revived.length > 0) { setBookings(revived); return; }
       }
+    } catch { /* fall through to derive from voyages */ }
+    try {
       const voyages = loadScopedVoyages(active.id, locked);
       const t = setTimeout(() => {
         const seeded = deriveBookings(voyages).map((b) => ({ ...b, activity: deriveActivity(b) }));

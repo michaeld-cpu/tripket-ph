@@ -447,11 +447,14 @@ export default function VesselDetailPage() {
 
   // Same hydration shape as the vessels list page: prefer the persisted
   // store (so edits made anywhere survive a refresh); fall back to the
-  // seeded mock the first time the line is opened.
+  // seeded mock the first time the line is opened. A bad store falls
+  // through to the mock too.
   useEffect(() => {
     let cancelled = false;
-    const persisted = loadStore<Vessel[]>("vessels", active.id);
-    if (persisted) { setVessels(persisted); return; }
+    try {
+      const persisted = loadStore<Vessel[]>("vessels", active.id);
+      if (persisted && Array.isArray(persisted)) { setVessels(persisted); return; }
+    } catch { /* fall through to mock */ }
     fetchDashboardData(active.id).then((d) => {
       if (cancelled) return;
       setVessels(d.vessels);
