@@ -4,7 +4,7 @@ import Modal from "@/components/Modal";
 import Stepper from "@/components/Stepper";
 import WizardHeader from "@/components/wizard/WizardHeader";
 import WizardFooter from "@/components/wizard/WizardFooter";
-import RoutesStep, { type RoutesValue, PORTS } from "@/components/schedule-steps/RoutesStep";
+import RoutesStep, { type RoutesValue, PORTS, RouteContextCard } from "@/components/schedule-steps/RoutesStep";
 
 /**
  * CreateRouteModal — 2-step dialog for adding a route from the Routes page.
@@ -44,6 +44,7 @@ export default function CreateRouteModal({
   editValue,
   onSave,
   editExtra,
+  editMode = "edit",
 }: {
   open: boolean;
   onClose: () => void;
@@ -54,8 +55,13 @@ export default function CreateRouteModal({
   onSave?: (payload: RoutesValue) => void;
   /** Extra content rendered below the form in edit mode (e.g. assigned vessels). */
   editExtra?: React.ReactNode;
+  /** Which edit variant this is — drives chrome (title, icon, save label).
+   *  "edit"   = tweak details on an existing route.
+   *  "assign" = manage the route's vessel roster (the form is secondary). */
+  editMode?: "edit" | "assign";
 }) {
   const isEdit = !!editValue;
+  const isAssign = isEdit && editMode === "assign";
   const [stepIdx, setStepIdx] = useState(0);
   const [value, setValue] = useState<RoutesValue>(initialValue);
   const step = STEPS[stepIdx];
@@ -99,14 +105,30 @@ export default function CreateRouteModal({
     <Modal open={open} onClose={onClose} maxWidth="max-w-2xl">
       <div className="flex max-h-[90vh] flex-col">
         <WizardHeader
-          title={isEdit ? "Edit route" : "Create route"}
-          caption={isEdit ? "Update the ports, distance, or crossing time." : step.description}
+          title={isAssign ? "Assign vessels" : isEdit ? "Edit route" : "Create route"}
+          caption={
+            isAssign
+              ? "Pick the vessels that sail this route. Departures are managed in the schedule wizard."
+              : isEdit
+                ? "Update the distance, crossing time, or status."
+                : step.description
+          }
           onClose={onClose}
           icon={
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
-              <path d="M12 21s-7-7.5-7-12a7 7 0 1 1 14 0c0 4.5-7 12-7 12Z" />
-              <circle cx="12" cy="9" r="2.5" />
-            </svg>
+            isAssign ? (
+              // Ferry silhouette — signals the assignment domain.
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+                <path d="M3 17h18l-2 3H5l-2-3Z" />
+                <rect x="5" y="11" width="14" height="6" rx="1" />
+                <path d="M8 11V7h8v4" />
+                <path d="M12 7V4" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+                <path d="M12 21s-7-7.5-7-12a7 7 0 1 1 14 0c0 4.5-7 12-7 12Z" />
+                <circle cx="12" cy="9" r="2.5" />
+              </svg>
+            )
           }
         />
 
@@ -131,8 +153,20 @@ export default function CreateRouteModal({
         >
           {isEdit ? (
             <div className="space-y-5">
-              <RoutesStep value={value} onChange={setValue} hideReturnToggle showStatus />
-              {editExtra}
+              {isAssign ? (
+                /* Assign mode: just the route context card + the vessel
+                   editor. Distance, duration, and status all belong to
+                   the Edit-route action — not here. */
+                <>
+                  <RouteContextCard value={value} />
+                  {editExtra}
+                </>
+              ) : (
+                <>
+                  <RoutesStep value={value} onChange={setValue} hideReturnToggle showStatus lockPorts />
+                  {editExtra}
+                </>
+              )}
             </div>
           ) : step.id === "details" ? (
             <RoutesStep value={value} onChange={setValue} />
@@ -142,7 +176,12 @@ export default function CreateRouteModal({
         </div>
 
         {isEdit ? (
-          <EditFooter onCancel={onClose} onSave={saveEdit} saveDisabled={!detailsValid} />
+          <EditFooter
+            onCancel={onClose}
+            onSave={saveEdit}
+            saveDisabled={!detailsValid}
+            saveLabel={isAssign ? "Save assignments" : "Save changes"}
+          />
         ) : (
           <WizardFooter
             stepIdx={stepIdx}
@@ -167,10 +206,12 @@ function EditFooter({
   onCancel,
   onSave,
   saveDisabled,
+  saveLabel,
 }: {
   onCancel: () => void;
   onSave: () => void;
   saveDisabled: boolean;
+  saveLabel: string;
 }) {
   return (
     <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-4">
@@ -187,7 +228,7 @@ function EditFooter({
         disabled={saveDisabled}
         className="inline-flex items-center rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-brand-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-400 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Save changes
+        {saveLabel}
       </button>
     </div>
   );

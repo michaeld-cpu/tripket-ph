@@ -12,8 +12,6 @@ export const metadata: Metadata = {
   },
   description: "Operations dashboard for Tripket PH — manage voyages, bookings, routes, and fleet across shipping lines.",
   applicationName: "Tripket PH",
-  // Favicon comes from app/icon.svg (white logo on a brand-orange tile,
-  // matching the sidebar mark) via Next's file convention.
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

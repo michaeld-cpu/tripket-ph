@@ -5,7 +5,9 @@ import Modal from "./Modal";
 import { useToast } from "./ToastContext";
 import { useShippingLine } from "./ShippingLineContext";
 import VesselFormBody, { passengerOnlyTypes, typeOptions } from "./VesselFormBody";
-import AddOnsSection, { defaultAddOns } from "./vessel-extras/AddOnsSection";
+import NumberInput from "./NumberInput";
+import { defaultAddOns } from "./vessel-extras/AddOnsSection";
+import VesselCatalogStep from "./vessel-extras/VesselCatalogStep";
 import type { Vessel, VehicleClass, PassengerType, AddOn } from "@/lib/dashboard-data";
 
 type Props = {
@@ -208,16 +210,15 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
                 exit={{ opacity: 0, x: -6 }}
                 transition={{ duration: 0.18, ease: "easeOut" }}
               >
-                <Step2
+                <VesselCatalogStep
                   isPassengerOnly={isPassengerOnly}
                   vehicleClasses={vehicleClasses}
                   setVehicleClasses={setVehicleClasses}
                   passengerTypes={passengerTypes}
                   setPassengerTypes={setPassengerTypes}
+                  addOns={addOns}
+                  setAddOns={setAddOns}
                 />
-                <div className="border-t border-slate-100">
-                  <AddOnsSection addOns={addOns} setAddOns={setAddOns} />
-                </div>
               </motion.div>
             )}
             {step === 3 && (
@@ -670,8 +671,7 @@ function PassengerTypeRow({
         <div className="text-right text-[12px] text-slate-400">—</div>
       ) : (
         <div className="flex items-center rounded-md border border-slate-200 bg-white transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100">
-          <input
-            type="number"
+          <NumberInput
             value={pt.discountPct}
             onChange={e => onChange({ discountPct: parseInt(e.target.value || "0", 10) })}
             className="w-full bg-transparent px-1.5 py-1 text-right text-[13px] tabular-nums text-slate-900 focus:outline-none"
@@ -727,8 +727,7 @@ function NewPassengerRow({
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onSave(label, discount, doc); } }}
         />
         <div className="flex items-center rounded-md border border-slate-200 bg-white focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100">
-          <input
-            type="number"
+          <NumberInput
             value={discount}
             onChange={(e) => setDiscount(e.target.value)}
             placeholder="0"
@@ -941,8 +940,7 @@ function SuffixInput({
   return (
     <div className="mt-1 flex items-center rounded-lg border border-slate-200 bg-white transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100">
       {prefix && <span className="pl-3 text-[11px] font-medium text-slate-400">{prefix}</span>}
-      <input
-        type="number"
+      <NumberInput
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}

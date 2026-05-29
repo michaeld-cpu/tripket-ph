@@ -744,7 +744,7 @@ function TicketsTab({ bookings }: { bookings: Booking[] }) {
       issued += 1;
       classMix[t.fareClass] += 1;
       if (t.comped) comped += 1;
-      if (t.status === "Paid") paid += 1;
+      if (t.status === "Issued") paid += 1;
       else if (t.status === "Cancelled") cancelled += 1;
       else if (t.status === "Refunded") refunded += 1;
       else if (t.status === "Pending") pending += 1;
@@ -755,8 +755,8 @@ function TicketsTab({ bookings }: { bookings: Booking[] }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-4 overflow-hidden rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/70 divide-x divide-slate-100">
-        <KpiCell label="Tickets issued" value={totals.issued} />
-        <KpiCell label="Paid"           value={totals.paid} />
+        <KpiCell label="Tickets total" value={totals.issued} />
+        <KpiCell label="Issued"        value={totals.paid} />
         <KpiCell label="Cancelled"      value={totals.cancelled} />
         <KpiCell label="Refunded"       value={totals.refunded} />
       </div>
@@ -1628,7 +1628,7 @@ function synthesizeBackfillBookings(real: Booking[]): Booking[] {
         contactMobile: "+63 900 000 0000",
         contactEmail: "synthetic@example.com",
         paymentMethod: "Tripket Wallet",
-        paymentStatus: status === "Cancelled" || status === "Refunded" ? "Refunded" : status === "Pending" ? "Pending" : "Paid",
+        paymentStatus: status === "Cancelled" || status === "Refunded" ? "Refunded" : status === "Pending" ? "Pending" : "Issued",
         tickets: [],
       });
     }
@@ -1637,8 +1637,8 @@ function synthesizeBackfillBookings(real: Booking[]): Booking[] {
 }
 
 function bucketTicketStatus(bookings: Booking[]): { key: TicketStatus; count: number }[] {
-  const order: TicketStatus[] = ["Pending", "Paid", "Cancelled", "Refunded"];
-  const counts: Record<TicketStatus, number> = { Pending: 0, Paid: 0, Cancelled: 0, Refunded: 0 };
+  const order: TicketStatus[] = ["Pending", "Issued", "Cancelled", "Refunded"];
+  const counts: Record<TicketStatus, number> = { Pending: 0, Issued: 0, Cancelled: 0, Refunded: 0 };
   bookings.forEach((b) => b.tickets.forEach((t) => { counts[t.status] += 1; }));
   return order.map((k) => ({ key: k, count: counts[k] }));
 }

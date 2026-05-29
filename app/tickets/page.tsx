@@ -99,7 +99,7 @@ function fmtDepartureTime(d: Date): string {
 // the value through.
 const ticketStatusLabel: Record<TicketStatus, string> = {
   Pending:   "Pending",
-  Paid:      "Paid",
+  Issued:    "Issued",
   Cancelled: "Cancelled",
   Refunded:  "Refunded",
 };
@@ -288,7 +288,7 @@ export default function TicketsPage() {
                 options={[
                   { value: "all", label: "All status" },
                   { value: "Pending", label: "Pending" },
-                  { value: "Paid", label: "Paid" },
+                  { value: "Issued", label: "Issued" },
                   { value: "Cancelled", label: "Cancelled" },
                   { value: "Refunded", label: "Refunded" },
                 ]}
@@ -484,8 +484,8 @@ export default function TicketsPage() {
                             },
                             // Mark Paid — terminal Cancelled/Refunded tickets stay locked.
                             {
-                              label: "Mark Paid",
-                              disabled: r.status === "Cancelled" || r.status === "Refunded" || r.status === "Paid",
+                              label: "Mark Issued",
+                              disabled: r.status === "Cancelled" || r.status === "Refunded" || r.status === "Issued",
                               onClick: () => setPaidTarget(r),
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -559,8 +559,8 @@ export default function TicketsPage() {
         onClose={() => setPaidTarget(null)}
         onConfirm={(ticketNumber) => {
           if (!paidTarget) return;
-          mutateTicket(paidTarget.id, { status: "Paid", ticketNumber });
-          showToast(`Ticket ${ticketNumber} marked Paid`);
+          mutateTicket(paidTarget.id, { status: "Issued", ticketNumber });
+          showToast(`Ticket ${ticketNumber} marked Issued`);
           setPaidTarget(null);
         }}
       />
@@ -708,7 +708,7 @@ function TicketDetailDialog({
                       cancelled/void/refunded entries don't read like they're
                       still scheduled. fmtEtd flips wording to "Departed …
                       ago" once departure is in the past. */}
-                  {(ticket.status === "Paid" || ticket.status === "Pending") && (
+                  {(ticket.status === "Issued" || ticket.status === "Pending") && (
                     <p className="mt-3 text-center text-[11px] font-medium tracking-tight text-slate-500">
                       ( {fmtEtd(ticket.departureDate)} )
                     </p>
@@ -734,7 +734,7 @@ function TicketDetailDialog({
                 <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Passenger</div>
                 <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 text-[12.5px]">
                   <div>
-                    <dt className="text-[10.5px] text-slate-500">Sex</dt>
+                    <dt className="text-[10.5px] text-slate-500">Gender</dt>
                     <dd className="mt-0.5 font-medium text-slate-900">{ticket.sex}</dd>
                   </div>
                   <div>
@@ -835,12 +835,12 @@ function TicketDetailDialog({
 // and a total strip. Scoped to this single passenger.
 function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
   const payTone =
-    ticket.status === "Paid" ? "bg-emerald-100 text-emerald-800"
+    ticket.status === "Issued" ? "bg-emerald-100 text-emerald-800"
     : ticket.status === "Refunded" ? "bg-sky-50 text-sky-700"
     : ticket.status === "Cancelled" ? "bg-slate-100 text-slate-500"
     : "bg-brand-50 text-brand-700";
   const payLabel =
-    ticket.status === "Paid" ? "Paid"
+    ticket.status === "Issued" ? "Issued"
     : ticket.status === "Refunded" ? "Refunded"
     : ticket.status === "Cancelled" ? "Unpaid"
     : "Pending";
@@ -919,7 +919,7 @@ function StatusPicker({
   onChange: (patch: Partial<Ticket>) => void;
 }) {
   const [open, setOpen] = useState(false);
-  // When the admin picks "Paid", we intercept to collect the ticket number
+  // When the admin picks "Issued", we intercept to collect the ticket number
   // before committing the status change.
   const [askPaid, setAskPaid] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -948,7 +948,7 @@ function StatusPicker({
 
   const options: { value: TicketStatus; label: string }[] = [
     { value: "Pending",   label: "Mark Pending" },
-    { value: "Paid",      label: "Mark Paid" },
+    { value: "Issued",      label: "Mark Issued" },
     { value: "Refunded",  label: "Refund" },
     { value: "Cancelled", label: "Cancel ticket" },
   ];
@@ -962,8 +962,7 @@ function StatusPicker({
         aria-expanded={open}
         className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-brand-600"
       >
-        <span className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-white/80">Status</span>
-        <span className="text-[12.5px] font-semibold uppercase tracking-[0.04em] text-white">{current}</span>
+        <span className="text-[12.5px] font-semibold uppercase tracking-[0.04em] text-white">Update status</span>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-3.5 w-3.5 text-white/80 transition-transform duration-150 ${open ? "rotate-180" : ""}`}>
           <path d="m6 9 6 6 6-6" />
         </svg>
@@ -983,48 +982,39 @@ function StatusPicker({
             <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">
               Update status
             </div>
-            {options.map((o) => {
-              const disabled = !canPick(o.value);
-              const isCurrent = o.value === current;
-              return (
-                <button
-                  key={o.value}
-                  type="button"
-                  role="menuitem"
-                  disabled={disabled}
-                  onClick={() => {
-                    if (disabled) return;
-                    setOpen(false);
-                    // Paid requires an admin-entered ticket number — prompt for it
-                    // instead of committing the status outright.
-                    if (o.value === "Paid") { setAskPaid(true); return; }
-                    onChange({ status: o.value });
-                  }}
-                  // Fixed three-column layout: label · pill · 16px check slot.
-                  // The check slot is reserved (empty when not current) so the
-                  // pill column stays put across rows.
-                  className={`grid w-full grid-cols-[minmax(0,1fr)_auto_16px] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors duration-100 ${
-                    disabled
-                      ? "cursor-not-allowed text-slate-300"
-                      : o.value === "Cancelled"
-                        ? "text-rose-600 hover:bg-rose-50"
-                        : "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900"
-                  }`}
-                >
-                  <span className="truncate font-medium">{o.label}</span>
-                  <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
-                    {o.value}
-                  </span>
-                  <span className="flex justify-end">
-                    {isCurrent && (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-400">
-                        <path d="M5 12l5 5 9-11" />
-                      </svg>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
+            {options
+              .filter((o) => o.value !== current)
+              .map((o) => {
+                const disabled = !canPick(o.value);
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    role="menuitem"
+                    disabled={disabled}
+                    onClick={() => {
+                      if (disabled) return;
+                      setOpen(false);
+                      // Paid requires an admin-entered ticket number — prompt for it
+                      // instead of committing the status outright.
+                      if (o.value === "Issued") { setAskPaid(true); return; }
+                      onChange({ status: o.value });
+                    }}
+                    className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors duration-100 ${
+                      disabled
+                        ? "cursor-not-allowed text-slate-300"
+                        : o.value === "Cancelled"
+                          ? "text-rose-600 hover:bg-rose-50"
+                          : "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900"
+                    }`}
+                  >
+                    <span className="truncate font-medium">{o.label}</span>
+                    <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
+                      {o.value}
+                    </span>
+                  </button>
+                );
+              })}
           </motion.div>
         )}
       </AnimatePresence>
@@ -1033,7 +1023,7 @@ function StatusPicker({
         open={askPaid}
         existingNumber={existingNumber}
         onClose={() => setAskPaid(false)}
-        onConfirm={(ticketNumber) => { onChange({ status: "Paid", ticketNumber }); setAskPaid(false); }}
+        onConfirm={(ticketNumber) => { onChange({ status: "Issued", ticketNumber }); setAskPaid(false); }}
       />
     </div>
   );
@@ -1067,9 +1057,9 @@ function MarkPaidDialog({
             </svg>
           </span>
           <div className="min-w-0 flex-1">
-            <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Mark as paid</h2>
+            <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Mark as issued</h2>
             <p className="mt-1 text-[13px] leading-relaxed text-slate-600">
-              Enter the ticket number issued when payment was collected. This is recorded on the ticket.
+              Enter the ticket number assigned when the ticket is issued. This is recorded on the ticket.
             </p>
             <div className="mt-4">
               <label className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Ticket number</label>
@@ -1100,7 +1090,7 @@ function MarkPaidDialog({
           disabled={!trimmed}
           className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-emerald-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Confirm payment
+          Confirm issuance
         </button>
       </div>
     </Modal>

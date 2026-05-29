@@ -1,11 +1,12 @@
 "use client";
 import { useMemo, useRef, useState } from "react";
-import { Step2 as VesselClassesAndFaresStep, Step3Review as VesselReviewStep } from "@/components/AddVesselModal";
+import { Step3Review as VesselReviewStep } from "@/components/AddVesselModal";
 import { passengerOnlyTypes } from "@/components/VesselFormBody";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import LinePicker from "@/components/LinePicker";
+import NumberInput from "@/components/NumberInput";
 import type { VehicleClass, PassengerType, AddOn } from "@/lib/dashboard-data";
-import AddOnsSection from "@/components/vessel-extras/AddOnsSection";
+import VesselCatalogStep from "@/components/vessel-extras/VesselCatalogStep";
 
 /**
  * Vessel step — third stop of the Create-Schedule wizard.
@@ -129,25 +130,31 @@ export default function VesselStep({
 
   return (
     <div className="space-y-5">
-      {/* Mode toggle — segmented control matching the rhythm of the wizard. */}
-      <ModeToggle
-        mode={value.mode}
-        onChange={(mode) => onChange({ ...value, mode })}
-        fleetCount={fleet.length}
-      />
-
       {value.mode === "fleet" ? (
-        <FleetPicker
-          fleet={fleet}
-          selectedId={value.fleetVesselId}
-          onSelect={(id) => onChange({ ...value, fleetVesselId: id })}
-        />
+        // Unified shell: centered tabs + search + list read as one container.
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <ModeToggle
+            mode={value.mode}
+            onChange={(mode) => onChange({ ...value, mode })}
+            fleetCount={fleet.length}
+          />
+          <FleetPicker
+            fleet={fleet}
+            selectedId={value.fleetVesselId}
+            onSelect={(id) => onChange({ ...value, fleetVesselId: id })}
+          />
+        </div>
       ) : (
         // ── Embedded vessel-creation wizard ──
         // Sub-steps + content + sub-footer all sit inside the outer wizard's
         // step 3 body. Identical UX to AddVesselModal, so an operator who's
         // used the Vessels page recognises it immediately.
-        <div className="space-y-4 rounded-xl border border-slate-200 bg-white">
+        <div className="space-y-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <ModeToggle
+            mode={value.mode}
+            onChange={(mode) => onChange({ ...value, mode })}
+            fleetCount={fleet.length}
+          />
           {/* Sub-stepper — quietly distinct from the outer stepper (smaller, no border). */}
           <div className="flex items-center gap-2 px-4 pt-3.5">
             {NEW_SUB_STEPS.map((s, i) => {
@@ -204,17 +211,15 @@ export default function VesselStep({
           )}
 
           {newSubStep === 2 && (
-            <div className="-mt-1 max-h-[60vh] divide-y divide-slate-100 overflow-y-auto">
-              <VesselClassesAndFaresStep
+            <div className="-mt-1 max-h-[60vh] overflow-y-auto">
+              <VesselCatalogStep
                 isPassengerOnly={isPassengerOnly}
                 vehicleClasses={value.vehicleClasses}
                 setVehicleClasses={setVehicleClasses}
                 passengerTypes={value.passengerTypes}
                 setPassengerTypes={setPassengerTypes}
-              />
-              <AddOnsSection
                 addOns={value.addOns}
-                setAddOns={(next) => onChange({ ...value, addOns: next })}
+                setAddOns={(next: AddOn[]) => onChange({ ...value, addOns: next })}
               />
             </div>
           )}
@@ -362,8 +367,7 @@ function IdentitySubStep({
       <div className={`grid gap-4 ${isPassengerOnly ? "grid-cols-1" : "grid-cols-2"}`}>
         <Field label="Passenger capacity" required hint="MARINA-certified maximum">
           <div className={inputWrapCls}>
-            <input
-              type="number"
+            <NumberInput
               required
               min={1}
               value={value.passengerCapacity}
@@ -378,8 +382,7 @@ function IdentitySubStep({
         {!isPassengerOnly && (
           <Field label="Vehicle slots" required hint="Total vehicle capacity">
             <div className={inputWrapCls}>
-              <input
-                type="number"
+              <NumberInput
                 required
                 min={0}
                 value={value.vehicleSlots}
@@ -455,7 +458,7 @@ function ModeToggle({
   // sits quiet. No inner card/shadow on the active item so it doesn't look
   // like a card-in-card.
   return (
-    <div role="tablist" aria-label="Vessel source" className="flex items-center border-b border-slate-200">
+    <div role="tablist" aria-label="Vessel source" className="grid grid-cols-2 border-b border-slate-200">
       {[
         { key: "fleet" as const, label: "From fleet",   caption: `${fleetCount} ready` },
         { key: "new" as const,   label: "Register new", caption: "Add to fleet" },
@@ -469,7 +472,7 @@ function ModeToggle({
             aria-selected={on}
             onClick={() => onChange(opt.key)}
             className={
-              "relative flex items-center gap-1.5 whitespace-nowrap px-4 py-2.5 text-[13px] font-medium tracking-tight transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300 " +
+              "relative flex items-center justify-center gap-1.5 whitespace-nowrap px-4 py-2.5 text-[13px] font-medium tracking-tight transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300 " +
               (on ? "text-brand-600" : "text-slate-500 hover:text-slate-800")
             }
           >
@@ -509,7 +512,7 @@ function FleetPicker({
   }, [fleet, query]);
 
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2.5 p-3">
       {/* Search input — same chrome as the routes table search. */}
       <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm focus-within:border-slate-300 focus-within:ring-2 focus-within:ring-brand-100">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-slate-400">
@@ -525,7 +528,7 @@ function FleetPicker({
       </div>
 
       <div
-        className="grid max-h-[320px] grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-slate-200/70 bg-slate-50/30 p-2 sm:grid-cols-2"
+        className="grid max-h-[320px] grid-cols-1 gap-2 overflow-y-auto rounded-lg bg-slate-50/30 p-2 sm:grid-cols-2"
         style={{ scrollbarGutter: "stable" }}
       >
         {filtered.length === 0 ? (
