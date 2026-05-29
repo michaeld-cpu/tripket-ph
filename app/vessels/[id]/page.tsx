@@ -13,6 +13,7 @@ import {
 } from "@/lib/dashboard-data";
 import EditVesselModal from "@/components/EditVesselModal";
 import DeleteVesselDialog from "@/components/DeleteVesselDialog";
+import VoyageCard from "@/components/VoyageCard";
 
 // Shared design tokens — one source of truth for chrome / typography across all cards on this page.
 const CARD = "overflow-hidden rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70";
@@ -529,130 +530,50 @@ export default function VesselDetailPage() {
             </div>
           )}
 
-          {/* Primary card — current voyage. Brand-filled with a warm highlight to lift the orange. */}
+          {/* Primary card — current voyage. */}
           {vessel && voyage && isLive && (
-            <article
-              className="relative overflow-hidden rounded-2xl p-2 shadow-[0_1px_2px_rgba(15,23,42,0.06),0_16px_36px_-12px_rgba(234,88,12,0.45)]"
-              style={{
-                // Outer orange frame with a soft top-right highlight so it isn't flat.
-                backgroundImage:
-                  "radial-gradient(140% 80% at 100% 0%, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 55%), linear-gradient(180deg, #fb923c 0%, #f97316 55%, #ea580c 100%)",
-              }}
-            >
-              {/* Top strip — status + ID, sit on the orange frame above the white panel */}
-              <div className="flex items-center justify-between px-3 pt-1.5 pb-2">
-                <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white">
-                  <span className="relative inline-flex h-1.5 w-1.5">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-70" />
-                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-white" />
-                  </span>
-                  En route
-                </span>
-                <span className="font-mono text-[11px] tabular-nums text-white/85">
-                  #{voyage.fromCode}{voyage.toCode}-{vessel.id.slice(-4).toUpperCase()}
-                </span>
-              </div>
-
-              {/* Inner white content panel — rounded inside the orange frame */}
-              <div className="overflow-hidden rounded-xl bg-white">
-                {/* Route timeline */}
-                <div className="relative px-5 py-5">
-                  <span aria-hidden className="absolute left-[27.5px] top-[34px] h-[36px] w-px bg-slate-200" />
-                  <ol className="relative space-y-4">
-                    <li className="grid grid-cols-[14px_1fr_auto] items-center gap-4">
-                      <span className="relative z-10 inline-flex h-3 w-3 rounded-full bg-brand-500 ring-[3px] ring-brand-100" />
-                      <div className="min-w-0">
-                        <div className="truncate text-[15px] font-semibold leading-tight tracking-tight text-slate-900">{voyage.fromCity}</div>
-                        <div className="mt-0.5 font-mono text-[11px] tabular-nums text-slate-500">Departed {voyage.departedLabel}</div>
-                      </div>
-                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums tracking-wider text-slate-600">{voyage.fromCode}</span>
-                    </li>
-                    <li className="grid grid-cols-[14px_1fr_auto] items-center gap-4">
-                      <span className="relative z-10 inline-flex h-3 w-3 rounded-full border-[2px] border-brand-500 bg-white" />
-                      <div className="min-w-0">
-                        <div className="truncate text-[15px] font-semibold leading-tight tracking-tight text-slate-900">{voyage.toCity}</div>
-                        <div className="mt-0.5 font-mono text-[11px] tabular-nums text-slate-500">ETA {voyage.etaLabel}</div>
-                      </div>
-                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums tracking-wider text-slate-600">{voyage.toCode}</span>
-                    </li>
-                  </ol>
-                </div>
-
-                {/* Footer metrics — inside the white panel, hairline divider */}
-                <div className="grid grid-cols-2 border-t border-slate-100 divide-x divide-slate-100">
-                  <div className="px-5 py-3">
-                    <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Vessel</div>
-                    <div className="mt-1 truncate text-[12.5px] font-medium tracking-tight text-slate-800">{vessel.name}</div>
-                  </div>
-                  <div className="px-5 py-3 text-right">
-                    <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Remaining</div>
-                    <div className="mt-1 font-mono text-[12.5px] font-semibold tabular-nums text-brand-600">{voyage.remainingLabel}</div>
-                  </div>
-                </div>
-              </div>
-            </article>
+            <VoyageCard
+              tone="active"
+              statusLabel="In Transit"
+              vesselName={vessel.name}
+              vesselType={vessel.type}
+              lineName={active.name}
+              dateLabel={new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", weekday: "long", year: "numeric" })}
+              fromCode={voyage.fromCode}
+              fromCity={voyage.fromCity}
+              fromTime={voyage.departedLabel}
+              toCode={voyage.toCode}
+              toCity={voyage.toCity}
+              toTime={voyage.etaLabel}
+              durationLabel={voyage.remainingLabel}
+              progress={voyage.progress}
+            />
           )}
 
-          {/* Secondary cards — past departures. Same anatomy, neutral palette. */}
+          {/* Secondary cards — past departures. */}
           {vessel && voyage && mockSchedule(vessel.id, [voyage.fromCode, voyage.toCode])
             .filter(s => s.status === "Arrived")
             .map((s) => {
               const arrivalCity = s.to === voyage.toCode ? voyage.toCity : s.to === "TAG" ? "Tagbilaran" : voyage.toCity;
+              const dateLabel = s.date.toLocaleDateString("en-US", { month: "short", day: "numeric", weekday: "long", year: "numeric" });
               return (
-                <article
+                <VoyageCard
                   key={s.id}
-                  className="relative overflow-hidden rounded-2xl p-2 shadow-[0_1px_2px_rgba(15,23,42,0.03),0_6px_16px_-8px_rgba(15,23,42,0.08)]"
-                  style={{
-                    // Quiet slate frame — same anatomy as the primary card, neutral palette.
-                    backgroundImage:
-                      "radial-gradient(140% 80% at 100% 0%, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 55%), linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)",
-                  }}
-                >
-                  {/* Top strip — date + ID, sit on the slate frame above the white panel */}
-                  <div className="flex items-center justify-between px-3 pt-1.5 pb-2">
-                    <span className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                      {s.date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                    </span>
-                    <span className="font-mono text-[11px] tabular-nums text-slate-400">{s.id.replace("SCH-", "#")}</span>
-                  </div>
-
-                  {/* Inner white content panel */}
-                  <div className="overflow-hidden rounded-xl bg-white">
-                    <div className="relative px-5 py-4">
-                      <span aria-hidden className="absolute left-[27.5px] top-[26px] h-[32px] w-px bg-slate-200" />
-                      <ol className="relative space-y-3.5">
-                        <li className="grid grid-cols-[14px_1fr_auto] items-center gap-4">
-                          <span className="relative z-10 inline-flex h-2.5 w-2.5 rounded-full bg-slate-400 ring-[3px] ring-slate-100" />
-                          <div className="min-w-0">
-                            <div className="truncate text-[13.5px] font-medium tracking-tight text-slate-900">{voyage.fromCity}</div>
-                            <div className="mt-0.5 inline-flex items-baseline gap-1 font-mono text-[10.5px] tabular-nums text-slate-500">
-                              Departed <span className="font-semibold text-slate-700">{s.actualDep}</span>
-                              {s.depDelay > 0 && <span className="text-amber-600">+{s.depDelay}m</span>}
-                            </div>
-                          </div>
-                          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums tracking-wider text-slate-500">{s.from}</span>
-                        </li>
-                        <li className="grid grid-cols-[14px_1fr_auto] items-center gap-4">
-                          <span className="relative z-10 inline-flex h-2.5 w-2.5 rounded-full border-[2px] border-slate-400 bg-white" />
-                          <div className="min-w-0">
-                            <div className="truncate text-[13.5px] font-medium tracking-tight text-slate-900">{arrivalCity}</div>
-                            <div className="mt-0.5 inline-flex items-baseline gap-1 font-mono text-[10.5px] tabular-nums text-slate-500">
-                              Arrived <span className="font-semibold text-slate-700">{s.actualArr}</span>
-                              {s.arrDelay > 0 ? (
-                                <span className="text-amber-600">+{s.arrDelay}m</span>
-                              ) : s.arrDelay < 0 ? (
-                                <span className="text-emerald-600">{s.arrDelay}m</span>
-                              ) : (
-                                <span className="text-slate-400">on time</span>
-                              )}
-                            </div>
-                          </div>
-                          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums tracking-wider text-slate-500">{s.to}</span>
-                        </li>
-                      </ol>
-                    </div>
-                  </div>
-                </article>
+                  tone="ghost"
+                  statusLabel="Arrived"
+                  vesselName={vessel.name}
+                  vesselType={vessel.type}
+                  lineName={active.name}
+                  dateLabel={dateLabel}
+                  fromCode={s.from}
+                  fromCity={voyage.fromCity}
+                  fromTime={s.actualDep}
+                  toCode={s.to}
+                  toCity={arrivalCity}
+                  toTime={s.actualArr}
+                  durationLabel={`${Math.floor(90/60)}H ${String(90%60).padStart(2,"0")}M`}
+                  progress={1}
+                />
               );
             })}
         </div>

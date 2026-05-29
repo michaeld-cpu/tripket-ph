@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 
 export type DateRange = { start: Date; end: Date };
@@ -58,6 +59,11 @@ export default function DateRangePicker({ value, onChange }: Props) {
   const [viewMonth, setViewMonth] = useState<Date>(startOfMonth(value.end));
   const [fromInput, setFromInput] = useState(fmtInput(value.start));
   const [toInput, setToInput] = useState(fmtInput(value.end));
+  // Portal coords — same pattern Select uses so the popover isn't clipped
+  // by an ancestor's overflow (e.g. when rendered inside a modal).
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const [hoverDate, setHoverDate] = useState<Date | null>(null);
   const [pickStart, setPickStart] = useState<Date | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -71,7 +77,10 @@ export default function DateRangePicker({ value, onChange }: Props) {
   useEffect(() => {
     if (!open) return;
     function onClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (ref.current?.contains(t)) return;
+      if (popoverRef.current?.contains(t)) return;
+      setOpen(false);
     }
     function onKey(e: KeyboardEvent) { if (e.key === "Escape") setOpen(false); }
     document.addEventListener("mousedown", onClick);
@@ -79,6 +88,33 @@ export default function DateRangePicker({ value, onChange }: Props) {
     return () => {
       document.removeEventListener("mousedown", onClick);
       document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // Position the portaled popover next to the trigger and keep it anchored
+  // on scroll/resize. Falls back to popping upward when there isn't enough
+  // room below.
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const POPOVER_WIDTH = 340;
+    const POPOVER_HEIGHT = 420;
+    const compute = () => {
+      const r = triggerRef.current!.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - r.bottom;
+      const top = spaceBelow < POPOVER_HEIGHT && r.top > POPOVER_HEIGHT
+        ? r.top - POPOVER_HEIGHT - 8
+        : r.bottom + 8;
+      // Right-align with the trigger, but clamp inside the viewport.
+      const rawLeft = r.right - POPOVER_WIDTH;
+      const left = Math.max(8, Math.min(rawLeft, window.innerWidth - POPOVER_WIDTH - 8));
+      setCoords({ top, left });
+    };
+    compute();
+    window.addEventListener("scroll", compute, true);
+    window.addEventListener("resize", compute);
+    return () => {
+      window.removeEventListener("scroll", compute, true);
+      window.removeEventListener("resize", compute);
     };
   }, [open]);
 
@@ -148,6 +184,7 @@ export default function DateRangePicker({ value, onChange }: Props) {
   return (
     <div className="relative" ref={ref}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(o => !o)}
         className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-[background-color,transform] duration-150 ease-out hover:bg-slate-50 active:scale-[0.97] focus:outline-none focus-visible:border-brand-200 focus-visible:ring-2 focus-visible:ring-brand-100"
@@ -165,15 +202,16 @@ export default function DateRangePicker({ value, onChange }: Props) {
         </svg>
       </button>
 
-      <AnimatePresence>
-        {open && (
+      {open && coords && typeof document !== "undefined" && createPortal(
+        <AnimatePresence>
           <motion.div
+            ref={popoverRef}
             initial={{ opacity: 0, scale: 0.96, y: -4 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: -4 }}
             transition={{ type: "spring", stiffness: 320, damping: 28, mass: 0.8 }}
-            style={{ transformOrigin: "top right" }}
-            className="absolute right-0 top-full z-40 mt-2 w-[340px] overflow-hidden rounded-2xl bg-white shadow-[0_20px_60px_-20px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/70"
+            style={{ position: "fixed", top: coords.top, left: coords.left, width: 340, transformOrigin: "top right" }}
+            className="z-[110] overflow-hidden rounded-2xl bg-white shadow-[0_20px_60px_-20px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/70"
           >
             {/* Header: From / To inputs */}
             <div className="px-4 pt-4 pb-3">
@@ -277,8 +315,9 @@ export default function DateRangePicker({ value, onChange }: Props) {
               </button>
             </div>
           </motion.div>
-        )}
-      </AnimatePresence>
+        </AnimatePresence>,
+        document.body,
+      )}
     </div>
   );
 }

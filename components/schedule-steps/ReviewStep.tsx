@@ -5,6 +5,8 @@ import type { RoutesValue, Port } from "@/components/schedule-steps/RoutesStep";
 import { PORTS } from "@/components/schedule-steps/RoutesStep";
 import type { VesselValue, FleetVessel } from "@/components/schedule-steps/VesselStep";
 import type { FaresValue } from "@/components/schedule-steps/FaresStep";
+import { useShippingLine } from "@/components/ShippingLineContext";
+import VoyageCard from "@/components/VoyageCard";
 
 /**
  * Review step — final stop of the Create-Schedule wizard.
@@ -45,6 +47,7 @@ export default function ReviewStep({
   fleet: FleetVessel[];
   onEdit: (stepIdx: number) => void;
 }) {
+  const { active: activeLine } = useShippingLine();
   // ── Cross-step lookups ──
   const origin      = useMemo(() => PORTS.find((p) => p.code === routes.originCode) ?? null, [routes.originCode]);
   const destination = useMemo(() => PORTS.find((p) => p.code === routes.destinationCode) ?? null, [routes.destinationCode]);
@@ -197,18 +200,33 @@ export default function ReviewStep({
         }
       `}</style>
 
-      {/* ─── Hero summary — boarding-pass style itinerary card ─── */}
-      <HeroSummary
-        eta={eta}
-        origin={origin}
-        destination={destination}
-        departureTime={sampleDepartureTime}
-        tripsTotal={tripsTotal}
-        distanceNm={routes.distanceNm}
-        durationLow={routes.durationLowHrs}
-        durationHigh={routes.durationHighHrs}
-        vesselName={vesselName}
-      />
+      {/* ─── Hero summary — shared VoyageCard for a unified preview look ─── */}
+      {origin && destination && vesselName ? (
+        <VoyageCard
+          tone="active"
+          statusLabel="Weekly Schedule"
+          vesselName={vesselName}
+          vesselType={vesselType ?? ""}
+          lineName={activeLine.name}
+          dateLabel={new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", weekday: "long", year: "numeric" })}
+          fromCode={origin.code}
+          fromCity={origin.city}
+          fromTime={formatTime(sampleDepartureTime) || "—"}
+          toCode={destination.code}
+          toCity={destination.city}
+          toTime={eta ?? "—"}
+          durationLabel={
+            routes.durationLowHrs && routes.durationHighHrs
+              ? `${routes.durationLowHrs}–${routes.durationHighHrs} HRS`
+              : `${tripsTotal} VOYAGES`
+          }
+          progress={0}
+        />
+      ) : (
+        <div className="grid place-items-center rounded-2xl border border-dashed border-slate-300 bg-slate-50/40 px-5 py-10 text-[12.5px] font-medium text-slate-400">
+          Route or vessel not set yet.
+        </div>
+      )}
 
       {/* ─── Single-column timeline ───
          Four sections stack vertically with hairline dividers between them.
@@ -454,141 +472,6 @@ export default function ReviewStep({
   );
 }
 
-// ─────────── Hero summary — boarding-pass style ───────────
-function HeroSummary({
-  origin, destination, departureTime, tripsTotal,
-  durationLow, durationHigh, eta, vesselName,
-}: {
-  origin: Port | null;
-  destination: Port | null;
-  departureTime: string;
-  tripsTotal: number;
-  distanceNm: string;
-  durationLow: string;
-  durationHigh: string;
-  eta: string | null;
-  vesselName: string | null;
-}) {
-  const haveRoute = !!origin && !!destination;
-  const refCode = haveRoute ? `${origin!.code}${destination!.code}-V1` : "—";
-  return (
-    // Bold orange wrapper bezel — the "showpiece" treatment, modelled on the
-    // EN ROUTE departure card. Outer is solid brand-500; inner is white so the
-    // detail content stays calm and legible inside the saturated bezel.
-    <div className="overflow-hidden rounded-2xl bg-brand-500 p-1.5">
-      {/* Wrapper header — eyebrow on left, reference code on right */}
-      <div className="flex items-center justify-between px-2.5 py-1.5">
-        <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-white">
-          Weekly schedule
-        </span>
-        <span className="font-mono text-[10.5px] tabular-nums tracking-[0.08em] text-white/85">
-          #{refCode}
-        </span>
-      </div>
-
-      {/* Inner white card */}
-      <div className="overflow-hidden rounded-xl bg-white">
-        {/* Top zone — origin/destination with a stop-list rail on the left */}
-        <div className="px-5 py-4">
-          {haveRoute ? (
-            <div className="space-y-3">
-              <StopRow
-                kind="origin"
-                city={origin!.city}
-                code={origin!.code}
-                caption={`Departs ${formatTime(departureTime)}`}
-              />
-              <StopRow
-                kind="destination"
-                city={destination!.city}
-                code={destination!.code}
-                caption={eta ? `ETA ${eta}` : "Arrival on completion"}
-              />
-            </div>
-          ) : (
-            <div className="grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50/40 py-6 text-[12.5px] font-medium text-slate-400">
-              Route not set yet
-            </div>
-          )}
-        </div>
-
-        {/* Divider */}
-        <div className="border-t border-slate-100" />
-
-        {/* Bottom zone — two key stats in a 2-column split */}
-        <div className="grid grid-cols-2 divide-x divide-slate-100">
-          <KeyStat label="Vessel" value={vesselName ?? "—"} />
-          <KeyStat
-            label="Voyages queued"
-            value={
-              tripsTotal > 0
-                ? `${tripsTotal}`
-                : durationLow && durationHigh
-                  ? `${durationLow}–${durationHigh}h`
-                  : "—"
-            }
-            accent
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─────────── StopRow — used by the hero for origin & destination ───────────
-function StopRow({
-  kind, city, code, caption,
-}: { kind: "origin" | "destination"; city: string; code: string; caption: string }) {
-  return (
-    <div className="flex items-center gap-3">
-      {/* Dot rail — filled for origin, ring-only for destination */}
-      <span
-        className={
-          "grid h-3 w-3 shrink-0 place-items-center rounded-full " +
-          (kind === "origin" ? "bg-brand-500 ring-2 ring-brand-100" : "border-2 border-brand-500 bg-white")
-        }
-      />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[15px] font-semibold tracking-tight text-slate-900">{city}</div>
-        <div className="font-mono text-[11.5px] tabular-nums text-slate-500">{caption}</div>
-      </div>
-      <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[10.5px] font-semibold tabular-nums tracking-[0.08em] text-slate-600 ring-1 ring-slate-200/60">
-        {code}
-      </span>
-    </div>
-  );
-}
-
-// ─────────── KeyStat — bottom-of-hero two-up footer ───────────
-function KeyStat({ label, value, accent }: { label: string; value: React.ReactNode; accent?: boolean }) {
-  return (
-    <div className="px-4 py-3">
-      <div className="text-[9.5px] font-semibold uppercase tracking-[0.16em] text-slate-400">{label}</div>
-      <div className={"mt-1 truncate font-mono text-[15px] font-bold tabular-nums tracking-tight " + (accent ? "text-brand-600" : "text-slate-900")}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function StatBlock({
-  label, value, sublabel, accent,
-}: { label: string; value: string; sublabel: string; accent?: boolean }) {
-  return (
-    <div>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</div>
-      <div
-        className={
-          "mt-1 truncate font-mono text-[14px] font-bold tabular-nums leading-tight tracking-tight " +
-          (accent ? "text-brand-600" : "text-slate-900")
-        }
-      >
-        {value}
-      </div>
-      <div className="mt-0.5 truncate text-[10.5px] font-medium text-slate-400">{sublabel}</div>
-    </div>
-  );
-}
 
 // ─────────── ReadyToCreate — flat, minimal confirmation row ───────────
 function ReadyToCreate({
