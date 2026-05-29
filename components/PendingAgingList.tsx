@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useToast } from "./ToastContext";
 import RowMenu from "./RowMenu";
 
@@ -42,6 +43,18 @@ export default function PendingAgingList({ data }: { data: Pending[] }) {
   const under1h = sorted.length - over1h;
   const [copiedRef, setCopiedRef] = useState<string | null>(null);
   const { showToast } = useToast();
+  const router = useRouter();
+
+  // Deep-link into the Bookings page. The bookings page already supports
+  // `?ref=…` to auto-open the detail dialog; `?action=approve` triggers
+  // the batch approval flow on top of that. Lets the dashboard's pending
+  // list act as a one-tap shortcut from "I see a pending row here" to
+  // "I'm now editing/approving it on the bookings page."
+  const openBooking = (ref: string, action?: "approve") => {
+    const params = new URLSearchParams({ ref });
+    if (action) params.set("action", action);
+    router.push(`/bookings?${params.toString()}`);
+  };
 
   const handleCopy = async (ref: string) => {
     try {
@@ -98,7 +111,17 @@ export default function PendingAgingList({ data }: { data: Pending[] }) {
             return (
               <tr
                 key={d.ref}
-                className="group relative transition-colors duration-150 ease-out hover:bg-slate-50/60"
+                onClick={() => openBooking(d.ref)}
+                className="group relative cursor-pointer transition-colors duration-150 ease-out hover:bg-slate-50/60 focus-within:bg-slate-50/60"
+                tabIndex={0}
+                role="link"
+                aria-label={`Open booking ${d.ref}`}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openBooking(d.ref);
+                  }
+                }}
               >
                 {/* Left brand accent — fades in on hover */}
                 <td className="relative px-6 py-3.5 align-middle">
@@ -113,7 +136,7 @@ export default function PendingAgingList({ data }: { data: Pending[] }) {
                       </span>
                     ) : (
                       <button
-                        onClick={() => handleCopy(d.ref)}
+                        onClick={(e) => { e.stopPropagation(); handleCopy(d.ref); }}
                         aria-label={`Copy ${d.ref}`}
                         className="grid h-5 w-5 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-90"
                       >
@@ -180,26 +203,27 @@ export default function PendingAgingList({ data }: { data: Pending[] }) {
                 </td>
 
                 {/* Actions */}
-                <td className="px-6 py-3.5 align-middle">
+                <td className="px-6 py-3.5 align-middle" onClick={(e) => e.stopPropagation()}>
                   <RowMenu
                     ariaLabel={`Actions for ${d.ref}`}
                     items={[
                       {
-                        label: "Approve booking",
-                        onClick: () => showToast(`Approved ${d.ref}`),
+                        label: "Open booking",
+                        onClick: () => openBooking(d.ref),
                         icon: (
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                            <path d="M5 12l5 5 9-11" />
+                            <path d="M14 3h7v7" />
+                            <path d="M21 3l-9 9" />
+                            <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
                           </svg>
                         ),
                       },
                       {
-                        label: "Cancel booking",
-                        danger: true,
-                        onClick: () => showToast(`Cancelled ${d.ref}`, "error"),
+                        label: "Approve booking",
+                        onClick: () => openBooking(d.ref, "approve"),
                         icon: (
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                            <path d="M6 6l12 12M18 6L6 18" />
+                            <path d="M5 12l5 5 9-11" />
                           </svg>
                         ),
                       },

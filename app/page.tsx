@@ -95,27 +95,48 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="mt-6 grid grid-cols-2 gap-4">
-        {!data ? (
-          <>
+      {!data ? (
+        <>
+          <div className="mt-6 grid grid-cols-2 gap-4">
             <ChartCardSkeleton />
             <ChartCardSkeleton />
-          </>
-        ) : (
-          <>
+          </div>
+          <div className="mt-6"><TableSkeleton /></div>
+          <div className="mt-6"><DepartureBoardSkeleton /></div>
+        </>
+      ) : isEmpty ? (
+        // Onboarding state — when the line has no vessels/bookings yet,
+        // every downstream chart and list is meaningless (zeroed bars,
+        // empty rows). Collapse the lot into a single empty card so the
+        // page reads as "nothing to see yet" instead of "broken charts."
+        <div className="mt-6 grid place-items-center rounded-2xl border border-dashed border-slate-200 bg-white px-8 py-20 text-center ring-1 ring-slate-200/40">
+          <div className="grid h-12 w-12 place-items-center rounded-full bg-slate-100 text-slate-400">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M7 9h10M7 13h10M7 17h6" />
+            </svg>
+          </div>
+          <h3 className="mt-4 text-[15px] font-semibold tracking-tight text-slate-900">No activity to chart yet</h3>
+          <p className="mt-1.5 max-w-md text-[12.5px] leading-relaxed text-slate-500">
+            Once <span className="font-medium text-slate-700">{active.name}</span> registers vessels and routes and books its first voyages, weekly revenue, booking trends, pending approvals, and today&apos;s departures will appear here.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="mt-6 grid grid-cols-2 gap-4">
             <WeeklyRevenueChart data={data.weeklyRevenue} />
             <TicketBookingsChart data={data.bookings6M} />
-          </>
-        )}
-      </div>
+          </div>
 
-      <div className="mt-6">
-        {!data ? <TableSkeleton /> : <PendingAgingList data={data.pending} />}
-      </div>
+          <div className="mt-6">
+            <PendingAgingList data={data.pending} />
+          </div>
 
-      <div className="mt-6">
-        {!data ? <DepartureBoardSkeleton /> : <DepartureBoard data={data.departures} />}
-      </div>
+          <div className="mt-6">
+            <DepartureBoard data={data.departures} />
+          </div>
+        </>
+      )}
     </div>
   );
 }

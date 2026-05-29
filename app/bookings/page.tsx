@@ -226,13 +226,22 @@ export default function BookingsPage() {
   useEffect(() => { setPage(1); }, [query, routeFilter, vesselFilter, statusFilter, dateRange]);
 
   // ?ref=TKT-#### deep link — opens the matching booking dialog once data
-  // hydrates. Used by the Tickets page's "View booking" action to jump
-  // straight from a ticket row into its parent booking detail.
+  // hydrates. `?action=approve` (used by the dashboard's pending list)
+  // skips the detail dialog and goes straight to the batch approval flow,
+  // so the operator lands on the issuance form, not a detail page they'd
+  // have to dismiss afterward.
   useEffect(() => {
     if (!bookings) return;
     const params = new URLSearchParams(window.location.search);
     const ref = params.get("ref");
-    if (ref && bookings.some((b) => b.ref === ref)) setOpenRef(ref);
+    if (!ref) return;
+    const match = bookings.find((b) => b.ref === ref);
+    if (!match) return;
+    if (params.get("action") === "approve" && match.status === "Pending") {
+      setApproveTarget(match);
+    } else {
+      setOpenRef(ref);
+    }
   }, [bookings]);
 
   // Filter dropdown options derived from the data.
