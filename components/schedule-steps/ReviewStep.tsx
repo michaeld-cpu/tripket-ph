@@ -358,7 +358,7 @@ export default function ReviewStep({
               {vesselImo && <DefRow label="IMO no." value={<Mono>{vesselImo}</Mono>} />}
             </DefList>
           ) : (
-            <EmptyState message="No vessel selected yet." />
+            <EmptyHint message="No vessel selected yet." />
           )}
         </ReviewCard>
 
@@ -382,7 +382,7 @@ export default function ReviewStep({
           onEdit={() => onEdit(3)}
         >
           {passengerLines.length === 0 ? (
-            <EmptyState message="No passenger fares enabled." />
+            <EmptyHint message="No passenger fares enabled." />
           ) : (
             <div className="space-y-2">
               {/* Passenger lines */}
@@ -615,7 +615,7 @@ function Empty() {
   return <span className="text-slate-400">—</span>;
 }
 
-function EmptyState({ message }: { message: string }) {
+function EmptyHint({ message }: { message: string }) {
   return (
     <div className="rounded-md border border-dashed border-slate-200 bg-slate-50/40 px-3 py-3 text-center text-[11.5px] text-slate-500">
       {message}
