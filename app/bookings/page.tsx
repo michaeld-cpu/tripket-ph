@@ -8,6 +8,7 @@ import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import { type DateRange } from "@/components/DateRangePicker";
 import FiltersDialog, { FiltersButton } from "@/components/FiltersDialog";
+import EmptyState from "@/components/EmptyState";
 import { useToast } from "@/components/ToastContext";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
 import type { Line } from "@/lib/shipping-lines";
@@ -282,16 +283,11 @@ export default function BookingsPage() {
       {!bookings ? (
         <TableSkeleton rows={8} />
       ) : isEmpty ? (
-        <section className="flex min-h-[400px] flex-col items-center justify-center rounded-2xl bg-white px-8 py-16 ring-1 ring-slate-200/70">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-7 w-7 text-slate-400">
-            <path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4V8Z" />
-            <path d="M10 6v12" strokeDasharray="2 2" />
-          </svg>
-          <h2 className="mt-4 text-[15px] font-semibold tracking-tight text-slate-900">No bookings yet</h2>
-          <p className="mt-1.5 max-w-sm text-center text-[12.5px] leading-relaxed text-slate-500">
-            Bookings appear here once passengers reserve seats on your scheduled voyages. Create a voyage from the Voyages page to seed mock bookings.
-          </p>
-        </section>
+        <EmptyState
+          kind="inbox"
+          title="No bookings yet"
+          body="Bookings appear here once passengers reserve seats on your scheduled voyages. Create a voyage from the Voyages page to seed mock bookings."
+        />
       ) : (
         <section className="rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
           {/* Toolbar */}

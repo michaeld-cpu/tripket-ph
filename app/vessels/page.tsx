@@ -9,6 +9,7 @@ import { TableSkeleton } from "@/components/Skeleton";
 import RowMenu from "@/components/RowMenu";
 import Select from "@/components/Select";
 import AddVesselModal from "@/components/AddVesselModal";
+import EmptyState from "@/components/EmptyState";
 import EditVesselModal from "@/components/EditVesselModal";
 import DeleteVesselDialog from "@/components/DeleteVesselDialog";
 import { useToast } from "@/components/ToastContext";
@@ -203,26 +204,11 @@ export default function VesselsPage() {
       {!vessels ? (
         <TableSkeleton rows={9} />
       ) : isEmpty ? (
-        <section className="overflow-hidden rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
-          <div className="flex flex-col items-start gap-6 px-8 py-12 sm:px-12 sm:py-16">
-            {/* Single line-icon, no tile, no gradient */}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" className="h-7 w-7 text-slate-400">
-              <path d="M12 3v3" />
-              <path d="M6 13V8h12v5" />
-              <path d="M3 13h18l-1.8 5.2a2 2 0 0 1-1.9 1.3H6.7a2 2 0 0 1-1.9-1.3L3 13Z" />
-              <path d="M2.5 21c1.2 0 1.2-1 2.4-1s1.2 1 2.4 1 1.2-1 2.4-1 1.2 1 2.3 1 1.2-1 2.4-1 1.2 1 2.4 1 1.2-1 2.3-1" />
-            </svg>
-
-            <div className="max-w-md">
-              <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-                {active.name} has no vessels yet
-              </h2>
-              <p className="mt-2 text-[13.5px] leading-relaxed text-slate-600">
-                Register your fleet to start scheduling voyages, accepting bookings, and tracking capacity.
-                Each vessel needs an IMO number, passenger capacity, and an operational status.
-              </p>
-            </div>
-
+        <EmptyState
+          kind="fleet"
+          title={`${active.name} has no vessels yet`}
+          body="Register your fleet to start scheduling voyages, accepting bookings, and tracking capacity. Each vessel needs an IMO number, passenger capacity, and an operational status."
+          action={
             <button
               type="button"
               onClick={() => setAddOpen(true)}
@@ -233,8 +219,8 @@ export default function VesselsPage() {
               </svg>
               Register first vessel
             </button>
-          </div>
-        </section>
+          }
+        />
       ) : (
         <section className="rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
           <div className="flex items-center justify-between rounded-t-2xl border-b border-slate-100 px-5 py-4">
