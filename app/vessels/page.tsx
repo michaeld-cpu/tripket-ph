@@ -133,15 +133,17 @@ export default function VesselsPage() {
 
   // Hydrate from localStorage if the operator has saved edits before;
   // otherwise fall through to the seeded mock from fetchDashboardData and
-  // persist that snapshot so subsequent mutations have a baseline.
+  // persist that snapshot. A bad store falls through too.
   useEffect(() => {
     let cancelled = false;
     setVessels(null);
-    const persisted = loadStore<Vessel[]>("vessels", active.id);
-    if (persisted) {
-      setVessels(persisted);
-      return;
-    }
+    try {
+      const persisted = loadStore<Vessel[]>("vessels", active.id);
+      if (persisted && Array.isArray(persisted)) {
+        setVessels(persisted);
+        return;
+      }
+    } catch { /* fall through to mock */ }
     fetchDashboardData(active.id).then(d => {
       if (cancelled) return;
       setVessels(d.vessels);

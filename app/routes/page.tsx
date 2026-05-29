@@ -75,8 +75,8 @@ function mockDepartures(count: number, weekdays: number[], hour: number): Date[]
 // Flatten all departures across a route's vessel assignments, sorted
 // ascending — used for the "next + N more" summary in the table cell.
 function allDepartures(r: Route): Date[] {
-  return r.assignments
-    .flatMap((a) => a.departures)
+  return (r.assignments ?? [])
+    .flatMap((a) => a.departures ?? [])
     .sort((x, y) => x.getTime() - y.getTime());
 }
 
@@ -194,14 +194,18 @@ export default function RoutesPage() {
 
   // Hydrate from localStorage if the operator has saved edits before;
   // otherwise fall through to the seeded mock and persist that snapshot.
+  // A corrupted store falls through too — a stale shape shouldn't brick
+  // the page.
   useEffect(() => {
     let cancelled = false;
     setRoutes(null);
-    const persisted = loadStore<unknown>("routes", active.id);
-    if (persisted) {
-      setRoutes(reviveRoutes(persisted));
-      return;
-    }
+    try {
+      const persisted = loadStore<unknown>("routes", active.id);
+      if (persisted) {
+        const revived = reviveRoutes(persisted);
+        if (revived.length > 0) { setRoutes(revived); return; }
+      }
+    } catch { /* fall through to mock */ }
     const t = setTimeout(() => {
       if (cancelled) return;
       setRoutes(MOCK_ROUTES);
@@ -368,28 +372,31 @@ export default function RoutesPage() {
                       </div>
                     </td>
                     <td className="px-5 py-3.5 align-middle whitespace-nowrap">
-                      {r.assignments.length === 0 ? (
-                        <span className="text-[12px] text-slate-400">Unassigned</span>
-                      ) : r.assignments.length === 1 ? (
-                        <button
-                          type="button"
-                          onClick={() => setScheduleRoute(r)}
-                          className="text-left text-[13px] font-medium tracking-tight text-slate-900 underline-offset-2 hover:underline whitespace-nowrap"
-                        >
-                          {r.assignments[0].vessel}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setScheduleRoute(r)}
-                          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 text-[12px] font-medium text-slate-700 transition-colors hover:bg-slate-200"
-                        >
-                          {r.assignments.length} vessels
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-slate-400">
-                            <path d="M9 6l6 6-6 6" />
-                          </svg>
-                        </button>
-                      )}
+                      {(() => {
+                        const assignments = r.assignments ?? [];
+                        if (assignments.length === 0) return <span className="text-[12px] text-slate-400">Unassigned</span>;
+                        if (assignments.length === 1) return (
+                          <button
+                            type="button"
+                            onClick={() => setScheduleRoute(r)}
+                            className="text-left text-[13px] font-medium tracking-tight text-slate-900 underline-offset-2 hover:underline whitespace-nowrap"
+                          >
+                            {assignments[0].vessel}
+                          </button>
+                        );
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setScheduleRoute(r)}
+                            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 text-[12px] font-medium text-slate-700 transition-colors hover:bg-slate-200"
+                          >
+                            {assignments.length} vessels
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-slate-400">
+                              <path d="M9 6l6 6-6 6" />
+                            </svg>
+                          </button>
+                        );
+                      })()}
                     </td>
                     <td className="px-5 py-3.5 align-middle whitespace-nowrap">
                       {(() => {

@@ -168,14 +168,17 @@ export default function TicketsPage() {
 
   // Hydrate from the same persisted-bookings store the bookings page
   // writes to, so admin mutations made on either surface survive a
-  // refresh. Fall back to deriving from voyages on first visit.
+  // refresh. Fall back to deriving from voyages on first visit. A bad
+  // store also falls through.
   useEffect(() => {
     try {
       const persisted = loadStore<unknown>("bookings", active.id);
       if (persisted) {
-        setBookings(reviveBookings(persisted));
-        return;
+        const revived = reviveBookings(persisted);
+        if (revived.length > 0) { setBookings(revived); return; }
       }
+    } catch { /* fall through */ }
+    try {
       const voyages = loadScopedVoyages(active.id, locked);
       const t = setTimeout(() => {
         const seeded = deriveBookings(voyages);
