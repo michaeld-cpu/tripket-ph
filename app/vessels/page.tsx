@@ -346,25 +346,31 @@ export default function VesselsPage() {
                       <td className="relative px-5 py-3.5 align-middle" onClick={(e) => e.stopPropagation()}>
                         <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
                         <div className="inline-flex items-center gap-1.5">
-                          <span className="font-mono text-[13px] font-semibold tabular-nums text-slate-900">{v.imo}</span>
-                          {copiedImo === v.imo ? (
-                            <span aria-label="Copied" className="grid h-5 w-5 place-items-center rounded text-emerald-600">
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                                <path d="M5 12l5 5 9-11" />
-                              </svg>
-                            </span>
+                          {v.imo ? (
+                            <>
+                              <span className="font-mono text-[13px] font-semibold tabular-nums text-slate-900">{v.imo}</span>
+                              {copiedImo === v.imo ? (
+                                <span aria-label="Copied" className="grid h-5 w-5 place-items-center rounded text-emerald-600">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                                    <path d="M5 12l5 5 9-11" />
+                                  </svg>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyImo(v.imo)}
+                                  aria-label={`Copy IMO ${v.imo}`}
+                                  className="grid h-5 w-5 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-90"
+                                >
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                                    <rect x="9" y="9" width="11" height="11" rx="2" />
+                                    <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                                  </svg>
+                                </button>
+                              )}
+                            </>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleCopyImo(v.imo)}
-                              aria-label={`Copy IMO ${v.imo}`}
-                              className="grid h-5 w-5 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-90"
-                            >
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                                <rect x="9" y="9" width="11" height="11" rx="2" />
-                                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                              </svg>
-                            </button>
+                            <span className="text-[13px] text-slate-300">—</span>
                           )}
                         </div>
                       </td>
