@@ -123,10 +123,9 @@ export default function VesselFormBody({ values, onChange, autoFocusName = true 
       </motion.div>
 
       <motion.div {...stagger(3)}>
-        <Field label="IMO number" required hint="7-digit number from the International Maritime Organization">
+        <Field label="IMO number" hint="Optional · 7-digit International Maritime Organization number">
           <input
             type="text"
-            required
             inputMode="numeric"
             maxLength={7}
             value={imo}

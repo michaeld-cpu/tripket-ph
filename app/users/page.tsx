@@ -9,6 +9,17 @@ import { TableSkeleton } from "@/components/Skeleton";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
 import { lines } from "@/lib/shipping-lines";
 import UserFormModal, { type UserDraft } from "@/components/UserFormModal";
+import { loadStore, saveStore } from "@/lib/persisted-store";
+
+// Revive Date fields after a JSON round-trip — lastActive is a Date in
+// the live model but lands as an ISO string in localStorage.
+function reviveUsers(raw: unknown): User[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((u) => ({
+    ...(u as User),
+    lastActive: (u as User).lastActive ? new Date((u as User).lastActive as unknown as string) : null,
+  }));
+}
 import {
   buildUsers,
   roleTone,
@@ -60,21 +71,36 @@ export default function UsersPage() {
   const openCreate = () => { setEditUser(null); setFormOpen(true); };
   const openEdit = (u: User) => { setEditUser(u); setFormOpen(true); };
 
+  // Wrap setState so every mutation persists.
+  const updateUsers = (next: (prev: User[]) => User[]) => {
+    setUsers(prev => {
+      const value = next(prev ?? []);
+      saveStore("users", "all", value);
+      return value;
+    });
+  };
+
   const handleSubmit = (draft: UserDraft) => {
     if (editUser) {
-      setUsers((prev) => prev ? prev.map((x) => x.id === editUser.id ? { ...x, ...draft } : x) : prev);
+      updateUsers((prev) => prev.map((x) => x.id === editUser.id ? { ...x, ...draft } : x));
     } else {
       const nu: User = {
         id: `usr-${Date.now()}`,
         ...draft,
         lastActive: new Date(),
       };
-      setUsers((prev) => (prev ? [nu, ...prev] : [nu]));
+      updateUsers((prev) => [nu, ...prev]);
     }
   };
 
   useEffect(() => {
-    const t = setTimeout(() => setUsers(buildUsers()), 180);
+    const persisted = loadStore<unknown>("users", "all");
+    if (persisted) { setUsers(reviveUsers(persisted)); return; }
+    const t = setTimeout(() => {
+      const seeded = buildUsers();
+      setUsers(seeded);
+      saveStore("users", "all", seeded);
+    }, 180);
     return () => clearTimeout(t);
   }, []);
 
@@ -268,8 +294,8 @@ export default function UsersPage() {
                               label: u.status === "Suspended" ? "Reactivate" : "Suspend",
                               danger: u.status !== "Suspended",
                               onClick: () =>
-                                setUsers((prev) =>
-                                  prev ? prev.map((x) => x.id === u.id ? { ...x, status: x.status === "Suspended" ? "Active" : "Suspended" } : x) : prev
+                                updateUsers((prev) =>
+                                  prev.map((x) => x.id === u.id ? { ...x, status: x.status === "Suspended" ? "Active" : "Suspended" } : x)
                                 ),
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">

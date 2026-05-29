@@ -348,10 +348,9 @@ function IdentitySubStep({
       </Field>
 
       {/* IMO number */}
-      <Field label="IMO number" required hint="7-digit number from the International Maritime Organization">
+      <Field label="IMO number" hint="Optional · 7-digit International Maritime Organization number">
         <input
           type="text"
-          required
           inputMode="numeric"
           maxLength={7}
           value={value.imoNumber}

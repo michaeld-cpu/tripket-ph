@@ -207,6 +207,22 @@ export type ActivityEntry = {
 
 const ACTORS = ["Ada Reyes", "Marco Santos", "Liza Cruz", "System"];
 
+// Re-hydrate bookings after a JSON round-trip — Date fields land as ISO
+// strings in localStorage and need to come back as Date objects so the
+// rest of the app's date math doesn't crash.
+export function reviveBookings(raw: unknown): Booking[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((b) => ({
+    ...(b as Booking),
+    departureDate: new Date((b as Booking).departureDate as unknown as string),
+    bookingDate: new Date((b as Booking).bookingDate as unknown as string),
+    activity: ((b as Booking).activity ?? []).map((e) => ({
+      ...e,
+      at: new Date(e.at as unknown as string),
+    })),
+  }));
+}
+
 // Build a believable activity trail for a booking from its dates + status.
 export function deriveActivity(b: Booking): ActivityEntry[] {
   // Seed a tiny PRNG off the ref so a booking's log is stable across renders.

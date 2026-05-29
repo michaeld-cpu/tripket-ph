@@ -27,6 +27,8 @@ import {
   deriveTicketActivity,
 } from "@/lib/bookings-data";
 import { loadScopedVoyages } from "@/lib/line-scope";
+import { reviveBookings } from "@/lib/bookings-data";
+import { loadStore, saveStore } from "@/lib/persisted-store";
 
 // ─────────── Flat ticket row shape ───────────
 // Each ticket gets flattened into a row that carries enough of its parent
@@ -164,12 +166,22 @@ export default function TicketsPage() {
     (paxTypeFilter !== "all" ? 1 : 0) +
     (isDefaultDateRange(dateRange) ? 0 : 1);
 
-  // Hydrate the same way the bookings page does — re-derive from
-  // `tripket.voyages` localStorage on mount so the two pages stay in sync.
+  // Hydrate from the same persisted-bookings store the bookings page
+  // writes to, so admin mutations made on either surface survive a
+  // refresh. Fall back to deriving from voyages on first visit.
   useEffect(() => {
     try {
+      const persisted = loadStore<unknown>("bookings", active.id);
+      if (persisted) {
+        setBookings(reviveBookings(persisted));
+        return;
+      }
       const voyages = loadScopedVoyages(active.id, locked);
-      const t = setTimeout(() => setBookings(deriveBookings(voyages)), 180);
+      const t = setTimeout(() => {
+        const seeded = deriveBookings(voyages);
+        setBookings(seeded);
+        saveStore("bookings", active.id, seeded);
+      }, 180);
       return () => clearTimeout(t);
     } catch {
       setBookings([]);
@@ -236,15 +248,16 @@ export default function TicketsPage() {
   // page stays in sync (since both pages derive from the same in-memory
   // bookings array — and from `tripket.voyages` on next reload).
   const mutateTicket = (ticketId: string, patch: Partial<Ticket>) => {
-    setBookings((prev) =>
-      prev
-        ? prev.map((b) =>
-            b.tickets.some((t) => t.id === ticketId)
-              ? { ...b, tickets: b.tickets.map((t) => (t.id === ticketId ? { ...t, ...patch } : t)) }
-              : b
-          )
-        : prev
-    );
+    setBookings((prev) => {
+      if (!prev) return prev;
+      const next = prev.map((b) =>
+        b.tickets.some((t) => t.id === ticketId)
+          ? { ...b, tickets: b.tickets.map((t) => (t.id === ticketId ? { ...t, ...patch } : t)) }
+          : b
+      );
+      saveStore("bookings", active.id, next);
+      return next;
+    });
   };
 
   return (

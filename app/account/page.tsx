@@ -28,6 +28,11 @@ export default function AccountPage() {
   const [saved, setSaved] = useState<AccountForm>(initial);
   const [form, setForm] = useState<AccountForm>(initial);
   const dirty = JSON.stringify(saved) !== JSON.stringify(form);
+  // Required-field gate — Save disables until name + email are non-empty
+  // and the email is a sane shape.
+  const valid =
+    form.name.trim().length > 0 &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim());
 
   const set = <K extends keyof AccountForm>(k: K, v: AccountForm[K]) => setForm((f) => ({ ...f, [k]: v }));
   const onSave = () => setSaved(form);
@@ -105,7 +110,13 @@ export default function AccountPage() {
         </section>
       </div>
 
-      <SaveBar open={dirty} onSave={onSave} onDiscard={onDiscard} />
+      <SaveBar
+        open={dirty}
+        onSave={onSave}
+        onDiscard={onDiscard}
+        saveDisabled={!valid}
+        disabledHint="Name and a valid email are required"
+      />
     </div>
   );
 }
