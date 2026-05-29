@@ -508,8 +508,13 @@ export default function VesselDetailPage() {
             </h1>
             {vessel && (
               <p className="text-[12px] text-slate-500">
-                {vessel.type} <span className="text-slate-300">·</span>{" "}
-                <span className="font-mono">IMO {vessel.imo}</span>
+                {vessel.type}
+                {vessel.imo && (
+                  <>
+                    {" "}<span className="text-slate-300">·</span>{" "}
+                    <span className="font-mono">IMO {vessel.imo}</span>
+                  </>
+                )}
               </p>
             )}
           </div>
@@ -635,8 +640,8 @@ export default function VesselDetailPage() {
                       </svg>
                       IMO
                     </div>
-                    <div className="mt-1.5 truncate font-mono text-[18px] font-semibold tabular-nums tracking-tight text-slate-900">
-                      {vessel.imo}
+                    <div className={"mt-1.5 truncate font-mono text-[18px] font-semibold tabular-nums tracking-tight " + (vessel.imo ? "text-slate-900" : "text-slate-300")}>
+                      {vessel.imo || "—"}
                     </div>
                   </div>
                   <div className="px-5 py-4">
