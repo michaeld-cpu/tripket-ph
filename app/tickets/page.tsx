@@ -261,7 +261,7 @@ export default function TicketsPage() {
           <h2 className="mt-4 text-[15px] font-semibold tracking-tight text-slate-900">No tickets yet</h2>
           <p className="mt-1.5 max-w-sm text-center text-[12.5px] leading-relaxed text-slate-500">
             Tickets appear here once bookings are created. Each passenger gets their own ticket under a booking.
-          </p>7
+          </p>
         </section>
       ) : (
         <section className="rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">

@@ -1161,46 +1161,74 @@ function VoyageDetailDialog({
           </button>
         </div>
 
-        {/* Itinerary header — shipping line on top, then big city names
-            flanking a centered logo avatar with dashed-arrow connectors. */}
-        <div className="px-5 pb-4">
-          <div className="flex items-center justify-center gap-3">
-            {/* Origin — code on top, city caption below. */}
-            <div className="min-w-0 text-center">
-              <div className="truncate font-mono text-[22px] font-bold uppercase tabular-nums tracking-[0.06em] text-slate-900">
-                {voyage.originCode}
-              </div>
-              <div className="mt-0.5 truncate text-[11px] text-slate-500">
-                {voyage.originCity}
-              </div>
+        {/* Itinerary preview — compact variant of the VoyageCard family.
+            Outer "ghost frame" (orange for active/scheduled, slate for
+            past) carries the centered status pill; the white panel
+            inside holds the compact city/code itinerary the dialog
+            already used. Lighter than VoyageCard so the dialog stays
+            scannable. */}
+        {(() => {
+          const isActiveTone = voyage.status === "Departed" || voyage.status === "Scheduled";
+          const frameBg = isActiveTone
+            ? "radial-gradient(140% 80% at 100% 0%, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 55%), linear-gradient(180deg, #fed7aa 0%, #fdba74 60%, #fb923c 100%)"
+            : "radial-gradient(140% 80% at 100% 0%, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 55%), linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)";
+          const dotCls = isActiveTone ? "bg-brand-600" : "bg-slate-400";
+          const statusTextCls = isActiveTone ? "text-brand-700" : "text-slate-500";
+          const statusBandLabel = voyage.status === "Departed" ? "In Transit" : voyage.status;
+          return (
+            <div className="px-5 pb-4">
+              <article
+                className="relative overflow-hidden rounded-2xl p-2"
+                style={{ backgroundImage: frameBg }}
+              >
+                {/* Status band */}
+                <div className="flex items-center justify-center px-3 pt-1.5 pb-2.5">
+                  <span className={`inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] ${statusTextCls}`}>
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${dotCls}`} />
+                    {statusBandLabel}
+                  </span>
+                </div>
+
+                {/* Inner white panel — keeps the dialog's compact itinerary. */}
+                <div className="rounded-xl bg-white px-5 py-4">
+                  <div className="flex items-center justify-center gap-3">
+                    <div className="min-w-0 text-center">
+                      <div className="truncate font-mono text-[22px] font-bold uppercase tabular-nums tracking-[0.06em] text-slate-900">
+                        {voyage.originCode}
+                      </div>
+                      <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                        {voyage.originCity}
+                      </div>
+                    </div>
+                    <DashedArrow />
+                    <div className="flex flex-col items-center gap-1">
+                      <ShippingLineAvatar lineId={activeLine.id} />
+                      <span className="max-w-[120px] truncate text-[10px] font-medium text-slate-500">
+                        {activeLine.name}
+                      </span>
+                    </div>
+                    <DashedArrow />
+                    <div className="min-w-0 text-center">
+                      <div className="truncate font-mono text-[22px] font-bold uppercase tabular-nums tracking-[0.06em] text-slate-900">
+                        {voyage.destinationCode}
+                      </div>
+                      <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                        {voyage.destinationCity}
+                      </div>
+                    </div>
+                  </div>
+                  <p className="mt-3 truncate text-center text-[11.5px] text-slate-500">
+                    <span>{dateLabel}</span>
+                    <span className="mx-1.5 text-slate-300">·</span>
+                    <span className="font-mono tabular-nums">{timeLabel}</span>
+                    <span className="mx-1.5 text-slate-300">·</span>
+                    <span className="font-mono tabular-nums">ETA {etaLabel}</span>
+                  </p>
+                </div>
+              </article>
             </div>
-            <DashedArrow />
-            {/* Avatar + line name caption. The line name sits as a quiet
-                subtitle directly under the logo so the org identity reads
-                without competing with the city headlines. */}
-            <div className="flex flex-col items-center gap-1">
-              <ShippingLineAvatar lineId={activeLine.id} />
-              <span className="max-w-[120px] truncate text-[10px] font-medium text-slate-500">
-                {activeLine.name}
-              </span>
-            </div>
-            <DashedArrow />
-            {/* Destination — same anatomy. */}
-            <div className="min-w-0 text-center">
-              <div className="truncate font-mono text-[22px] font-bold uppercase tabular-nums tracking-[0.06em] text-slate-900">
-                {voyage.destinationCode}
-              </div>
-              <div className="mt-0.5 truncate text-[11px] text-slate-500">
-                {voyage.destinationCity}
-              </div>
-            </div>
-          </div>
-          <p className="mt-3 truncate text-center text-[11.5px] text-slate-500">
-            <span>{dateLabel}</span>
-            <span className="mx-1.5 text-slate-300">·</span>
-            <span className="font-mono tabular-nums">{timeLabel}</span>
-          </p>
-        </div>
+          );
+        })()}
 
         <div className="border-t border-slate-100" />
 
