@@ -14,6 +14,7 @@ import {
 import EditVesselModal from "@/components/EditVesselModal";
 import DeleteVesselDialog from "@/components/DeleteVesselDialog";
 import VoyageCard from "@/components/VoyageCard";
+import { loadStore, saveStore } from "@/lib/persisted-store";
 
 // Shared design tokens — one source of truth for chrome / typography across all cards on this page.
 const CARD = "overflow-hidden rounded-2xl bg-white shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70";
@@ -444,13 +445,28 @@ export default function VesselDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  // Same hydration shape as the vessels list page: prefer the persisted
+  // store (so edits made anywhere survive a refresh); fall back to the
+  // seeded mock the first time the line is opened.
   useEffect(() => {
     let cancelled = false;
+    const persisted = loadStore<Vessel[]>("vessels", active.id);
+    if (persisted) { setVessels(persisted); return; }
     fetchDashboardData(active.id).then((d) => {
-      if (!cancelled) setVessels(d.vessels);
+      if (cancelled) return;
+      setVessels(d.vessels);
+      saveStore("vessels", active.id, d.vessels);
     });
     return () => { cancelled = true; };
   }, [active.id]);
+
+  const updateVessels = (next: (prev: Vessel[]) => Vessel[]) => {
+    setVessels(prev => {
+      const value = next(prev ?? []);
+      saveStore("vessels", active.id, value);
+      return value;
+    });
+  };
 
   const vessel = vessels?.find((v) => v.id === params.id) ?? null;
   const voyage = useMockVoyage(vessel);
@@ -776,7 +792,7 @@ export default function VesselDetailPage() {
         open={editOpen}
         vessel={vessel}
         onClose={() => setEditOpen(false)}
-        onSave={(updated) => setVessels((prev) => prev ? prev.map((v) => v.id === updated.id ? updated : v) : prev)}
+        onSave={(updated) => updateVessels((prev) => prev.map((v) => v.id === updated.id ? updated : v))}
       />
 
       <DeleteVesselDialog
@@ -784,7 +800,7 @@ export default function VesselDetailPage() {
         vessel={vessel}
         onClose={() => setDeleteOpen(false)}
         onConfirm={(v) => {
-          setVessels((prev) => prev ? prev.filter((x) => x.id !== v.id) : prev);
+          updateVessels((prev) => prev.filter((x) => x.id !== v.id));
           window.location.href = "/vessels";
         }}
       />

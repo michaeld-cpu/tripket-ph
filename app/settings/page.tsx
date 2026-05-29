@@ -102,6 +102,18 @@ function BookingTab({ lineId }: { lineId: string }) {
 
   const dirty = useMemo(() => JSON.stringify(saved) !== JSON.stringify(draft), [saved, draft]);
 
+  // Required-field gate — every catalog row needs a non-empty label so
+  // the vessel dialog can render it. Empty rows would surface as blank
+  // toggles. Save stays disabled until every row has one.
+  const catalogValid = useMemo(() => {
+    const allLabeled = [
+      ...draft.catalog.vehicleClasses,
+      ...draft.catalog.passengerTypes,
+      ...draft.catalog.addOns,
+    ].every((row) => row.label.trim() !== "");
+    return allLabeled;
+  }, [draft.catalog]);
+
   const toggleReq = (key: RequirementKey) =>
     setDraft((s) => ({ ...s, requirements: { ...s.requirements, [key]: !s.requirements[key] } }));
   const setPolicy = <K extends keyof BookingPolicy>(k: K, v: BookingPolicy[K]) =>
@@ -268,7 +280,13 @@ function BookingTab({ lineId }: { lineId: string }) {
 
       {/* App-level save bar — pinned to the viewport bottom, spanning the
           content area beside the sidebar. */}
-      <SaveBar open={dirty} onSave={onSave} onDiscard={onDiscard} />
+      <SaveBar
+        open={dirty}
+        onSave={onSave}
+        onDiscard={onDiscard}
+        saveDisabled={!catalogValid}
+        disabledHint="Every catalog row needs a label"
+      />
     </div>
   );
 }

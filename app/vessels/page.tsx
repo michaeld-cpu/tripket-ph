@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import { fetchDashboardData, type Vessel } from "@/lib/dashboard-data";
+import { loadStore, saveStore } from "@/lib/persisted-store";
 import { TableSkeleton } from "@/components/Skeleton";
 import RowMenu from "@/components/RowMenu";
 import Select from "@/components/Select";
@@ -130,14 +131,35 @@ export default function VesselsPage() {
     }
   };
 
+  // Hydrate from localStorage if the operator has saved edits before;
+  // otherwise fall through to the seeded mock from fetchDashboardData and
+  // persist that snapshot so subsequent mutations have a baseline.
   useEffect(() => {
     let cancelled = false;
     setVessels(null);
+    const persisted = loadStore<Vessel[]>("vessels", active.id);
+    if (persisted) {
+      setVessels(persisted);
+      return;
+    }
     fetchDashboardData(active.id).then(d => {
-      if (!cancelled) setVessels(d.vessels);
+      if (cancelled) return;
+      setVessels(d.vessels);
+      saveStore("vessels", active.id, d.vessels);
     });
     return () => { cancelled = true; };
   }, [active.id]);
+
+  // Wrap setState so every mutation persists. Mirrors React's functional
+  // updater so callers can keep the same `prev => next` pattern.
+  const updateVessels = (next: Vessel[] | ((prev: Vessel[]) => Vessel[])) => {
+    setVessels(prev => {
+      const base = prev ?? [];
+      const value = typeof next === "function" ? (next as (p: Vessel[]) => Vessel[])(base) : next;
+      saveStore("vessels", active.id, value);
+      return value;
+    });
+  };
 
   const filtered = useMemo(() => {
     if (!vessels) return [];
@@ -179,16 +201,14 @@ export default function VesselsPage() {
       <AddVesselModal
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        onCreate={v => setVessels(prev => prev ? [{ ...v, id: `v${Date.now()}` }, ...prev] : [{ ...v, id: `v${Date.now()}` }])}
+        onCreate={v => updateVessels(prev => [{ ...v, id: `v${Date.now()}` }, ...prev])}
       />
 
       <EditVesselModal
         open={editVessel !== null}
         vessel={editVessel}
         onClose={() => setEditVessel(null)}
-        onSave={updated =>
-          setVessels(prev => prev ? prev.map(v => v.id === updated.id ? updated : v) : prev)
-        }
+        onSave={updated => updateVessels(prev => prev.map(v => v.id === updated.id ? updated : v))}
       />
 
       <DeleteVesselDialog
@@ -196,7 +216,7 @@ export default function VesselsPage() {
         vessel={deleteVessel}
         onClose={() => setDeleteVessel(null)}
         onConfirm={(v) => {
-          setVessels(prev => prev ? prev.filter(x => x.id !== v.id) : prev);
+          updateVessels(prev => prev.filter(x => x.id !== v.id));
           showToast(`${v.name} deleted`, "error");
         }}
       />

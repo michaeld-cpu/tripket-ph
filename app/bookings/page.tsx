@@ -25,6 +25,8 @@ import {
   type Ticket,
 } from "@/lib/bookings-data";
 import { loadScopedVoyages } from "@/lib/line-scope";
+import { reviveBookings } from "@/lib/bookings-data";
+import { loadStore, saveStore } from "@/lib/persisted-store";
 import ActivityLog from "@/components/ActivityLog";
 import Modal from "@/components/Modal";
 
@@ -134,9 +136,9 @@ export default function BookingsPage() {
   });
 
   const handleCancel = (ref: string) => {
-    setBookings((prev) => prev ? prev.map((x) => x.ref === ref
+    updateBookings((prev) => prev.map((x) => x.ref === ref
       ? logTo({ ...x, status: "Cancelled", paymentStatus: "Refunded" }, makeActivity("cancelled", "Booking cancelled", ACTOR))
-      : x) : prev);
+      : x));
     showToast(`Booking ${ref} cancelled`);
   };
   // Approve opens the batch dialog so the admin can assign each pending
@@ -152,9 +154,8 @@ export default function BookingsPage() {
     ref: string,
     decisions: Record<string, { status: "Issued" | "Cancelled" | "Refunded"; number?: string }>
   ) => {
-    setBookings((prev) =>
-      prev
-        ? prev.map((x) => {
+    updateBookings((prev) =>
+      prev.map((x) => {
             if (x.ref !== ref) return x;
             const entries: ReturnType<typeof makeActivity>[] = [];
             const tickets = x.tickets.map((t) => {
@@ -179,14 +180,13 @@ export default function BookingsPage() {
               activity: [...entries.reverse(), ...(x.activity ?? deriveActivity(x))],
             };
           })
-        : prev
     );
     showToast(`Booking ${ref} updated`);
   };
   const handleRefund = (ref: string) => {
-    setBookings((prev) => prev ? prev.map((x) => x.ref === ref
+    updateBookings((prev) => prev.map((x) => x.ref === ref
       ? logTo({ ...x, paymentStatus: "Refunded" }, makeActivity("refunded", "Payment refunded", ACTOR, `₱${x.amount.toLocaleString()} returned`))
-      : x) : prev);
+      : x));
     showToast(`Booking ${ref} refunded`);
   };
 
@@ -206,23 +206,36 @@ export default function BookingsPage() {
     (statusFilter !== "all" ? 1 : 0) +
     (isDefaultDateRange(dateRange) ? 0 : 1);
 
-  // Hydrate bookings from localStorage voyages on mount.
+  // Hydrate bookings. Prefer the persisted store (so admin mutations like
+  // cancel / approve / refund survive a refresh); fall through to deriving
+  // from the live voyages mock and persist that seed.
   useEffect(() => {
     try {
-      // Operators only ever derive bookings from their own line's voyages.
+      const persisted = loadStore<unknown>("bookings", active.id);
+      if (persisted) {
+        setBookings(reviveBookings(persisted));
+        return;
+      }
       const voyages = loadScopedVoyages(active.id, locked);
-      // Fake the loading shimmer briefly so the page matches the routes/vessels feel.
-      // Seed each booking's activity from its derived history so the rail has a
-      // starting trail; live admin actions append to it from here on.
-      const t = setTimeout(
-        () => setBookings(deriveBookings(voyages).map((b) => ({ ...b, activity: deriveActivity(b) }))),
-        180
-      );
+      const t = setTimeout(() => {
+        const seeded = deriveBookings(voyages).map((b) => ({ ...b, activity: deriveActivity(b) }));
+        setBookings(seeded);
+        saveStore("bookings", active.id, seeded);
+      }, 180);
       return () => clearTimeout(t);
     } catch {
       setBookings([]);
     }
   }, [active.id, locked]);
+
+  // Wrap setBookings so every admin mutation persists.
+  const updateBookings = (next: (prev: Booking[]) => Booking[]) => {
+    setBookings(prev => {
+      const value = next(prev ?? []);
+      saveStore("bookings", active.id, value);
+      return value;
+    });
+  };
 
   useEffect(() => { setPage(1); }, [query, routeFilter, vesselFilter, statusFilter, dateRange]);
 

@@ -25,6 +25,19 @@ export type VesselAssignment = {
   departures: Date[];
 };
 
+// Re-hydrate a Route array after a JSON round-trip — departures land as
+// ISO strings in localStorage, but the table renders them as Date objects.
+export function reviveRoutes(raw: unknown): Route[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((r) => ({
+    ...(r as Route),
+    assignments: ((r as Route).assignments ?? []).map((a) => ({
+      ...a,
+      departures: (a.departures ?? []).map((d) => (d instanceof Date ? d : new Date(d as unknown as string))),
+    })),
+  }));
+}
+
 // Mints mock departure dates spread across the next ~30 days on the given
 // weekday cadence. Used until the schedule pipeline feeds real dates in.
 export function mockDepartures(count: number, weekdays: number[], hour: number): Date[] {

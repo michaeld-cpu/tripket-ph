@@ -82,7 +82,6 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
 
   const step1Valid =
     values.name.trim().length > 0 &&
-    values.imo.length === 7 &&
     values.passengers.length > 0 &&
     (isPassengerOnly || values.vehicleSlots.length > 0);
 

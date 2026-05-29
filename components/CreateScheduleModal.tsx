@@ -136,6 +136,53 @@ export default function CreateScheduleModal({
   }, [open, prefillKey]);
 
 
+  // ── Per-step validity gates ──
+  // Mirrors the vessel dialog's pattern: required fields gate the primary
+  // button (no inline error markup). Continue stays disabled until the
+  // step's data model is complete enough to commit. Review has no inputs,
+  // so it's always valid once reached.
+  const scheduleValid =
+    Object.values(schedule.dayTimes).some((arr) => (arr?.length ?? 0) > 0);
+
+  const routesValid =
+    routes.originCode !== "" &&
+    routes.destinationCode !== "" &&
+    routes.originCode !== routes.destinationCode &&
+    Number(routes.distanceNm) > 0 &&
+    Number(routes.durationLowHrs) > 0 &&
+    Number(routes.durationHighHrs) >= Number(routes.durationLowHrs);
+
+  const vesselFleetValid = vessel.mode === "fleet" && vessel.fleetVesselId !== "";
+  const vesselNewIdentityValid =
+    vessel.mode === "new" &&
+    vessel.name.trim() !== "" &&
+    !!vessel.type &&
+    Number(vessel.passengerCapacity) > 0 &&
+    (vessel.type === "Fast Craft" || vessel.type === "Passenger Ship"
+      ? true
+      : Number(vessel.vehicleSlots) >= 0);
+  // For the embedded "register new" sub-wizard, Continue advances within
+  // the sub-flow until it lands on the review sub-step.
+  const vesselNewValid = vesselNewIdentityValid; // sub-steps 2/3 reuse the same identity gate
+  const vesselValid = vessel.mode === "fleet" ? vesselFleetValid : vesselNewValid;
+
+  // Fares is valid when there's a base fare > 0 and at least one passenger
+  // type enabled with a price set (or auto-computed from the base).
+  const faresValid = Number(fares.baseFare) > 0;
+
+  // Review's "Create schedule" only fires when every prior step passes.
+  // Otherwise the Stepper lets users jump to Review out of order and
+  // submit a half-built schedule.
+  const everyPriorValid = scheduleValid && routesValid && vesselValid && faresValid;
+  const stepValid: Record<StepId, boolean> = {
+    schedule: scheduleValid,
+    routes:   routesValid,
+    vessel:   vesselValid,
+    fares:    faresValid,
+    review:   everyPriorValid,
+  };
+  const continueDisabled = !stepValid[step.id];
+
   // When the operator is registering a new vessel inline (step 3, mode === "new"),
   // intercept the outer wizard's Continue/Back to first walk through the embedded
   // sub-wizard (Identity → Classes & fares → Review). Only after sub-step 3 does
@@ -230,6 +277,7 @@ export default function CreateScheduleModal({
           onContinue={goNext}
           isLast={isLast}
           continueLabel={isLast ? "Create schedule" : "Continue"}
+          continueDisabled={continueDisabled}
         />
       </div>
     </Modal>

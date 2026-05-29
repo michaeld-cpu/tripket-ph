@@ -9,6 +9,8 @@ import Select from "@/components/Select";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import CreateRouteModal from "@/components/CreateRouteModal";
+import { loadStore, saveStore } from "@/lib/persisted-store";
+import { reviveRoutes } from "@/lib/routes-data";
 import AssignVesselsEditor from "@/components/AssignVesselsEditor";
 import Modal from "@/components/Modal";
 import { PORTS, type RoutesValue } from "@/components/schedule-steps/RoutesStep";
@@ -190,15 +192,32 @@ export default function RoutesPage() {
     router.push(`/voyages?${params.toString()}`);
   };
 
-  // Fake async fetch so the skeleton + active.id loop reads consistently with vessels/page.
+  // Hydrate from localStorage if the operator has saved edits before;
+  // otherwise fall through to the seeded mock and persist that snapshot.
   useEffect(() => {
     let cancelled = false;
     setRoutes(null);
+    const persisted = loadStore<unknown>("routes", active.id);
+    if (persisted) {
+      setRoutes(reviveRoutes(persisted));
+      return;
+    }
     const t = setTimeout(() => {
-      if (!cancelled) setRoutes(MOCK_ROUTES);
+      if (cancelled) return;
+      setRoutes(MOCK_ROUTES);
+      saveStore("routes", active.id, MOCK_ROUTES);
     }, 200);
     return () => { cancelled = true; clearTimeout(t); };
   }, [active.id]);
+
+  // Wrap setRoutes so every mutation persists.
+  const updateRoutes = (next: (prev: Route[]) => Route[]) => {
+    setRoutes(prev => {
+      const value = next(prev ?? []);
+      saveStore("routes", active.id, value);
+      return value;
+    });
+  };
 
   // Reset to page 1 whenever filters change so users don't land on an empty later page.
   useEffect(() => { setPage(1); }, [query, locationFilter, statusFilter]);
@@ -493,8 +512,6 @@ export default function RoutesPage() {
             status: "Active",
             assignments: [],
           };
-          setRoutes((prev) => prev ? [newRoute, ...prev] : [newRoute]);
-          // If the operator opted in to a return leg, mirror the route.
           if (payload.createReturn) {
             const returnLeg: Route = {
               ...newRoute,
@@ -502,7 +519,9 @@ export default function RoutesPage() {
               origin: destination,
               destination: origin,
             };
-            setRoutes((prev) => prev ? [returnLeg, newRoute, ...prev.filter((r) => r.id !== newRoute.id)] : [returnLeg, newRoute]);
+            updateRoutes((prev) => [returnLeg, newRoute, ...prev]);
+          } else {
+            updateRoutes((prev) => [newRoute, ...prev]);
           }
         }}
       />
@@ -530,22 +549,20 @@ export default function RoutesPage() {
                 return prev ?? { vessel: name, departures: [] };
               })
             : editRoute.assignments;
-          setRoutes((prev) =>
-            prev
-              ? prev.map((r) =>
-                  r.id === editRoute.id
-                    ? {
-                        ...r,
-                        origin,
-                        destination,
-                        distanceNm: Number(payload.distanceNm) || 0,
-                        durationHrs: [lo, hi],
-                        status: payload.status ?? r.status,
-                        assignments: nextAssignments,
-                      }
-                    : r
-                )
-              : prev
+          updateRoutes((prev) =>
+            prev.map((r) =>
+              r.id === editRoute.id
+                ? {
+                    ...r,
+                    origin,
+                    destination,
+                    distanceNm: Number(payload.distanceNm) || 0,
+                    durationHrs: [lo, hi],
+                    status: payload.status ?? r.status,
+                    assignments: nextAssignments,
+                  }
+                : r
+            )
           );
         }}
         editMode={assignMode ? "assign" : "edit"}
@@ -557,7 +574,7 @@ export default function RoutesPage() {
       <DeleteRouteDialog
         route={deleteRoute}
         onClose={() => setDeleteRoute(null)}
-        onConfirm={(r) => setRoutes((prev) => (prev ? prev.filter((x) => x.id !== r.id) : prev))}
+        onConfirm={(r) => updateRoutes((prev) => prev.filter((x) => x.id !== r.id))}
       />
 
       <RouteScheduleDialog route={scheduleRoute} onClose={() => setScheduleRoute(null)} />
