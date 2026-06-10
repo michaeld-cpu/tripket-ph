@@ -27,6 +27,9 @@ import {
   type AddOn,
 } from "@/lib/settings-data";
 import type { Line } from "@/lib/shipping-lines";
+import { useCurrentUser } from "@/components/UserContext";
+import { getLineStatus, setLineStatus, type LineStatus } from "@/lib/line-status";
+import SuspendLineDialog from "@/components/SuspendLineDialog";
 
 type TabId = "account" | "booking";
 const TABS: { id: TabId; label: string }[] = [
@@ -794,12 +797,29 @@ function AccountTab({ line }: { line: Line }) {
 
   const dirty = useMemo(() => JSON.stringify(saved) !== JSON.stringify(profile), [saved, profile]);
 
+  // Line enable/disable — admin-only. Operators are locked to their line and
+  // must not be able to lock themselves out of it.
+  // NOTE: every hook below must run on every render, so they live ABOVE the
+  // `if (!profile)` early return — otherwise React sees a changing hook count.
+  const { user } = useCurrentUser();
+  const isAdmin = user?.role === "admin";
+  const [status, setStatus] = useState<LineStatus>("active");
+  // Suspend opens a type-to-confirm dialog (same pattern as DeleteVesselDialog);
+  // re-activate is immediate.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  useEffect(() => { setStatus(getLineStatus(line.id)); setConfirmOpen(false); }, [line.id]);
+
   if (!profile) return null;
 
+  const confirmTarget = profile.displayName || line.name;
   const set = <K extends keyof AccountProfile>(k: K, v: AccountProfile[K]) =>
     setProfile((p) => (p ? { ...p, [k]: v } : p));
   const onSave = () => { if (profile) { saveAccount(line.id, profile); setSaved(profile); } };
   const onDiscard = () => setProfile(saved);
+  const applyStatus = (next: LineStatus) => {
+    setLineStatus(line.id, next);
+    setStatus(next);
+  };
 
   const inputCls =
     "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-900 placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-100";
@@ -838,14 +858,43 @@ function AccountTab({ line }: { line: Line }) {
 
       </Card>
 
-      {/* Danger zone */}
-      <section className="rounded-2xl bg-white p-6 ring-1 ring-rose-200/70">
-        <h2 className="text-[15px] font-semibold tracking-tight text-rose-700">Danger zone</h2>
-        <p className="mt-0.5 text-[12.5px] text-slate-500">Deactivating suspends all bookings and schedules for this line.</p>
-        <button type="button" className="mt-4 inline-flex items-center rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-600 transition-colors duration-150 hover:bg-rose-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-rose-300">
-          Deactivate shipping line
-        </button>
-      </section>
+      {/* Danger zone — admin-only. Operators are scoped to a single line and
+          can't be allowed to suspend (and lock themselves out of) it. */}
+      {isAdmin && (
+        <section className="rounded-2xl bg-white p-6 ring-1 ring-rose-200/70">
+          <h2 className="text-[15px] font-semibold tracking-tight text-rose-700">Danger zone</h2>
+          {status === "active" ? (
+            <p className="mt-0.5 text-[12.5px] text-slate-500">
+              Suspending stops new bookings and hides future schedules for this line.
+              Existing bookings are honored. You can re-activate at any time.
+            </p>
+          ) : (
+            <p className="mt-0.5 text-[12.5px] text-rose-600">
+              This line is suspended — it is not accepting new bookings and its future
+              schedules are hidden. Re-activate to restore it.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => (status === "active" ? setConfirmOpen(true) : applyStatus("active"))}
+            className={
+              status === "active"
+                ? "mt-4 inline-flex items-center rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-600 transition-colors duration-150 hover:bg-rose-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-rose-300"
+                : "mt-4 inline-flex items-center rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-emerald-700 transition-colors duration-150 hover:bg-emerald-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-300"
+            }
+          >
+            {status === "active" ? "Suspend shipping line" : "Re-activate shipping line"}
+          </button>
+
+          <SuspendLineDialog
+            open={confirmOpen}
+            line={line}
+            name={confirmTarget}
+            onClose={() => setConfirmOpen(false)}
+            onConfirm={() => applyStatus("suspended")}
+          />
+        </section>
+      )}
 
       <SaveBar open={dirty} onSave={onSave} onDiscard={onDiscard} />
     </div>

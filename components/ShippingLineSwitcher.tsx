@@ -2,6 +2,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Line } from "@/lib/shipping-lines";
 import { useShippingLine } from "./ShippingLineContext";
+import { useLineStatus } from "@/lib/line-status";
+
+/** Small "Suspended" chip shown next to a deactivated line. */
+function SuspendedChip() {
+  return (
+    <span className="shrink-0 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-600 ring-1 ring-rose-200">
+      Suspended
+    </span>
+  );
+}
 
 export function LogoTile({ line, size = 24 }: { line: Line; size?: number }) {
   const [err, setErr] = useState(false);
@@ -32,8 +42,42 @@ export function LogoTile({ line, size = 24 }: { line: Line; size?: number }) {
   );
 }
 
+/** One selectable line in the dropdown. Suspended lines stay browsable —
+    they're only dimmed and chipped, never hidden or disabled. */
+function LineRow({
+  line,
+  selected,
+  onSelect,
+}: {
+  line: Line;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const suspended = useLineStatus(line.id) === "suspended";
+  return (
+    <button
+      onClick={onSelect}
+      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-gray-50 ${
+        selected ? "bg-gray-50" : ""
+      }`}
+    >
+      <span className={suspended ? "opacity-50" : ""}>
+        <LogoTile line={line} size={28} />
+      </span>
+      <span className={`flex-1 truncate ${suspended ? "text-gray-400" : ""}`}>{line.name}</span>
+      {suspended && <SuspendedChip />}
+      {selected && (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-brand-600">
+          <path d="M5 12l5 5 9-11" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 export default function ShippingLineSwitcher() {
   const { active, setActiveId, lines, locked } = useShippingLine();
+  const activeSuspended = useLineStatus(active.id) === "suspended";
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -69,8 +113,11 @@ export default function ShippingLineSwitcher() {
   if (locked) {
     return (
       <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm">
-        <LogoTile line={active} size={24} />
+        <span className={activeSuspended ? "opacity-50" : ""}>
+          <LogoTile line={active} size={24} />
+        </span>
         <span className="block max-w-[240px] truncate whitespace-nowrap text-left font-medium">{active.name}</span>
+        {activeSuspended && <SuspendedChip />}
       </div>
     );
   }
@@ -79,8 +126,11 @@ export default function ShippingLineSwitcher() {
     <div className="relative" ref={ref}>
       <div className="group flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm hover:bg-gray-100">
         <button onClick={() => setOpen(o => !o)} className="flex items-center gap-2">
-          <LogoTile line={active} size={24} />
+          <span className={activeSuspended ? "opacity-50" : ""}>
+            <LogoTile line={active} size={24} />
+          </span>
           <span className="block max-w-[240px] truncate whitespace-nowrap text-left font-medium">{active.name}</span>
+          {activeSuspended && <SuspendedChip />}
           <span className="grid h-5 w-5 place-items-center rounded-md bg-gray-100 text-gray-500 group-hover:bg-white">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
               <path d="M8 9l4-4 4 4M8 15l4 4 4-4" />
@@ -116,26 +166,14 @@ export default function ShippingLineSwitcher() {
             {filtered.length === 0 && (
               <div className="px-4 py-6 text-center text-sm text-gray-400">No matches</div>
             )}
-            {filtered.map(l => {
-              const selected = l.id === active.id;
-              return (
-                <button
-                  key={l.id}
-                  onClick={() => { setActiveId(l.id); setOpen(false); }}
-                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-gray-50 ${
-                    selected ? "bg-gray-50" : ""
-                  }`}
-                >
-                  <LogoTile line={l} size={28} />
-                  <span className="flex-1 truncate">{l.name}</span>
-                  {selected && (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-brand-600">
-                      <path d="M5 12l5 5 9-11" />
-                    </svg>
-                  )}
-                </button>
-              );
-            })}
+            {filtered.map(l => (
+              <LineRow
+                key={l.id}
+                line={l}
+                selected={l.id === active.id}
+                onSelect={() => { setActiveId(l.id); setOpen(false); }}
+              />
+            ))}
           </div>
 
           <button className="flex w-full items-center gap-3 border-t border-gray-100 px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50">
