@@ -46,12 +46,12 @@ export default function SuspendLineDialog({ open, line, name, onClose, onConfirm
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">
-              Suspend this shipping line?
+              Deactivate this shipping line?
             </h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
               <span className="font-medium text-slate-900">{expected || "—"}</span>{" "}
               will stop accepting new bookings and its future schedules will be hidden. Existing
-              bookings are honored and nothing is deleted — you can re-activate at any time.
+              bookings are honored and nothing is deleted — you can activate it again at any time.
             </p>
           </div>
         </div>
@@ -88,7 +88,7 @@ export default function SuspendLineDialog({ open, line, name, onClose, onConfirm
           disabled={!matches || submitting}
           className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white transition-[background-color,transform,box-shadow] duration-150 ease-out hover:bg-rose-700 hover:shadow-[0_6px_16px_-6px_rgba(244,63,94,0.55)] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-none disabled:active:scale-100"
         >
-          {submitting ? "Suspending…" : "Suspend line"}
+          {submitting ? "Deactivating…" : "Deactivate line"}
         </button>
       </div>
     </Modal>

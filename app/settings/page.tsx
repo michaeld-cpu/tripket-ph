@@ -865,13 +865,13 @@ function AccountTab({ line }: { line: Line }) {
           <h2 className="text-[15px] font-semibold tracking-tight text-rose-700">Danger zone</h2>
           {status === "active" ? (
             <p className="mt-0.5 text-[12.5px] text-slate-500">
-              Suspending stops new bookings and hides future schedules for this line.
-              Existing bookings are honored. You can re-activate at any time.
+              Deactivating stops new bookings and hides future schedules for this line.
+              Existing bookings are honored. You can activate it again at any time.
             </p>
           ) : (
             <p className="mt-0.5 text-[12.5px] text-rose-600">
-              This line is suspended — it is not accepting new bookings and its future
-              schedules are hidden. Re-activate to restore it.
+              This line is deactivated — it is not accepting new bookings and its future
+              schedules are hidden. Activate to restore it.
             </p>
           )}
           <button
@@ -883,7 +883,7 @@ function AccountTab({ line }: { line: Line }) {
                 : "mt-4 inline-flex items-center rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-emerald-700 transition-colors duration-150 hover:bg-emerald-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-300"
             }
           >
-            {status === "active" ? "Suspend shipping line" : "Re-activate shipping line"}
+            {status === "active" ? "Deactivate shipping line" : "Activate shipping line"}
           </button>
 
           <SuspendLineDialog
