@@ -11,17 +11,9 @@ type Props = {
   existingIds: string[];
 };
 
-// Tailwind tint classes offered for the fallback tile (when no logo image).
-const TINTS = [
-  "bg-blue-600",
-  "bg-emerald-700",
-  "bg-rose-600",
-  "bg-amber-500",
-  "bg-sky-500",
-  "bg-violet-600",
-  "bg-pink-600",
-  "bg-yellow-500",
-];
+// Logo-less lines fall back to their initials on a neutral gray tile — no
+// per-line color picking; this keeps new lines visually consistent.
+const FALLBACK_TINT = "bg-slate-500";
 
 function slugify(name: string): string {
   return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -38,7 +30,6 @@ function deriveInitial(name: string): string {
 export default function CreateLineDialog({ open, onClose, onCreate, existingIds }: Props) {
   const [name, setName] = useState("");
   const [logo, setLogo] = useState(""); // data URL
-  const [tint, setTint] = useState(TINTS[0]);
   const [dragging, setDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -47,7 +38,6 @@ export default function CreateLineDialog({ open, onClose, onCreate, existingIds 
     if (open) {
       setName("");
       setLogo("");
-      setTint(TINTS[0]);
       setDragging(false);
       setSubmitting(false);
     }
@@ -81,7 +71,7 @@ export default function CreateLineDialog({ open, onClose, onCreate, existingIds 
       members: 0,
       plan: "Starter",
       logo,
-      fallbackTint: tint,
+      fallbackTint: FALLBACK_TINT,
       initial: deriveInitial(trimmed),
     });
     setSubmitting(false);
@@ -135,7 +125,7 @@ export default function CreateLineDialog({ open, onClose, onCreate, existingIds 
               {logo ? (
                 <img src={logo} alt="Logo preview" className="h-full w-full object-cover" />
               ) : (
-                <span className={`grid h-full w-full place-items-center text-base font-bold text-white ${tint}`}>
+                <span className={`grid h-full w-full place-items-center text-base font-bold text-white ${FALLBACK_TINT}`}>
                   {initial}
                 </span>
               )}
@@ -182,27 +172,9 @@ export default function CreateLineDialog({ open, onClose, onCreate, existingIds 
               placeholder="e.g. Sunrise Ferries"
               className="mt-1.5 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] text-slate-900 placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-brand-300 focus:outline-none focus:ring-2 focus:ring-brand-100"
             />
-            <div className="mt-3">
-              <span className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
-                Fallback tint
-              </span>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {TINTS.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    aria-label={t}
-                    onClick={() => setTint(t)}
-                    className={`h-[22px] w-[22px] rounded-md ${t} transition-transform hover:scale-110 ${
-                      tint === t ? "ring-2 ring-slate-900 ring-offset-2" : ""
-                    }`}
-                  />
-                ))}
-              </div>
-              <p className="mt-1.5 text-[11px] leading-tight text-slate-400">
-                Shown when no logo is uploaded.
-              </p>
-            </div>
+            <p className="mt-2 text-[11px] leading-snug text-slate-400">
+              No logo? The line shows its initials on a neutral tile.
+            </p>
           </div>
         </div>
       </div>
