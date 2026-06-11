@@ -1,6 +1,7 @@
 "use client";
-import { createContext, useContext, useState, ReactNode } from "react";
-import { Line, lines } from "@/lib/shipping-lines";
+import { createContext, useContext, useMemo, useState, ReactNode } from "react";
+import { Line, lines as seedLines } from "@/lib/shipping-lines";
+import { useCustomLines } from "@/lib/custom-lines";
 import { useCurrentUser } from "./UserContext";
 
 type Ctx = {
@@ -15,7 +16,10 @@ const ShippingLineContext = createContext<Ctx | null>(null);
 
 export function ShippingLineProvider({ children }: { children: ReactNode }) {
   const { user } = useCurrentUser();
-  const [activeId, setActiveId] = useState(lines[0].id);
+  const customLines = useCustomLines();
+  // Seed lines stay the baseline; admin-added lines are appended.
+  const lines = useMemo(() => [...seedLines, ...customLines], [customLines]);
+  const [activeId, setActiveId] = useState(seedLines[0].id);
 
   // Operators see only their assigned line; admin uses the local switcher state.
   const effectiveId =
