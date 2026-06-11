@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Line } from "@/lib/shipping-lines";
 import { useShippingLine } from "./ShippingLineContext";
 import { useLineStatus } from "@/lib/line-status";
+import { addCustomLine } from "@/lib/custom-lines";
+import CreateLineDialog from "./CreateLineDialog";
 
 /** Small "Suspended" chip shown next to a deactivated line. */
 function SuspendedChip() {
@@ -79,6 +81,7 @@ export default function ShippingLineSwitcher() {
   const { active, setActiveId, lines, locked } = useShippingLine();
   const activeSuspended = useLineStatus(active.id) === "suspended";
   const [open, setOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -176,7 +179,10 @@ export default function ShippingLineSwitcher() {
             ))}
           </div>
 
-          <button className="flex w-full items-center gap-3 border-t border-gray-100 px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50">
+          <button
+            onClick={() => { setOpen(false); setCreateOpen(true); }}
+            className="flex w-full items-center gap-3 border-t border-gray-100 px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
               <path d="M12 5v14M5 12h14" />
             </svg>
@@ -184,6 +190,13 @@ export default function ShippingLineSwitcher() {
           </button>
         </div>
       )}
+
+      <CreateLineDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        existingIds={lines.map(l => l.id)}
+        onCreate={(line) => { addCustomLine(line); setActiveId(line.id); }}
+      />
     </div>
   );
 }
