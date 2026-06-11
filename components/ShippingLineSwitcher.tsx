@@ -4,13 +4,15 @@ import { Line } from "@/lib/shipping-lines";
 import { useShippingLine } from "./ShippingLineContext";
 import { useLineStatus } from "@/lib/line-status";
 import { addCustomLine } from "@/lib/custom-lines";
+import { setLineStatus } from "@/lib/line-status";
+import { loadAccount, saveAccount } from "@/lib/settings-data";
 import CreateLineDialog from "./CreateLineDialog";
 
-/** Small "Suspended" chip shown next to a deactivated line. */
+/** Small "Deactivated" chip shown next to a deactivated line. */
 function SuspendedChip() {
   return (
     <span className="shrink-0 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-600 ring-1 ring-rose-200">
-      Suspended
+      Deactivated
     </span>
   );
 }
@@ -195,7 +197,25 @@ export default function ShippingLineSwitcher() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         existingIds={lines.map(l => l.id)}
-        onCreate={(line) => { addCustomLine(line); setActiveId(line.id); }}
+        onCreate={({ line, enabled, contact }) => {
+          addCustomLine(line);
+          // Seed the account profile so the logo + contact details entered here
+          // show up immediately in Settings. Start from the line's defaults,
+          // then apply only the fields the admin filled in.
+          const base = loadAccount(line.id, line.name);
+          saveAccount(line.id, {
+            ...base,
+            displayName: line.name,
+            logoUrl: line.logo,
+            website: contact.website || base.website,
+            contactEmail: contact.contactEmail || base.contactEmail,
+            contactPhone: contact.contactPhone || base.contactPhone,
+            address: contact.address || base.address,
+          });
+          // Honor the create-time enable/disable choice.
+          setLineStatus(line.id, enabled ? "active" : "suspended");
+          setActiveId(line.id);
+        }}
       />
     </div>
   );
