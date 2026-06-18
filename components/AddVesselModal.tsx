@@ -37,8 +37,8 @@ export const defaultPassengerTypes: PassengerType[] = [
   { key: "infant",  label: "Infant",                        discountPct: 100, requiredDoc: "Birth certificate or PSA copy", isInfant: true },
 ];
 
-// Single-choice: exactly one tier is the vessel's accommodation. Its seat count
-// is the vessel's passenger capacity.
+// Seating tiers a vessel can offer (multi-select). Passenger capacity is the
+// sum of all enabled tiers' seats. Economy starts on as the common default.
 export const defaultAccommodations: AccommodationClass[] = [
   { key: "economy",  label: "Economy",  descriptor: "Standard open seating",       enabled: true,  capacity: 0, fare: 0 },
   { key: "tourist",  label: "Tourist",  descriptor: "Reserved seating, more room", enabled: false, capacity: 0, fare: 0 },
@@ -84,10 +84,10 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
 
   const isPassengerOnly = passengerOnlyTypes.includes(values.type);
 
-  // Single-choice accommodation: the one selected tier's seats are the vessel's
-  // passenger capacity.
-  const selectedAccommodation = accommodations.find((a) => a.enabled) ?? null;
-  const totalPassengers = selectedAccommodation?.capacity ?? 0;
+  // A vessel can offer multiple accommodation tiers. Passenger capacity is the
+  // sum of all enabled tiers' seats.
+  const enabledAccommodations = accommodations.filter((a) => a.enabled);
+  const totalPassengers = enabledAccommodations.reduce((sum, a) => sum + (a.capacity || 0), 0);
 
   const resetAll = () => {
     setStep(1);
@@ -108,11 +108,12 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
 
   const step1Valid = values.name.trim().length > 0;
 
-  // Step 2 needs a chosen accommodation tier with seats AND a base fare.
-  // (Vehicle deck capacity is no longer captured here — it lives per vehicle
-  // class as its quantity.)
+  // Step 2 needs at least one accommodation tier, and every enabled tier must
+  // have seats AND a base fare. (Vehicle deck capacity lives per vehicle class
+  // as its quantity, not here.)
   const step2Valid =
-    totalPassengers > 0 && (selectedAccommodation?.fare ?? 0) > 0;
+    enabledAccommodations.length > 0 &&
+    enabledAccommodations.every((a) => (a.capacity || 0) > 0 && (a.fare || 0) > 0);
 
   const handleNext = () => {
     if (step === 1) {
@@ -167,7 +168,7 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
       vehicleSlots: isPassengerOnly ? null : totalVehicleSlots,
       status: values.status,
       location: values.status === "Active" ? "At port" : values.status,
-      accommodations: selectedAccommodation ? [selectedAccommodation] : [],
+      accommodations: enabledAccommodations,
       vehicleClasses: isPassengerOnly ? [] : vehicleClasses.filter(c => c.enabled),
       passengerTypes,
     };
@@ -832,11 +833,12 @@ export function Step3Review({
   const typeLabel = typeOptions.find(o => o.value === values.type)?.label ?? values.type;
   const enabledClasses = vehicleClasses.filter(c => c.enabled);
   const showAccommodation = !!accommodations;
-  // Single chosen tier (Add flow). Its seats are the passenger capacity.
-  const chosenAccommodation = (accommodations ?? []).find(a => a.enabled) ?? null;
-  // Pax: from the chosen accommodation tier (Add) or the legacy field (Edit/schedule).
-  const paxValue = chosenAccommodation
-    ? chosenAccommodation.capacity.toLocaleString()
+  // Enabled tiers (Add flow); their combined seats are the passenger capacity.
+  const enabledAccommodations = (accommodations ?? []).filter(a => a.enabled);
+  const accomPax = enabledAccommodations.reduce((sum, a) => sum + (a.capacity || 0), 0);
+  // Pax: summed from enabled tiers (Add) or the legacy field (Edit/schedule).
+  const paxValue = enabledAccommodations.length
+    ? accomPax.toLocaleString()
     : (values.passengers || "—");
   // Vehicle deck capacity = sum of enabled classes' quantities. Falls back to
   // the legacy slots value for Edit/schedule flows that still pass one.
@@ -863,21 +865,21 @@ export function Step3Review({
       {/* Accommodation & vehicle capacity (step 2) */}
       <ReviewSection title="Accommodation & vehicle capacity" onEdit={() => onEditStep(2)}>
           {showAccommodation ? (
-            <ReviewRow
-              label="Accommodation"
-              value={
-                chosenAccommodation ? (
-                  <span>
-                    <span className="font-medium tracking-tight text-slate-900">{chosenAccommodation.label}</span>
-                    <span className="ml-2 text-[11px] tabular-nums text-slate-400">
-                      {chosenAccommodation.capacity.toLocaleString()} seats · ₱{chosenAccommodation.fare.toLocaleString()}
+            enabledAccommodations.length ? (
+              enabledAccommodations.map((a) => (
+                <ReviewRow
+                  key={a.key}
+                  label={a.label}
+                  value={
+                    <span className="text-[11px] tabular-nums text-slate-400">
+                      <span className="font-medium text-slate-900">{a.capacity.toLocaleString()}</span> seats · ₱{a.fare.toLocaleString()}
                     </span>
-                  </span>
-                ) : (
-                  <span className="text-slate-400">— none selected</span>
-                )
-              }
-            />
+                  }
+                />
+              ))
+            ) : (
+              <ReviewRow label="Accommodation" value={<span className="text-slate-400">— none selected</span>} />
+            )
           ) : (
             <ReviewRow
               label="Passenger capacity"

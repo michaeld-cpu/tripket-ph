@@ -158,14 +158,15 @@ export default function CreateScheduleModal({
   const vesselFleetValid = vessel.mode === "fleet" && vessel.fleetVesselId !== "";
   const isPassengerOnlyVessel =
     vessel.type === "Fast Craft" || vessel.type === "Passenger Ship";
-  const chosenAccom = vessel.accommodations.find((a) => a.enabled) ?? null;
+  const enabledAccoms = vessel.accommodations.filter((a) => a.enabled);
   // Sub-step 1 (Identity) only needs a name + type.
   const vesselNewIdentityValid =
     vessel.mode === "new" && vessel.name.trim() !== "" && !!vessel.type;
-  // Sub-step 2 (Capacity & fares) needs a chosen tier with seats + fare.
+  // Sub-step 2 (Capacity & fares) needs ≥1 tier, each with seats + fare.
   // Vehicle deck capacity is derived from each class's quantity, not a field.
   const vesselNewCapacityValid =
-    (chosenAccom?.capacity ?? 0) > 0 && (chosenAccom?.fare ?? 0) > 0;
+    enabledAccoms.length > 0 &&
+    enabledAccoms.every((a) => (a.capacity || 0) > 0 && (a.fare || 0) > 0);
   // Gate the embedded sub-wizard per sub-step so Continue can't skip ahead.
   const subStepForGate: 1 | 2 | 3 = vessel.newSubStep ?? 1;
   const vesselNewValid =
@@ -205,7 +206,9 @@ export default function CreateScheduleModal({
       // per-line store the Vessels page reads, so it shows up there too.
       if (vessel.mode === "new") {
         const lineId = vessel.lineId || active.id;
-        const chosen = vessel.accommodations.find((a) => a.enabled) ?? null;
+        const tiers = vessel.accommodations.filter((a) => a.enabled);
+        // Passenger capacity = sum of all enabled accommodation tiers' seats.
+        const totalPax = tiers.reduce((sum, a) => sum + (a.capacity || 0), 0);
         // Vehicle deck capacity = sum of each enabled class's quantity.
         const totalVehicleSlots = vessel.vehicleClasses
           .filter((c) => c.enabled)
@@ -215,11 +218,11 @@ export default function CreateScheduleModal({
           imo: vessel.imoNumber.trim(),
           name: vessel.name.trim(),
           type: vessel.type,
-          passengers: chosen?.capacity ?? 0,
+          passengers: totalPax,
           vehicleSlots: isPassengerOnlyVessel ? null : totalVehicleSlots,
           status: vessel.status === "Inactive" ? "Inactive" : "Active",
           location: vessel.status === "Active" ? "At port" : vessel.status,
-          accommodations: chosen ? [chosen] : [],
+          accommodations: tiers,
           vehicleClasses: vessel.vehicleClasses.filter((c) => c.enabled),
           passengerTypes: vessel.passengerTypes,
         };

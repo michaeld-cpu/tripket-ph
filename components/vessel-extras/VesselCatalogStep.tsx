@@ -43,9 +43,10 @@ export default function VesselCatalogStep(props: Props) {
   const { active } = useShippingLine();
 
   const showCapacity = !!accommodations && !!setAccommodations;
-  // Single-choice: selecting a tier enables it and disables the others.
-  const selectAccom = (key: string) =>
-    setAccommodations?.((accommodations ?? []).map((a) => ({ ...a, enabled: a.key === key })));
+  // Multi-select: a vessel can offer several seating tiers. Total passenger
+  // capacity is the sum of all enabled tiers' seats.
+  const toggleAccom = (key: string) =>
+    setAccommodations?.((accommodations ?? []).map((a) => (a.key === key ? { ...a, enabled: !a.enabled } : a)));
   const setAccomCapacity = (key: string, capacity: number) =>
     setAccommodations?.((accommodations ?? []).map((a) => (a.key === key ? { ...a, capacity } : a)));
   const setAccomFare = (key: string, fare: number) =>
@@ -151,32 +152,38 @@ export default function VesselCatalogStep(props: Props) {
 
   return (
     <div className="space-y-7 px-6 py-5">
-      {/* Accommodation — pick ONE seating tier; its seat count is the vessel's
-          passenger capacity. */}
+      {/* Accommodation — toggle any seating tiers this vessel offers; total
+          passenger capacity is the sum of the enabled tiers' seats. */}
       {showCapacity && (
         <section>
         <SectionHeader
           title="Accommodation"
-          hint="Choose the seating tier this vessel offers, its seat count (the vessel's passenger capacity), and base fare. The fare carries into Voyages as the default."
+          hint="Toggle the seating tiers this vessel offers, each with its seat count and base fare. The total is the vessel's passenger capacity; fares carry into Voyages as defaults."
           count={`${(totalPassengers ?? 0).toLocaleString()} pax`}
         />
-        <div className="divide-y divide-slate-100 border-y border-slate-100" role="radiogroup" aria-label="Accommodation tier">
+        <div className="divide-y divide-slate-100 border-y border-slate-100">
           {(accommodations ?? []).map((a) => (
             <button
               key={a.key}
               type="button"
-              role="radio"
+              role="switch"
               aria-checked={a.enabled}
-              onClick={() => selectAccom(a.key)}
+              onClick={() => toggleAccom(a.key)}
               className="flex w-full items-center gap-3 py-2.5 text-left"
             >
               <span
                 className={
-                  "grid h-4 w-4 shrink-0 place-items-center rounded-full border transition-colors duration-150 " +
-                  (a.enabled ? "border-brand-600" : "border-slate-300")
+                  "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors duration-150 " +
+                  (a.enabled ? "bg-brand-500" : "bg-slate-300")
                 }
               >
-                {a.enabled && <span className="h-2 w-2 rounded-full bg-brand-600" />}
+                <span
+                  aria-hidden
+                  className={
+                    "block h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(15,23,42,0.2)] transition-transform duration-150 " +
+                    (a.enabled ? "translate-x-4" : "translate-x-0")
+                  }
+                />
               </span>
               <div className="min-w-0 flex-1">
                 <div className={"text-[13px] font-semibold tracking-tight " + (a.enabled ? "text-slate-900" : "text-slate-600")}>
