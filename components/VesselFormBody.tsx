@@ -3,7 +3,6 @@ import { motion } from "motion/react";
 import type { Vessel } from "@/lib/dashboard-data";
 import { useShippingLine } from "./ShippingLineContext";
 import LinePicker from "./LinePicker";
-import NumberInput from "./NumberInput";
 
 export const typeOptions = [
   { value: "RoRo" as const,           label: "RoRo (Roll-on / Roll-off)" },
@@ -23,15 +22,10 @@ export const statusOptions = [
 const inputCls =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm tracking-tight text-slate-900 placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-100";
 
-const wrapperCls =
-  "flex items-center rounded-lg border border-slate-200 bg-white transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100";
-
 type Values = {
   name: string;
   type: Vessel["type"];
   imo: string;
-  passengers: string;
-  vehicleSlots: string;
   status: Vessel["status"];
   /** Which shipping line owns this vessel. Defaults to the active line. */
   lineId: string;
@@ -41,11 +35,13 @@ type Props = {
   values: Values;
   onChange: <K extends keyof Values>(key: K, value: Values[K]) => void;
   autoFocusName?: boolean;
+  /** Selectable status options. Defaults to all four; Add-vessel passes a
+   *  trimmed set (Active / Inactive only). */
+  statuses?: typeof statusOptions;
 };
 
-export default function VesselFormBody({ values, onChange, autoFocusName = true }: Props) {
-  const { name, type, imo, passengers, vehicleSlots, status, lineId } = values;
-  const isPassengerOnly = passengerOnlyTypes.includes(type);
+export default function VesselFormBody({ values, onChange, autoFocusName = true, statuses = statusOptions }: Props) {
+  const { name, type, imo, status, lineId } = values;
   const { locked: lineLocked } = useShippingLine();
 
   // Subtle staggered entrance — Emil's range (30–80ms between siblings)
@@ -138,44 +134,10 @@ export default function VesselFormBody({ values, onChange, autoFocusName = true 
 
       <motion.div {...stagger(4)} className="h-px bg-slate-100/70" />
 
-      <motion.div {...stagger(5)} className={`grid gap-4 ${isPassengerOnly ? "grid-cols-1" : "grid-cols-2"}`}>
-        <Field label="Passenger capacity" required hint="MARINA-certified maximum">
-          <div className={wrapperCls}>
-            <NumberInput
-              required
-              min={1}
-              value={passengers}
-              onChange={e => onChange("passengers", e.target.value)}
-              placeholder="e.g. 420"
-              className="w-full bg-transparent px-3 py-2 text-sm tabular-nums text-slate-900 placeholder:text-slate-400 focus:outline-none"
-            />
-            <span className="pr-3 text-xs text-slate-400">pax</span>
-          </div>
-        </Field>
-
-        {!isPassengerOnly && (
-          <Field label="Vehicle slots" required hint="Total vehicle capacity">
-            <div className={wrapperCls}>
-              <NumberInput
-                required
-                min={0}
-                value={vehicleSlots}
-                onChange={e => onChange("vehicleSlots", e.target.value)}
-                placeholder="e.g. 80"
-                className="w-full bg-transparent px-3 py-2 text-sm tabular-nums text-slate-900 placeholder:text-slate-400 focus:outline-none"
-              />
-              <span className="pr-3 text-xs text-slate-400">slots</span>
-            </div>
-          </Field>
-        )}
-      </motion.div>
-
-      <motion.div {...stagger(6)} className="h-px bg-slate-100/70" />
-
-      <motion.div {...stagger(7)}>
+      <motion.div {...stagger(5)}>
         <Field label="Status">
           <div className="flex flex-wrap gap-1">
-            {statusOptions.map(opt => {
+            {statuses.map(opt => {
               const selected = opt.value === status;
               return (
                 <button

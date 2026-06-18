@@ -1,11 +1,11 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
-import { Step3Review as VesselReviewStep } from "@/components/AddVesselModal";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Step3Review as VesselReviewStep, defaultAccommodations } from "@/components/AddVesselModal";
 import { passengerOnlyTypes } from "@/components/VesselFormBody";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import LinePicker from "@/components/LinePicker";
-import NumberInput from "@/components/NumberInput";
-import type { VehicleClass, PassengerType, AddOn } from "@/lib/dashboard-data";
+import type { VehicleClass, PassengerType, AddOn, AccommodationClass, Vessel } from "@/lib/dashboard-data";
+import { loadStore } from "@/lib/persisted-store";
 import VesselCatalogStep from "@/components/vessel-extras/VesselCatalogStep";
 
 /**
@@ -59,6 +59,9 @@ export type VesselValue = {
   passengerTypes: PassengerType[];
   /** Optional add-ons offered by this vessel (extras passengers can buy). */
   addOns: AddOn[];
+  /** Seating tiers (single-choice). The chosen tier's seats = passenger
+   *  capacity and its fare seeds the Fares step's base fare. */
+  accommodations: AccommodationClass[];
   /** Which sub-step inside "Register new" is active. Lifted so the outer
    *  wizard footer can drive sub-step navigation with a single Back/Continue. */
   newSubStep: 1 | 2 | 3;
@@ -70,7 +73,29 @@ export type FleetVessel = {
   type: VesselType;
   passengerCapacity: number;
   vehicleSlots: number;
+  /** Base fare from the vessel's chosen accommodation tier. Seeds Fares. */
+  baseFare?: number;
+  vehicleClasses?: VehicleClass[];
+  passengerTypes?: PassengerType[];
+  accommodations?: AccommodationClass[];
 };
+
+/** Map a stored canonical Vessel into the wizard's lightweight FleetVessel,
+ *  carrying its catalog + accommodation fare so the Fares step can pre-fill. */
+function toFleetVessel(v: Vessel): FleetVessel {
+  const chosen = (v.accommodations ?? []).find((a) => a.enabled) ?? (v.accommodations ?? [])[0];
+  return {
+    id: v.id,
+    name: v.name,
+    type: v.type,
+    passengerCapacity: v.passengers,
+    vehicleSlots: v.vehicleSlots ?? 0,
+    baseFare: chosen?.fare,
+    vehicleClasses: v.vehicleClasses,
+    passengerTypes: v.passengerTypes,
+    accommodations: v.accommodations,
+  };
+}
 
 // Mock fleet — in real life this would be hydrated from the same source that
 // feeds the vessels page. Kept here as a self-contained constant so the step
@@ -102,9 +127,9 @@ export function vesselHasVehicleDeck(t: VesselType): boolean {
 // three steps so creating a vessel mid-schedule is identical to creating one
 // from the standalone Vessels page.
 const NEW_SUB_STEPS = [
-  { id: 1 as const, label: "Identity",     caption: "Basic details & capacity" },
-  { id: 2 as const, label: "Classes & fares", caption: "Vehicle classes & passenger types" },
-  { id: 3 as const, label: "Review",       caption: "Confirm vessel registration" },
+  { id: 1 as const, label: "Identity",        caption: "Basic vessel details" },
+  { id: 2 as const, label: "Capacity & fares", caption: "Accommodation, capacity, classes & fares" },
+  { id: 3 as const, label: "Review",          caption: "Confirm vessel registration" },
 ];
 
 export default function VesselStep({
@@ -114,7 +139,19 @@ export default function VesselStep({
   value: VesselValue;
   onChange: (next: VesselValue) => void;
 }) {
-  const fleet = MOCK_FLEET;
+  const { active } = useShippingLine();
+  // Real fleet for the active line (registered on the Vessels page or saved
+  // from a prior inline registration). Falls back to the mock when the store
+  // is empty so the picker is never blank in a fresh environment.
+  const [fleet, setFleet] = useState<FleetVessel[]>(MOCK_FLEET);
+  useEffect(() => {
+    const stored = loadStore<Vessel[]>("vessels", active.id);
+    if (stored && Array.isArray(stored) && stored.length > 0) {
+      setFleet(stored.map(toFleetVessel));
+    } else {
+      setFleet(MOCK_FLEET);
+    }
+  }, [active.id]);
   const picked = useMemo(() => fleet.find((v) => v.id === value.fleetVesselId) ?? null, [fleet, value.fleetVesselId]);
 
   // Sub-step is driven by the outer wizard's footer (single Back/Continue pair),
@@ -127,6 +164,12 @@ export default function VesselStep({
   // Convenience setters for AddVesselModal's sub-component callbacks.
   const setVehicleClasses = (v: VehicleClass[]) => onChange({ ...value, vehicleClasses: v });
   const setPassengerTypes = (v: PassengerType[]) => onChange({ ...value, passengerTypes: v });
+  const setAddOns = (v: AddOn[]) => onChange({ ...value, addOns: v });
+  const setAccommodations = (v: AccommodationClass[]) => onChange({ ...value, accommodations: v });
+  // Passenger capacity is the chosen accommodation tier's seats (single-choice).
+  const totalPassengers = (value.accommodations ?? [])
+    .filter((a) => a.enabled)
+    .reduce((sum, a) => sum + (a.capacity || 0), 0);
 
   return (
     <div className="space-y-5">
@@ -141,7 +184,21 @@ export default function VesselStep({
           <FleetPicker
             fleet={fleet}
             selectedId={value.fleetVesselId}
-            onSelect={(id) => onChange({ ...value, fleetVesselId: id })}
+            onSelect={(id) => {
+              // Carry the picked vessel's catalog + accommodation into the
+              // wizard state so the Fares step pre-fills (seamless handoff).
+              const v = fleet.find((f) => f.id === id);
+              onChange({
+                ...value,
+                fleetVesselId: id,
+                name: v?.name ?? value.name,
+                type: v?.type ?? value.type,
+                vehicleSlots: v ? String(v.vehicleSlots) : value.vehicleSlots,
+                vehicleClasses: v?.vehicleClasses ?? value.vehicleClasses,
+                passengerTypes: v?.passengerTypes ?? value.passengerTypes,
+                accommodations: v?.accommodations ?? value.accommodations,
+              });
+            }}
           />
         </div>
       ) : (
@@ -207,19 +264,24 @@ export default function VesselStep({
 
           {/* Sub-step body */}
           {newSubStep === 1 && (
-            <IdentitySubStep value={value} onChange={onChange} isPassengerOnly={isPassengerOnly} />
+            <IdentitySubStep value={value} onChange={onChange} />
           )}
 
           {newSubStep === 2 && (
             <div className="-mt-1 max-h-[60vh] overflow-y-auto">
               <VesselCatalogStep
                 isPassengerOnly={isPassengerOnly}
+                accommodations={value.accommodations}
+                setAccommodations={setAccommodations}
+                totalPassengers={totalPassengers}
+                vehicleSlots={value.vehicleSlots}
+                setVehicleSlots={(next: string) => onChange({ ...value, vehicleSlots: next })}
                 vehicleClasses={value.vehicleClasses}
                 setVehicleClasses={setVehicleClasses}
                 passengerTypes={value.passengerTypes}
                 setPassengerTypes={setPassengerTypes}
                 addOns={value.addOns}
-                setAddOns={(next: AddOn[]) => onChange({ ...value, addOns: next })}
+                setAddOns={setAddOns}
               />
             </div>
           )}
@@ -231,11 +293,12 @@ export default function VesselStep({
                   name: value.name,
                   type: value.type,
                   imo: value.imoNumber,
-                  passengers: value.passengerCapacity,
                   vehicleSlots: value.vehicleSlots,
                   status: value.status,
                 }}
                 isPassengerOnly={isPassengerOnly}
+                accommodations={value.accommodations}
+                vehicleSlots={value.vehicleSlots}
                 vehicleClasses={value.vehicleClasses}
                 passengerTypes={value.passengerTypes}
                 addOns={value.addOns}
@@ -257,7 +320,7 @@ export default function VesselStep({
             id: "draft",
             name: value.name.trim(),
             type: value.type,
-            passengerCapacity: Number(value.passengerCapacity) || 0,
+            passengerCapacity: totalPassengers,
             vehicleSlots: Number(value.vehicleSlots) || 0,
           }}
           draft
@@ -280,22 +343,18 @@ const TYPE_CARDS: { key: VesselType; label: string; sublabel: string }[] = [
 
 const inputCls =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm tracking-tight text-slate-900 placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-100";
-const inputWrapCls =
-  "flex items-center rounded-lg border border-slate-200 bg-white transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100";
 
+// Add-flow status: a vessel is registered Active or Inactive only.
 const statusChips: { key: VesselStatus; label: string }[] = [
-  { key: "Active",      label: "Active" },
-  { key: "Inactive",    label: "Inactive" },
-  { key: "Maintenance", label: "Maintenance" },
-  { key: "Retired",     label: "Retired" },
+  { key: "Active",   label: "Active" },
+  { key: "Inactive", label: "Inactive" },
 ];
 
 function IdentitySubStep({
-  value, onChange, isPassengerOnly,
+  value, onChange,
 }: {
   value: VesselValue;
   onChange: (next: VesselValue) => void;
-  isPassengerOnly: boolean;
 }) {
   const { locked: lineLocked } = useShippingLine();
 
@@ -362,42 +421,7 @@ function IdentitySubStep({
 
       <div className="h-px bg-slate-100/70" />
 
-      {/* Passenger capacity + Vehicle slots */}
-      <div className={`grid gap-4 ${isPassengerOnly ? "grid-cols-1" : "grid-cols-2"}`}>
-        <Field label="Passenger capacity" required hint="MARINA-certified maximum">
-          <div className={inputWrapCls}>
-            <NumberInput
-              required
-              min={1}
-              value={value.passengerCapacity}
-              onChange={(e) => onChange({ ...value, passengerCapacity: e.target.value })}
-              placeholder="e.g. 420"
-              className="w-full bg-transparent px-3 py-2 text-sm tabular-nums text-slate-900 placeholder:text-slate-400 focus:outline-none"
-            />
-            <span className="pr-3 text-xs text-slate-400">pax</span>
-          </div>
-        </Field>
-
-        {!isPassengerOnly && (
-          <Field label="Vehicle slots" required hint="Total vehicle capacity">
-            <div className={inputWrapCls}>
-              <NumberInput
-                required
-                min={0}
-                value={value.vehicleSlots}
-                onChange={(e) => onChange({ ...value, vehicleSlots: e.target.value })}
-                placeholder="e.g. 80"
-                className="w-full bg-transparent px-3 py-2 text-sm tabular-nums text-slate-900 placeholder:text-slate-400 focus:outline-none"
-              />
-              <span className="pr-3 text-xs text-slate-400">slots</span>
-            </div>
-          </Field>
-        )}
-      </div>
-
-      <div className="h-px bg-slate-100/70" />
-
-      {/* Status chips */}
+      {/* Status chips — Active / Inactive only, like the Add-vessel dialog. */}
       <Field label="Status">
         <div className="flex flex-wrap gap-1">
           {statusChips.map((s) => {

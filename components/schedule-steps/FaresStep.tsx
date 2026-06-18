@@ -36,7 +36,8 @@ export type FaresValue = {
 
 export function initialFaresValue(): FaresValue {
   return {
-    baseFare: "2120",
+    // Empty so it seeds from the chosen vessel's accommodation fare on hydrate.
+    baseFare: "",
     passengerPrices: {},
     vehiclePrices: {},
     addOnPrices: {},
@@ -56,13 +57,22 @@ const PASSENGER_DEFAULT_ENABLED = new Set<string>(["senior", "pwd", "student"]);
  *     start ON in step 4 (so toggling once propagates through).
  *   - Senior Citizen / PWD / Student passenger types start ON regardless. */
 function hydrate(value: FaresValue, vessel: VesselValue): FaresValue {
+  // Seamless handoff: default the base fare from the vessel's chosen
+  // accommodation tier (set in Add Vessel → Capacity & fares). Only seed when
+  // the operator hasn't entered one yet, so manual edits stick.
+  const chosenAccom = (vessel.accommodations ?? []).find((a) => a.enabled);
+  const seededBase =
+    (!value.baseFare || value.baseFare === "0") && chosenAccom?.fare
+      ? String(chosenAccom.fare)
+      : value.baseFare;
+
   const next: FaresValue = {
-    baseFare: value.baseFare,
+    baseFare: seededBase,
     passengerPrices: { ...value.passengerPrices },
     vehiclePrices: { ...value.vehiclePrices },
     addOnPrices: { ...value.addOnPrices },
   };
-  let touched = false;
+  let touched = seededBase !== value.baseFare;
   vessel.passengerTypes.forEach((p) => {
     if (!next.passengerPrices[p.key]) {
       next.passengerPrices[p.key] = {
@@ -81,7 +91,9 @@ function hydrate(value: FaresValue, vessel: VesselValue): FaresValue {
       next.vehiclePrices[c.key] = {
         enabled: c.enabled,
         price: c.defaultPrice != null ? String(c.defaultPrice) : "",
-        includedCompanions: 1,
+        // Pre-fill from the vessel's registered companion-seat default (set in
+        // Add Vessel → vehicle classes). Falls back to 1 for legacy vessels.
+        includedCompanions: c.includedCompanions ?? 1,
       };
       touched = true;
     }

@@ -4,11 +4,11 @@ import { motion, AnimatePresence } from "motion/react";
 import Modal from "./Modal";
 import { useToast } from "./ToastContext";
 import { useShippingLine } from "./ShippingLineContext";
-import VesselFormBody, { passengerOnlyTypes, typeOptions } from "./VesselFormBody";
+import VesselFormBody, { passengerOnlyTypes, typeOptions, statusOptions } from "./VesselFormBody";
 import NumberInput from "./NumberInput";
 import { defaultAddOns } from "./vessel-extras/AddOnsSection";
 import VesselCatalogStep from "./vessel-extras/VesselCatalogStep";
-import type { Vessel, VehicleClass, PassengerType, AddOn } from "@/lib/dashboard-data";
+import type { Vessel, VehicleClass, PassengerType, AddOn, AccommodationClass } from "@/lib/dashboard-data";
 
 type Props = {
   open: boolean;
@@ -16,13 +16,18 @@ type Props = {
   onCreate?: (v: Omit<Vessel, "id">) => void;
 };
 
+// Seed shells only — NO price / capacity / companion values here. Those are
+// owned by the line catalog (Settings → Configurations) and supplied via the
+// dialog's catalog fallback, so a hardcoded default can't shadow the config.
+// (The real catalog also drives which classes render; this is just the
+// fallback list when no catalog has loaded yet.)
 export const defaultVehicleClasses: VehicleClass[] = [
-  { key: "motorcycle",  label: "Motorcycle / Tricycle", descriptor: "≤ 300 kg GVW",   enabled: false, maxWeightKg: 300,   defaultPrice: 300 },
-  { key: "car",         label: "Car / SUV / Van",       descriptor: "≤ 3,500 kg GVW", enabled: false, maxWeightKg: 3500,  defaultPrice: 1500 },
-  { key: "pickup",      label: "Pickup / AUV",          descriptor: "≤ 3,500 kg GVW", enabled: false, maxWeightKg: 3500,  defaultPrice: 1800 },
-  { key: "light_truck", label: "Light Truck / Elf",     descriptor: "3.5 – 7 tons",   enabled: false, maxWeightKg: 7000,  defaultPrice: 3500 },
-  { key: "heavy_truck", label: "Heavy Truck / Trailer", descriptor: "7+ tons",        enabled: false, maxWeightKg: 12000, defaultPrice: 6500 },
-  { key: "bus",         label: "Bus / Minibus",         descriptor: "≤ 12 m length",  enabled: false, maxLengthM: 12,     defaultPrice: 5000 },
+  { key: "motorcycle",  label: "Motorcycle / Tricycle", descriptor: "≤ 300 kg GVW",   enabled: false, maxWeightKg: 300 },
+  { key: "car",         label: "Car / SUV / Van",       descriptor: "≤ 3,500 kg GVW", enabled: false, maxWeightKg: 3500 },
+  { key: "pickup",      label: "Pickup / AUV",          descriptor: "≤ 3,500 kg GVW", enabled: false, maxWeightKg: 3500 },
+  { key: "light_truck", label: "Light Truck / Elf",     descriptor: "3.5 – 7 tons",   enabled: false, maxWeightKg: 7000 },
+  { key: "heavy_truck", label: "Heavy Truck / Trailer", descriptor: "7+ tons",        enabled: false, maxWeightKg: 12000 },
+  { key: "bus",         label: "Bus / Minibus",         descriptor: "≤ 12 m length",  enabled: false, maxLengthM: 12 },
 ];
 
 export const defaultPassengerTypes: PassengerType[] = [
@@ -32,9 +37,23 @@ export const defaultPassengerTypes: PassengerType[] = [
   { key: "infant",  label: "Infant",                        discountPct: 100, requiredDoc: "Birth certificate or PSA copy", isInfant: true },
 ];
 
+// Single-choice: exactly one tier is the vessel's accommodation. Its seat count
+// is the vessel's passenger capacity.
+export const defaultAccommodations: AccommodationClass[] = [
+  { key: "economy",  label: "Economy",  descriptor: "Standard open seating",       enabled: true,  capacity: 0, fare: 0 },
+  { key: "tourist",  label: "Tourist",  descriptor: "Reserved seating, more room", enabled: false, capacity: 0, fare: 0 },
+  { key: "business", label: "Business", descriptor: "Premium cabin",               enabled: false, capacity: 0, fare: 0 },
+];
+
+// A vessel can only be registered as Active or Inactive; Maintenance / Retired
+// are lifecycle states reached later via Edit.
+const ADD_STATUSES = statusOptions.filter(
+  (s) => s.value === "Active" || s.value === "Inactive",
+);
+
 export const STEP_COPY: Record<1 | 2 | 3, string> = {
-  1: "Enter the vessel's basic details and capacity",
-  2: "Set vehicle class limits and define passenger fare categories",
+  1: "Enter the vessel's basic identity details",
+  2: "Set accommodation, capacity, vehicle classes and fares",
   3: "Review the configuration before registering this vessel",
 };
 
@@ -45,18 +64,18 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [reachedReview, setReachedReview] = useState(false);
 
-  // Step 1 — Identity + Capacity + Status
+  // Step 1 — Identity + Status
   const [values, setValues] = useState({
     name: "",
     type: "RoRo" as Vessel["type"],
     imo: "",
-    passengers: "",
-    vehicleSlots: "",
     status: "Active" as Vessel["status"],
     lineId: active.id,
   });
 
-  // Step 2 — Vehicle classes + Passenger types + Add-ons
+  // Step 2 — Accommodation + Capacity + Vehicle classes + Passenger types + Add-ons
+  const [accommodations, setAccommodations] = useState<AccommodationClass[]>(defaultAccommodations);
+  const [vehicleSlots, setVehicleSlots] = useState("");
   const [vehicleClasses, setVehicleClasses] = useState<VehicleClass[]>(defaultVehicleClasses);
   const [passengerTypes, setPassengerTypes] = useState<PassengerType[]>(defaultPassengerTypes);
   const [addOns, setAddOns] = useState<AddOn[]>(defaultAddOns);
@@ -65,10 +84,17 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
 
   const isPassengerOnly = passengerOnlyTypes.includes(values.type);
 
+  // Single-choice accommodation: the one selected tier's seats are the vessel's
+  // passenger capacity.
+  const selectedAccommodation = accommodations.find((a) => a.enabled) ?? null;
+  const totalPassengers = selectedAccommodation?.capacity ?? 0;
+
   const resetAll = () => {
     setStep(1);
     setReachedReview(false);
-    setValues({ name: "", type: "RoRo", imo: "", passengers: "", vehicleSlots: "", status: "Active", lineId: active.id });
+    setValues({ name: "", type: "RoRo", imo: "", status: "Active", lineId: active.id });
+    setAccommodations(defaultAccommodations);
+    setVehicleSlots("");
     setVehicleClasses(defaultVehicleClasses);
     setPassengerTypes(defaultPassengerTypes);
     setAddOns(defaultAddOns);
@@ -80,16 +106,20 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
     onClose();
   };
 
-  const step1Valid =
-    values.name.trim().length > 0 &&
-    values.passengers.length > 0 &&
-    (isPassengerOnly || values.vehicleSlots.length > 0);
+  const step1Valid = values.name.trim().length > 0;
+
+  // Step 2 needs a chosen accommodation tier with seats AND a base fare.
+  // (Vehicle deck capacity is no longer captured here — it lives per vehicle
+  // class as its quantity.)
+  const step2Valid =
+    totalPassengers > 0 && (selectedAccommodation?.fare ?? 0) > 0;
 
   const handleNext = () => {
     if (step === 1) {
       if (!step1Valid) return;
       setStep(2);
     } else if (step === 2) {
+      if (!step2Valid) return;
       setStep(3);
       setTimeout(() => setReachedReview(true), 300);
     }
@@ -118,16 +148,26 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
       setReachedReview(false);
       return;
     }
+    if (!step2Valid) {
+      setStep(2);
+      setReachedReview(false);
+      return;
+    }
 
     setSubmitting(true);
+    // Total vehicle deck capacity is the sum of each enabled class's quantity.
+    const totalVehicleSlots = vehicleClasses
+      .filter((c) => c.enabled)
+      .reduce((sum, c) => sum + (c.capacity ?? 0), 0);
     const v: Omit<Vessel, "id"> = {
       name: values.name.trim(),
       type: values.type,
       imo: values.imo.trim(),
-      passengers: parseInt(values.passengers, 10),
-      vehicleSlots: isPassengerOnly ? null : parseInt(values.vehicleSlots, 10),
+      passengers: totalPassengers,
+      vehicleSlots: isPassengerOnly ? null : totalVehicleSlots,
       status: values.status,
       location: values.status === "Active" ? "At port" : values.status,
+      accommodations: selectedAccommodation ? [selectedAccommodation] : [],
       vehicleClasses: isPassengerOnly ? [] : vehicleClasses.filter(c => c.enabled),
       passengerTypes,
     };
@@ -198,6 +238,7 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
                 <VesselFormBody
                   values={values}
                   onChange={(k, v) => setValues(prev => ({ ...prev, [k]: v }))}
+                  statuses={ADD_STATUSES}
                 />
               </motion.div>
             )}
@@ -211,6 +252,11 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
               >
                 <VesselCatalogStep
                   isPassengerOnly={isPassengerOnly}
+                  accommodations={accommodations}
+                  setAccommodations={setAccommodations}
+                  totalPassengers={totalPassengers}
+                  vehicleSlots={vehicleSlots}
+                  setVehicleSlots={setVehicleSlots}
                   vehicleClasses={vehicleClasses}
                   setVehicleClasses={setVehicleClasses}
                   passengerTypes={passengerTypes}
@@ -231,6 +277,8 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
                 <Step3Review
                   values={values}
                   isPassengerOnly={isPassengerOnly}
+                  accommodations={accommodations}
+                  vehicleSlots={vehicleSlots}
                   vehicleClasses={vehicleClasses}
                   passengerTypes={passengerTypes}
                   addOns={addOns}
@@ -270,7 +318,7 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
               <button
                 type="button"
                 onClick={handleNext}
-                disabled={step === 1 && !step1Valid}
+                disabled={(step === 1 && !step1Valid) || (step === 2 && !step2Valid)}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:bg-brand-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100"
               >
                 {step === 2 ? "Review" : "Next"}
@@ -281,7 +329,7 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
             ) : (
               <button
                 type="submit"
-                disabled={submitting || !step1Valid || !reachedReview}
+                disabled={submitting || !step1Valid || !step2Valid || !reachedReview}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:bg-brand-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100"
               >
                 {submitting && (
@@ -308,8 +356,8 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
 import SharedStepper from "@/components/Stepper";
 
 const VESSEL_STEPS = [
-  { id: "1", label: "Identity & capacity" },
-  { id: "2", label: "Classes & fares" },
+  { id: "1", label: "Identity" },
+  { id: "2", label: "Capacity & fares" },
   { id: "3", label: "Review" },
 ];
 
@@ -766,10 +814,14 @@ function NewPassengerRow({
 /* ─────────────────────────  STEP 3 — REVIEW  ───────────────────────── */
 
 export function Step3Review({
-  values, isPassengerOnly, vehicleClasses, passengerTypes, addOns, onEditStep,
+  values, isPassengerOnly, accommodations, vehicleSlots, vehicleClasses, passengerTypes, addOns, onEditStep,
 }: {
-  values: { name: string; type: Vessel["type"]; imo: string; passengers: string; vehicleSlots: string; status: Vessel["status"] };
+  values: { name: string; type: Vessel["type"]; imo: string; passengers?: string; vehicleSlots?: string; status: Vessel["status"] };
   isPassengerOnly: boolean;
+  /** Accommodation tier breakdown. Optional — supplied by the Add-vessel
+   *  wizard. When omitted (Edit / schedule), only the capacity rows show. */
+  accommodations?: AccommodationClass[];
+  vehicleSlots?: string;
   vehicleClasses: VehicleClass[];
   passengerTypes: PassengerType[];
   /** Optional — only shown when supplied. Standalone AddVesselModal currently
@@ -779,39 +831,76 @@ export function Step3Review({
 }) {
   const typeLabel = typeOptions.find(o => o.value === values.type)?.label ?? values.type;
   const enabledClasses = vehicleClasses.filter(c => c.enabled);
+  const showAccommodation = !!accommodations;
+  // Single chosen tier (Add flow). Its seats are the passenger capacity.
+  const chosenAccommodation = (accommodations ?? []).find(a => a.enabled) ?? null;
+  // Pax: from the chosen accommodation tier (Add) or the legacy field (Edit/schedule).
+  const paxValue = chosenAccommodation
+    ? chosenAccommodation.capacity.toLocaleString()
+    : (values.passengers || "—");
+  // Vehicle deck capacity = sum of enabled classes' quantities. Falls back to
+  // the legacy slots value for Edit/schedule flows that still pass one.
+  const derivedSlots = vehicleClasses
+    .filter((c) => c.enabled)
+    .reduce((sum, c) => sum + (c.capacity ?? 0), 0);
+  const slotsValue = derivedSlots > 0
+    ? String(derivedSlots)
+    : (vehicleSlots !== undefined ? vehicleSlots : (values.vehicleSlots || ""));
 
   return (
     <div className="px-6 py-5 space-y-7">
       {/* Identity */}
-      <ReviewSection title="Identity & capacity" onEdit={() => onEditStep(1)}>
+      <ReviewSection title="Identity" onEdit={() => onEditStep(1)}>
         <ReviewRow label="Vessel name" value={values.name || "—"} prominent />
         <ReviewRow label="Vessel type" value={typeLabel} />
         <ReviewRow label="IMO number" value={<span className="font-mono">{values.imo || "—"}</span>} />
-        <ReviewRow
-          label="Passenger capacity"
-          value={
-            <span>
-              <span className="font-medium tabular-nums">{values.passengers || "—"}</span>
-              <span className="ml-1 text-[11px] text-slate-400">pax</span>
-            </span>
-          }
-        />
-        {!isPassengerOnly && (
-          <ReviewRow
-            label="Vehicle slots"
-            value={
-              <span>
-                <span className="font-medium tabular-nums">{values.vehicleSlots || "—"}</span>
-                <span className="ml-1 text-[11px] text-slate-400">slots</span>
-              </span>
-            }
-          />
-        )}
         <ReviewRow
           label="Status"
           value={<span className="font-medium tracking-tight text-slate-900">{values.status}</span>}
         />
       </ReviewSection>
+
+      {/* Accommodation & vehicle capacity (step 2) */}
+      <ReviewSection title="Accommodation & vehicle capacity" onEdit={() => onEditStep(2)}>
+          {showAccommodation ? (
+            <ReviewRow
+              label="Accommodation"
+              value={
+                chosenAccommodation ? (
+                  <span>
+                    <span className="font-medium tracking-tight text-slate-900">{chosenAccommodation.label}</span>
+                    <span className="ml-2 text-[11px] tabular-nums text-slate-400">
+                      {chosenAccommodation.capacity.toLocaleString()} seats · ₱{chosenAccommodation.fare.toLocaleString()}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-slate-400">— none selected</span>
+                )
+              }
+            />
+          ) : (
+            <ReviewRow
+              label="Passenger capacity"
+              value={
+                <span>
+                  <span className="font-medium tabular-nums">{paxValue}</span>
+                  <span className="ml-1 text-[11px] text-slate-400">pax</span>
+                </span>
+              }
+            />
+          )}
+          {!isPassengerOnly && (
+            <ReviewRow
+              label="Vehicle slots"
+              value={
+                <span>
+                  <span className="font-medium tabular-nums">{slotsValue || "—"}</span>
+                  <span className="ml-1 text-[11px] text-slate-400">slots</span>
+                </span>
+              }
+            />
+          )}
+        </ReviewSection>
 
       {/* Vehicle classes */}
       {!isPassengerOnly && (
@@ -827,7 +916,15 @@ export function Step3Review({
               {enabledClasses.map(cls => (
                 <div key={cls.key} className="flex items-center justify-between gap-3 py-2">
                   <span className="text-[13px] tracking-tight text-slate-900">{cls.label}</span>
-                  <span className="font-mono text-[11px] tabular-nums text-slate-500">{cls.descriptor}</span>
+                  <span className="flex items-center gap-3">
+                    <span className="font-mono text-[11px] tabular-nums text-slate-500">{cls.descriptor}</span>
+                    <span className="text-[12px] tabular-nums text-slate-600">
+                      <span className="font-medium text-slate-900">
+                        {cls.capacity !== undefined ? cls.capacity.toLocaleString() : "—"}
+                      </span>
+                      <span className="ml-1 text-[11px] text-slate-400">max</span>
+                    </span>
+                  </span>
                 </div>
               ))}
             </div>

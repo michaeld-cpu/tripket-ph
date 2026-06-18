@@ -111,12 +111,12 @@ export type LineCatalog = {
 };
 
 export const DEFAULT_VEHICLE_CLASSES: VehicleClass[] = [
-  { key: "motorcycle",  label: "Motorcycle / Tricycle", descriptor: "≤ 300 kg GVW",   enabled: true, maxWeightKg: 300,   capacity: 1, defaultPrice: 300 },
-  { key: "car",         label: "Car / SUV / Van",       descriptor: "≤ 3,500 kg GVW", enabled: true, maxWeightKg: 3500,  capacity: 2, defaultPrice: 1500 },
-  { key: "pickup",      label: "Pickup / AUV",          descriptor: "≤ 3,500 kg GVW", enabled: true, maxWeightKg: 3500,  capacity: 2, defaultPrice: 1800 },
-  { key: "light_truck", label: "Light Truck / Elf",     descriptor: "3.5 – 7 tons",   enabled: true, maxWeightKg: 7000,  capacity: 3, defaultPrice: 3500 },
-  { key: "heavy_truck", label: "Heavy Truck / Trailer", descriptor: "7+ tons",        enabled: true, maxWeightKg: 12000, capacity: 5, defaultPrice: 6500 },
-  { key: "bus",         label: "Bus / Minibus",         descriptor: "≤ 12 m length",  enabled: true, maxLengthM: 12,     capacity: 6, defaultPrice: 5000 },
+  { key: "motorcycle",  label: "Motorcycle / Tricycle", descriptor: "≤ 300 kg GVW",   enabled: true, maxWeightKg: 300,   capacity: 1, defaultPrice: 300,  includedCompanions: 1 },
+  { key: "car",         label: "Car / SUV / Van",       descriptor: "≤ 3,500 kg GVW", enabled: true, maxWeightKg: 3500,  capacity: 2, defaultPrice: 1500, includedCompanions: 1 },
+  { key: "pickup",      label: "Pickup / AUV",          descriptor: "≤ 3,500 kg GVW", enabled: true, maxWeightKg: 3500,  capacity: 2, defaultPrice: 1800, includedCompanions: 1 },
+  { key: "light_truck", label: "Light Truck / Elf",     descriptor: "3.5 – 7 tons",   enabled: true, maxWeightKg: 7000,  capacity: 3, defaultPrice: 3500, includedCompanions: 1 },
+  { key: "heavy_truck", label: "Heavy Truck / Trailer", descriptor: "7+ tons",        enabled: true, maxWeightKg: 12000, capacity: 5, defaultPrice: 6500, includedCompanions: 2 },
+  { key: "bus",         label: "Bus / Minibus",         descriptor: "≤ 12 m length",  enabled: true, maxLengthM: 12,     capacity: 6, defaultPrice: 5000, includedCompanions: 2 },
 ];
 
 export const DEFAULT_PASSENGER_TYPES: PassengerType[] = [
@@ -238,6 +238,22 @@ export function saveAccount(lineId: string, profile: AccountProfile) {
 
 const KEY = (lineId: string) => `tripket.settings.${lineId}`;
 
+// Merge stored catalog rows over their seed defaults by `key`. Stored values
+// win; any field the seed has but the stored row lacks (a newer field) is
+// backfilled from the seed. Rows with no matching seed (custom entries) pass
+// through as-is. Returns the seed list when nothing was stored.
+function mergeCatalogRows<T extends { key: string }>(
+  stored: T[] | undefined,
+  seed: T[],
+): T[] {
+  if (!stored) return seed;
+  const seedByKey = new Map(seed.map((r) => [r.key, r]));
+  return stored.map((row) => {
+    const s = seedByKey.get(row.key);
+    return s ? { ...s, ...row } : row;
+  });
+}
+
 export function loadSettings(lineId: string): LineSettings {
   try {
     const raw = window.localStorage.getItem(KEY(lineId));
@@ -249,9 +265,13 @@ export function loadSettings(lineId: string): LineSettings {
       policy: { ...base.policy, ...(parsed.policy ?? {}) },
       catalog: parsed.catalog
         ? {
-            vehicleClasses: parsed.catalog.vehicleClasses ?? base.catalog.vehicleClasses,
+            // Merge each stored row over its seed default (by key) so fields
+            // added after a catalog was first saved — e.g. includedCompanions —
+            // backfill instead of reading as undefined. Custom rows (no seed
+            // match) pass through unchanged.
+            vehicleClasses: mergeCatalogRows(parsed.catalog.vehicleClasses, base.catalog.vehicleClasses),
             passengerTypes: parsed.catalog.passengerTypes ?? base.catalog.passengerTypes,
-            addOns: parsed.catalog.addOns ?? base.catalog.addOns,
+            addOns: mergeCatalogRows(parsed.catalog.addOns, base.catalog.addOns),
           }
         : base.catalog,
     };

@@ -62,6 +62,10 @@ export type VehicleClass = {
   /** Default fare for this vehicle class, set at vessel registration. The
       Voyages → Fares step pre-fills from this (mirrors AddOn.defaultPrice). */
   defaultPrice?: number;
+  /** Extra companion seats bundled into the vehicle fare (driver always rides
+      free, on top of this). Set at vessel registration; Voyages → Fares
+      pre-fills from it. */
+  includedCompanions?: number;
 };
 
 /** Discount on a fare. Either a flat peso amount or a percentage off. */
@@ -92,6 +96,20 @@ export type AddOn = {
   enabled: boolean;
 };
 
+// Seating accommodation tier a vessel offers (Economy / Tourist / Business).
+// Each enabled tier carries its own seat capacity; the vessel's total passenger
+// capacity is the sum of its enabled tiers.
+export type AccommodationClass = {
+  key: string;
+  label: string;
+  descriptor: string;
+  enabled: boolean;
+  /** Seats in this tier. Summed across enabled tiers → vessel passenger capacity. */
+  capacity: number;
+  /** Base fare (PHP) for this tier. Flows into Voyages → Fares as the default. */
+  fare: number;
+};
+
 export type Vessel = {
   id: string;
   imo: string;
@@ -103,6 +121,8 @@ export type Vessel = {
   location: string;
   vehicleClasses?: VehicleClass[];
   passengerTypes?: PassengerType[];
+  /** Seating tiers offered (Economy/Tourist/Business) with per-tier seat counts. */
+  accommodations?: AccommodationClass[];
 };
 
 export type LineDashboard = {
