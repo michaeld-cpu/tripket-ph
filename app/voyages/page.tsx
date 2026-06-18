@@ -68,12 +68,18 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
   // Resolve vessel display info (name + capacity + type) from either the
   // fleet or the inline-registered values.
   const fromFleet = MOCK_FLEET.find((v) => v.id === vessel.fleetVesselId);
+  // Capacity now lives on the chosen accommodation tier (carried in the wizard
+  // state for both fleet picks and inline-new vessels). Fall back to the mock
+  // fleet's capacity for legacy mock vessels that have no accommodation data.
+  const chosenAccom = vessel.accommodations?.find((a) => a.enabled) ?? null;
   const vesselName =
-    vessel.mode === "fleet" ? fromFleet?.name ?? "Unnamed vessel" : vessel.name.trim() || "New vessel";
+    vessel.mode === "fleet"
+      ? vessel.name.trim() || fromFleet?.name || "Unnamed vessel"
+      : vessel.name.trim() || "New vessel";
   const vesselType: VesselType | null =
-    vessel.mode === "fleet" ? fromFleet?.type ?? null : vessel.type;
+    vessel.mode === "fleet" ? vessel.type ?? fromFleet?.type ?? null : vessel.type;
   const paxCapacity =
-    vessel.mode === "fleet" ? fromFleet?.passengerCapacity ?? 0 : Number(vessel.passengerCapacity) || 0;
+    chosenAccom?.capacity ?? fromFleet?.passengerCapacity ?? (Number(vessel.passengerCapacity) || 0);
 
   const origin = PORTS.find((p) => p.code === routes.originCode);
   const destination = PORTS.find((p) => p.code === routes.destinationCode);

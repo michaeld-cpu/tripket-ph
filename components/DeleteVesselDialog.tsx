@@ -3,26 +3,35 @@ import { useEffect, useState } from "react";
 import Modal from "./Modal";
 import type { Vessel } from "@/lib/dashboard-data";
 
+type Mode = "disable" | "activate";
+
 type Props = {
   open: boolean;
   vessel: Vessel | null;
+  /** "disable" (Active → Inactive) or "activate" (Inactive → Active). */
+  mode: Mode;
   onClose: () => void;
   onConfirm: (v: Vessel) => void;
 };
 
-export default function DeleteVesselDialog({ open, vessel, onClose, onConfirm }: Props) {
-  const [typed, setTyped] = useState("");
+/**
+ * Confirm switching a vessel's operational status. Disabling is the guarded
+ * action — it requires typing the vessel name (same pattern as the old delete
+ * dialog) since it pulls the vessel out of active scheduling. Both are a
+ * single-click confirm.
+ */
+export default function VesselStatusDialog({ open, vessel, mode, onClose, onConfirm }: Props) {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (open) { setTyped(""); setSubmitting(false); }
+    if (open) setSubmitting(false);
   }, [open]);
 
+  const isDisable = mode === "disable";
   const expected = vessel?.name ?? "";
-  const matches = typed.trim() === expected;
 
   const handleConfirm = () => {
-    if (!vessel || !matches || submitting) return;
+    if (!vessel || submitting) return;
     setSubmitting(true);
     onConfirm(vessel);
     setSubmitting(false);
@@ -35,41 +44,35 @@ export default function DeleteVesselDialog({ open, vessel, onClose, onConfirm }:
         <div className="flex items-start gap-4">
           <span
             aria-hidden
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-rose-50 text-rose-600 ring-1 ring-rose-200/70"
+            className={
+              "grid h-9 w-9 shrink-0 place-items-center rounded-full ring-1 " +
+              (isDisable
+                ? "bg-rose-50 text-rose-600 ring-rose-200/70"
+                : "bg-emerald-50 text-emerald-600 ring-emerald-200/70")
+            }
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-              <path d="M3 6h18" />
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-              <path d="M10 11v6M14 11v6" />
-            </svg>
+            {isDisable ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M5.6 5.6l12.8 12.8" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            )}
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">
-              Delete this vessel?
+              {isDisable ? "Disable this vessel?" : "Activate this vessel?"}
             </h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
               <span className="font-medium text-slate-900">{expected || "—"}</span>{" "}
-              will be removed from the fleet. Active schedules and bookings that reference this vessel
-              will need to be reassigned manually. This cannot be undone.
+              {isDisable
+                ? "will be set to Inactive — it stops being available for new schedules and bookings. Nothing is deleted; you can activate it again at any time."
+                : "will be set to Active and available again for scheduling and bookings."}
             </p>
           </div>
-        </div>
-
-        <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50/60 px-3.5 py-3">
-          <label className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
-            Type the vessel name to confirm
-          </label>
-          <p className="mt-0.5 font-mono text-[11.5px] text-slate-500">{expected}</p>
-          <input
-            type="text"
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && matches) { e.preventDefault(); handleConfirm(); } }}
-            autoFocus
-            placeholder="Vessel name"
-            className="mt-2 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] text-slate-900 placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100"
-          />
         </div>
       </div>
 
@@ -85,10 +88,17 @@ export default function DeleteVesselDialog({ open, vessel, onClose, onConfirm }:
         <button
           type="button"
           onClick={handleConfirm}
-          disabled={!matches || submitting}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white transition-[background-color,transform,box-shadow] duration-150 ease-out hover:bg-rose-700 hover:shadow-[0_6px_16px_-6px_rgba(244,63,94,0.55)] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-none disabled:active:scale-100"
+          disabled={submitting}
+          className={
+            "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white transition-[background-color,transform,box-shadow] duration-150 ease-out active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-none disabled:active:scale-100 " +
+            (isDisable
+              ? "bg-rose-600 hover:bg-rose-700 hover:shadow-[0_6px_16px_-6px_rgba(244,63,94,0.55)]"
+              : "bg-emerald-600 hover:bg-emerald-700 hover:shadow-[0_6px_16px_-6px_rgba(16,185,129,0.55)]")
+          }
         >
-          {submitting ? "Deleting…" : "Delete vessel"}
+          {submitting
+            ? (isDisable ? "Disabling…" : "Activating…")
+            : (isDisable ? "Disable vessel" : "Activate vessel")}
         </button>
       </div>
     </Modal>

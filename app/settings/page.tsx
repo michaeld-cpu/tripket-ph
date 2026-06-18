@@ -526,7 +526,7 @@ function VehicleClassesEditor({
   const remove = (key: string) => onChange(value.filter((c) => c.key !== key));
   const add = () => onChange([
     ...value,
-    { key: `custom-${Date.now()}`, label: "", descriptor: "", enabled: true, defaultPrice: 0 },
+    { key: `custom-${Date.now()}`, label: "", descriptor: "", enabled: true, defaultPrice: 0, includedCompanions: 1 },
   ]);
 
   const usedCount = value.filter((c) => c.label.trim()).length;
@@ -540,12 +540,13 @@ function VehicleClassesEditor({
         onAdd={add}
         addLabel="Add class"
       />
-      <div className="grid grid-cols-[1.4fr_1.2fr_96px_80px_96px_36px] items-center gap-2 border-b border-slate-100 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+      <div className="grid grid-cols-[1.4fr_1.2fr_96px_80px_96px_72px_36px] items-center gap-2 border-b border-slate-100 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
         <span className="whitespace-nowrap">Label</span>
         <span className="whitespace-nowrap">Descriptor</span>
         <span className="whitespace-nowrap text-right">Max (kg / m)</span>
-        <span className="whitespace-nowrap text-right">Capacity</span>
+        <span className="whitespace-nowrap text-right">Quantity</span>
         <span className="whitespace-nowrap text-right">Default fare</span>
+        <span className="whitespace-nowrap text-right" title="Extra companion seats bundled into the vehicle fare (driver always rides free)">Companions</span>
         <span />
       </div>
       <div className="divide-y divide-slate-100">
@@ -553,7 +554,7 @@ function VehicleClassesEditor({
           <div className="py-6 text-center text-[11.5px] text-slate-400">No vehicle classes. Add one to make it available to vessels.</div>
         ) : (
           value.map((c) => (
-            <div key={c.key} className="grid grid-cols-[1.4fr_1.2fr_96px_80px_96px_36px] items-center gap-2 py-2">
+            <div key={c.key} className="grid grid-cols-[1.4fr_1.2fr_96px_80px_96px_72px_36px] items-center gap-2 py-2">
               <input
                 type="text"
                 value={c.label}
@@ -592,10 +593,10 @@ function VehicleClassesEditor({
                     update(c.key, { capacity: e.target.value === "" ? undefined : n });
                   }}
                   placeholder="—"
-                  aria-label="Slots consumed"
+                  aria-label="Quantity the vessel can store"
                   className="w-full bg-transparent text-right font-mono text-[12.5px] tabular-nums text-slate-900 placeholder:text-slate-300 focus:outline-none"
                 />
-                <span className="text-[10.5px] font-medium text-slate-400">slots</span>
+                <span className="text-[10.5px] font-medium text-slate-400">qty</span>
               </div>
               <div className="flex items-center rounded-md border border-slate-200 bg-white px-2 py-1.5">
                 <span className="text-[11px] font-medium text-slate-400">₱</span>
@@ -606,6 +607,18 @@ function VehicleClassesEditor({
                   onChange={(e) => update(c.key, { defaultPrice: Number(e.target.value.replace(/\D/g, "")) || 0 })}
                   className="w-full bg-transparent text-right font-mono text-[12.5px] tabular-nums text-slate-900 focus:outline-none"
                 />
+              </div>
+              <div className="flex items-center rounded-md border border-slate-200 bg-white px-2 py-1.5">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={String(c.includedCompanions ?? 1)}
+                  onChange={(e) => update(c.key, { includedCompanions: Number(e.target.value.replace(/\D/g, "")) || 0 })}
+                  placeholder="1"
+                  aria-label="Bundled companion seats"
+                  className="w-full bg-transparent text-right font-mono text-[12.5px] tabular-nums text-slate-900 placeholder:text-slate-300 focus:outline-none"
+                />
+                <span className="text-[10.5px] font-medium text-slate-400">pax</span>
               </div>
               <RemoveButton onClick={() => remove(c.key)} label={`Remove ${c.label || "class"}`} />
             </div>

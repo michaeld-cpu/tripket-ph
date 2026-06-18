@@ -12,7 +12,7 @@ import Select from "@/components/Select";
 import AddVesselModal from "@/components/AddVesselModal";
 import EmptyState from "@/components/EmptyState";
 import EditVesselModal from "@/components/EditVesselModal";
-import DeleteVesselDialog from "@/components/DeleteVesselDialog";
+import VesselStatusDialog from "@/components/DeleteVesselDialog";
 import { useToast } from "@/components/ToastContext";
 import Tooltip from "@/components/Tooltip";
 
@@ -69,7 +69,9 @@ function vesselVoyages(id: string): {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   const routeA = MOCK_ROUTES[h % MOCK_ROUTES.length];
-  const routeB = MOCK_ROUTES[(h >> 4) % MOCK_ROUTES.length];
+  // Use the unsigned shift (>>>) — a signed `>> 4` on a hash ≥ 2³¹ yields a
+  // negative index, and MOCK_ROUTES[-n] is undefined → crash on routeB[0].
+  const routeB = MOCK_ROUTES[(h >>> 4) % MOCK_ROUTES.length];
   const lastDate = new Date(TODAY); lastDate.setDate(TODAY.getDate() - (1 + (h % 6)));
   const nextDate = new Date(TODAY); nextDate.setDate(TODAY.getDate() + ((h >> 8) % 10));
   return {
@@ -116,7 +118,7 @@ export default function VesselsPage() {
   const [statusFilter, setStatusFilter] = useState<"all" | Vessel["status"]>("all");
   const [addOpen, setAddOpen] = useState(false);
   const [editVessel, setEditVessel] = useState<Vessel | null>(null);
-  const [deleteVessel, setDeleteVessel] = useState<Vessel | null>(null);
+  const [statusVessel, setStatusVessel] = useState<Vessel | null>(null);
   const [copiedImo, setCopiedImo] = useState<string | null>(null);
   const router = useRouter();
 
@@ -213,13 +215,18 @@ export default function VesselsPage() {
         onSave={updated => updateVessels(prev => prev.map(v => v.id === updated.id ? updated : v))}
       />
 
-      <DeleteVesselDialog
-        open={deleteVessel !== null}
-        vessel={deleteVessel}
-        onClose={() => setDeleteVessel(null)}
+      <VesselStatusDialog
+        open={statusVessel !== null}
+        vessel={statusVessel}
+        mode={statusVessel?.status === "Active" ? "disable" : "activate"}
+        onClose={() => setStatusVessel(null)}
         onConfirm={(v) => {
-          updateVessels(prev => prev.filter(x => x.id !== v.id));
-          showToast(`${v.name} deleted`, "error");
+          const next: Vessel["status"] = v.status === "Active" ? "Inactive" : "Active";
+          updateVessels(prev => prev.map(x => x.id === v.id ? { ...x, status: next } : x));
+          showToast(
+            next === "Active" ? `${v.name} activated` : `${v.name} disabled`,
+            next === "Active" ? "success" : "error",
+          );
         }}
       />
 
@@ -453,19 +460,27 @@ export default function VesselsPage() {
                                 </svg>
                               ),
                             },
-                            {
-                              label: "Delete vessel",
-                              danger: true,
-                              onClick: () => setDeleteVessel(v),
-                              icon: (
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                  <path d="M3 6h18" />
-                                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                                  <path d="M10 11v6M14 11v6" />
-                                </svg>
-                              ),
-                            },
+                            v.status === "Active"
+                              ? {
+                                  label: "Disable vessel",
+                                  danger: true,
+                                  onClick: () => setStatusVessel(v),
+                                  icon: (
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                      <circle cx="12" cy="12" r="9" />
+                                      <path d="M5.6 5.6l12.8 12.8" />
+                                    </svg>
+                                  ),
+                                }
+                              : {
+                                  label: "Activate vessel",
+                                  onClick: () => setStatusVessel(v),
+                                  icon: (
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                      <path d="M20 6 9 17l-5-5" />
+                                    </svg>
+                                  ),
+                                },
                           ]}
                         />
                       </td>

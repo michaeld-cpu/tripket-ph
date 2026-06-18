@@ -7,11 +7,13 @@ import WizardFooter from "@/components/wizard/WizardFooter";
 import ScheduleStep, { type ScheduleValue, type DayKey } from "@/components/schedule-steps/ScheduleStep";
 import RoutesStep, { type RoutesValue } from "@/components/schedule-steps/RoutesStep";
 import VesselStep, { type VesselValue, MOCK_FLEET } from "@/components/schedule-steps/VesselStep";
-import { defaultVehicleClasses, defaultPassengerTypes } from "@/components/AddVesselModal";
+import { defaultVehicleClasses, defaultPassengerTypes, defaultAccommodations } from "@/components/AddVesselModal";
 import { defaultAddOns } from "@/components/vessel-extras/AddOnsSection";
 import FaresStep, { type FaresValue, initialFaresValue } from "@/components/schedule-steps/FaresStep";
 import ReviewStep from "@/components/schedule-steps/ReviewStep";
 import { useShippingLine } from "@/components/ShippingLineContext";
+import { loadStore, saveStore } from "@/lib/persisted-store";
+import type { Vessel } from "@/lib/dashboard-data";
 
 function initialVesselValue(): VesselValue {
   return {
@@ -28,6 +30,7 @@ function initialVesselValue(): VesselValue {
     vehicleClasses: defaultVehicleClasses,
     passengerTypes: defaultPassengerTypes,
     addOns: defaultAddOns,
+    accommodations: defaultAccommodations,
     newSubStep: 1,
   };
 }
@@ -153,17 +156,20 @@ export default function CreateScheduleModal({
     Number(routes.durationHighHrs) >= Number(routes.durationLowHrs);
 
   const vesselFleetValid = vessel.mode === "fleet" && vessel.fleetVesselId !== "";
+  const isPassengerOnlyVessel =
+    vessel.type === "Fast Craft" || vessel.type === "Passenger Ship";
+  const chosenAccom = vessel.accommodations.find((a) => a.enabled) ?? null;
+  // Sub-step 1 (Identity) only needs a name + type.
   const vesselNewIdentityValid =
-    vessel.mode === "new" &&
-    vessel.name.trim() !== "" &&
-    !!vessel.type &&
-    Number(vessel.passengerCapacity) > 0 &&
-    (vessel.type === "Fast Craft" || vessel.type === "Passenger Ship"
-      ? true
-      : Number(vessel.vehicleSlots) >= 0);
-  // For the embedded "register new" sub-wizard, Continue advances within
-  // the sub-flow until it lands on the review sub-step.
-  const vesselNewValid = vesselNewIdentityValid; // sub-steps 2/3 reuse the same identity gate
+    vessel.mode === "new" && vessel.name.trim() !== "" && !!vessel.type;
+  // Sub-step 2 (Capacity & fares) needs a chosen tier with seats + fare.
+  // Vehicle deck capacity is derived from each class's quantity, not a field.
+  const vesselNewCapacityValid =
+    (chosenAccom?.capacity ?? 0) > 0 && (chosenAccom?.fare ?? 0) > 0;
+  // Gate the embedded sub-wizard per sub-step so Continue can't skip ahead.
+  const subStepForGate: 1 | 2 | 3 = vessel.newSubStep ?? 1;
+  const vesselNewValid =
+    vesselNewIdentityValid && (subStepForGate < 2 || vesselNewCapacityValid);
   const vesselValid = vessel.mode === "fleet" ? vesselFleetValid : vesselNewValid;
 
   // Fares is valid when there's a base fare > 0 and at least one passenger
@@ -195,6 +201,31 @@ export default function CreateScheduleModal({
       return;
     }
     if (isLast) {
+      // Reverse handoff: a vessel registered inline here is saved to the same
+      // per-line store the Vessels page reads, so it shows up there too.
+      if (vessel.mode === "new") {
+        const lineId = vessel.lineId || active.id;
+        const chosen = vessel.accommodations.find((a) => a.enabled) ?? null;
+        // Vehicle deck capacity = sum of each enabled class's quantity.
+        const totalVehicleSlots = vessel.vehicleClasses
+          .filter((c) => c.enabled)
+          .reduce((sum, c) => sum + (c.capacity ?? 0), 0);
+        const newVessel: Vessel = {
+          id: `v${Date.now()}`,
+          imo: vessel.imoNumber.trim(),
+          name: vessel.name.trim(),
+          type: vessel.type,
+          passengers: chosen?.capacity ?? 0,
+          vehicleSlots: isPassengerOnlyVessel ? null : totalVehicleSlots,
+          status: vessel.status === "Inactive" ? "Inactive" : "Active",
+          location: vessel.status === "Active" ? "At port" : vessel.status,
+          accommodations: chosen ? [chosen] : [],
+          vehicleClasses: vessel.vehicleClasses.filter((c) => c.enabled),
+          passengerTypes: vessel.passengerTypes,
+        };
+        const existing = loadStore<Vessel[]>("vessels", lineId) ?? [];
+        saveStore("vessels", lineId, [newVessel, ...existing]);
+      }
       onCreate?.({ schedule, routes, vessel, fares });
       onClose();
       setStepIdx(0); // reset for next mount

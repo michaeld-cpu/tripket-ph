@@ -12,7 +12,7 @@ import {
   type PassengerType,
 } from "@/lib/dashboard-data";
 import EditVesselModal from "@/components/EditVesselModal";
-import DeleteVesselDialog from "@/components/DeleteVesselDialog";
+import VesselStatusDialog from "@/components/DeleteVesselDialog";
 import VoyageCard from "@/components/VoyageCard";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 
@@ -803,13 +803,14 @@ export default function VesselDetailPage() {
         onSave={(updated) => updateVessels((prev) => prev.map((v) => v.id === updated.id ? updated : v))}
       />
 
-      <DeleteVesselDialog
+      <VesselStatusDialog
         open={deleteOpen}
         vessel={vessel}
+        mode={vessel?.status === "Active" ? "disable" : "activate"}
         onClose={() => setDeleteOpen(false)}
         onConfirm={(v) => {
-          updateVessels((prev) => prev.filter((x) => x.id !== v.id));
-          window.location.href = "/vessels";
+          const next: Vessel["status"] = v.status === "Active" ? "Inactive" : "Active";
+          updateVessels((prev) => prev.map((x) => x.id === v.id ? { ...x, status: next } : x));
         }}
       />
     </div>
