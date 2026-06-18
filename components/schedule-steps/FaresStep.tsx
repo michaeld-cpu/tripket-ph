@@ -57,13 +57,17 @@ const PASSENGER_DEFAULT_ENABLED = new Set<string>(["senior", "pwd", "student"]);
  *     start ON in step 4 (so toggling once propagates through).
  *   - Senior Citizen / PWD / Student passenger types start ON regardless. */
 function hydrate(value: FaresValue, vessel: VesselValue): FaresValue {
-  // Seamless handoff: default the base fare from the vessel's chosen
-  // accommodation tier (set in Add Vessel → Capacity & fares). Only seed when
-  // the operator hasn't entered one yet, so manual edits stick.
-  const chosenAccom = (vessel.accommodations ?? []).find((a) => a.enabled);
+  // Seamless handoff: default the base fare from the vessel's accommodation
+  // tiers (set in Add Vessel → Capacity & fares). A vessel can offer several
+  // tiers, so the headline base fare seeds from the cheapest enabled one. Only
+  // seed when the operator hasn't entered a fare yet, so manual edits stick.
+  const fares = (vessel.accommodations ?? [])
+    .filter((a) => a.enabled && a.fare > 0)
+    .map((a) => a.fare);
+  const cheapestFare = fares.length ? Math.min(...fares) : undefined;
   const seededBase =
-    (!value.baseFare || value.baseFare === "0") && chosenAccom?.fare
-      ? String(chosenAccom.fare)
+    (!value.baseFare || value.baseFare === "0") && cheapestFare
+      ? String(cheapestFare)
       : value.baseFare;
 
   const next: FaresValue = {

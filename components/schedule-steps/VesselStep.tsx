@@ -83,14 +83,15 @@ export type FleetVessel = {
 /** Map a stored canonical Vessel into the wizard's lightweight FleetVessel,
  *  carrying its catalog + accommodation fare so the Fares step can pre-fill. */
 function toFleetVessel(v: Vessel): FleetVessel {
-  const chosen = (v.accommodations ?? []).find((a) => a.enabled) ?? (v.accommodations ?? [])[0];
+  // Headline base fare = cheapest enabled accommodation tier.
+  const fares = (v.accommodations ?? []).filter((a) => a.enabled && a.fare > 0).map((a) => a.fare);
   return {
     id: v.id,
     name: v.name,
     type: v.type,
     passengerCapacity: v.passengers,
     vehicleSlots: v.vehicleSlots ?? 0,
-    baseFare: chosen?.fare,
+    baseFare: fares.length ? Math.min(...fares) : undefined,
     vehicleClasses: v.vehicleClasses,
     passengerTypes: v.passengerTypes,
     accommodations: v.accommodations,

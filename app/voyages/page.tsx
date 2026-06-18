@@ -71,7 +71,10 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
   // Capacity now lives on the chosen accommodation tier (carried in the wizard
   // state for both fleet picks and inline-new vessels). Fall back to the mock
   // fleet's capacity for legacy mock vessels that have no accommodation data.
-  const chosenAccom = vessel.accommodations?.find((a) => a.enabled) ?? null;
+  // Passenger capacity = sum of all enabled accommodation tiers' seats.
+  const accomPax = (vessel.accommodations ?? [])
+    .filter((a) => a.enabled)
+    .reduce((sum, a) => sum + (a.capacity || 0), 0);
   const vesselName =
     vessel.mode === "fleet"
       ? vessel.name.trim() || fromFleet?.name || "Unnamed vessel"
@@ -79,7 +82,7 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
   const vesselType: VesselType | null =
     vessel.mode === "fleet" ? vessel.type ?? fromFleet?.type ?? null : vessel.type;
   const paxCapacity =
-    chosenAccom?.capacity ?? fromFleet?.passengerCapacity ?? (Number(vessel.passengerCapacity) || 0);
+    accomPax > 0 ? accomPax : fromFleet?.passengerCapacity ?? (Number(vessel.passengerCapacity) || 0);
 
   const origin = PORTS.find((p) => p.code === routes.originCode);
   const destination = PORTS.find((p) => p.code === routes.destinationCode);
