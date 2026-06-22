@@ -4,7 +4,8 @@ import Modal from "@/components/Modal";
 import Stepper from "@/components/Stepper";
 import WizardHeader from "@/components/wizard/WizardHeader";
 import WizardFooter from "@/components/wizard/WizardFooter";
-import RoutesStep, { type RoutesValue, PORTS, RouteContextCard } from "@/components/schedule-steps/RoutesStep";
+import RoutesStep, { type RoutesValue, PORTS, RouteContextCard, findPort } from "@/components/schedule-steps/RoutesStep";
+import { getCustomPorts } from "@/lib/custom-ports";
 
 /**
  * CreateRouteModal — 2-step dialog for adding a route from the Routes page.
@@ -236,8 +237,9 @@ function EditFooter({
 
 // ─────────── Review pane ───────────
 function RouteReview({ value, onEdit }: { value: RoutesValue; onEdit: () => void }) {
-  const origin = PORTS.find((p) => p.code === value.originCode);
-  const destination = PORTS.find((p) => p.code === value.destinationCode);
+  const allPorts = [...PORTS, ...getCustomPorts()];
+  const origin = findPort(allPorts, value.originCode);
+  const destination = findPort(allPorts, value.destinationCode);
 
   return (
     <div className="space-y-4">

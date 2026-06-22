@@ -280,7 +280,7 @@ export default function CreateScheduleModal({
 
         {/* Step body — step 1 is the real form, the rest are placeholders. */}
         <div
-          className="min-h-[280px] flex-1 overflow-y-auto px-6 py-5"
+          className="min-h-[440px] flex-1 overflow-y-auto px-6 py-5"
           style={{ scrollbarGutter: "stable" }}
         >
           {step.id === "schedule" ? (

@@ -6,9 +6,12 @@ type ModalProps = {
   onClose: () => void;
   children: React.ReactNode;
   maxWidth?: string;
+  /** Stacking layer. Bump for a modal that opens on top of another modal so
+   *  its backdrop fully covers the one beneath. */
+  layer?: "base" | "top";
 };
 
-export default function Modal({ open, onClose, children, maxWidth = "max-w-xl" }: ModalProps) {
+export default function Modal({ open, onClose, children, maxWidth = "max-w-xl", layer = "base" }: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -26,9 +29,9 @@ export default function Modal({ open, onClose, children, maxWidth = "max-w-xl" }
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+    <div className={`fixed inset-0 ${layer === "top" ? "z-[90]" : "z-[80]"} flex items-center justify-center p-4`}>
       <div
-        className="absolute inset-0 animate-backdrop bg-black/30"
+        className={`absolute inset-0 animate-backdrop ${layer === "top" ? "bg-black/40" : "bg-black/30"}`}
         onClick={onClose}
       />
       <div
