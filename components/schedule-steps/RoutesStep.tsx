@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { addCustomPort, useCustomPorts } from "@/lib/custom-ports";
+import AddPortDialog from "@/components/AddPortDialog";
 
 /**
  * Routes step — second stop of the Create-Schedule wizard.
@@ -42,7 +44,34 @@ export type RoutesValue = {
   status?: RouteStatus;
 };
 
-export type Port = { code: string; city: string };
+export type Port = {
+  /** City code (2–4 letters) — SHARED by every port in the same city
+   *  (Cebu is always "CEB"). Not unique; use portId() for identity. */
+  code: string;
+  city: string;
+  /** Specific port / terminal name (e.g. "Cebu Pier 1"). Optional on legacy
+   *  seed ports; required for newly added ones. */
+  name?: string;
+};
+
+/**
+ * Stable unique identity for a port. The city code is shared across a city's
+ * terminals, so identity = code + name. Unnamed (legacy/seed) ports use the
+ * bare code, which keeps already-stored route/voyage references valid.
+ */
+export function portId(p: Port): string {
+  return p.name ? `${p.code}::${p.name}` : p.code;
+}
+
+/** Resolve a portId back to its Port from a catalog. */
+export function findPort(ports: Port[], id: string): Port | null {
+  return ports.find((p) => portId(p) === id) ?? null;
+}
+
+/** The city code embedded in a portId (everything before "::"). */
+export function codeOf(id: string): string {
+  return id.split("::")[0];
+}
 
 // Curated Philippine port catalog — covers every pair that appears in the routes
 // page mock so the auto-fill below has data to draw from. Add more as needed.
@@ -96,15 +125,23 @@ export default function RoutesStep({
    *  can only tweak distance/duration/status. */
   lockPorts?: boolean;
 }) {
-  const origin = PORTS.find((p) => p.code === value.originCode) ?? null;
-  const destination = PORTS.find((p) => p.code === value.destinationCode) ?? null;
-  const sameOriginDest = !!origin && !!destination && origin.code === destination.code;
+  // Built-in catalog plus any operator-added ports (Routes step → Add new port).
+  const customPorts = useCustomPorts();
+  const allPorts = useMemo(() => [...PORTS, ...customPorts], [customPorts]);
+
+  // originCode/destinationCode hold a portId (see portId()). They equal the
+  // bare city code for unnamed ports, so older stored routes still resolve.
+  const origin = findPort(allPorts, value.originCode);
+  const destination = findPort(allPorts, value.destinationCode);
+  const sameOriginDest =
+    !!origin && !!destination && value.originCode === value.destinationCode;
 
   // Auto-fill distance & duration whenever both ports are picked and the user
   // hasn't manually typed values yet. We don't overwrite non-empty fields so
   // operators can override the catalog's defaults per schedule.
   useEffect(() => {
     if (!origin || !destination || sameOriginDest) return;
+    // CROSSINGS keys on city code, shared across a city's terminals.
     const cross = lookupCrossing(origin.code, destination.code);
     if (!cross) return;
     const next = { ...value };
@@ -114,12 +151,12 @@ export default function RoutesStep({
     if (!value.durationHighHrs) { next.durationHighHrs = String(cross.durationHrs[1]); touched = true; }
     if (touched) onChange(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [origin?.code, destination?.code]);
+  }, [value.originCode, value.destinationCode]);
 
-  // Filtered destination list — never offer the origin as a destination option.
+  // Filtered destination list — never offer the chosen origin port itself.
   const destinationOptions = useMemo(
-    () => PORTS.filter((p) => p.code !== value.originCode),
-    [value.originCode],
+    () => allPorts.filter((p) => portId(p) !== value.originCode),
+    [allPorts, value.originCode],
   );
 
   const status: RouteStatus = value.status ?? "Active";
@@ -138,9 +175,10 @@ export default function RoutesStep({
               <PortSelect
                 ariaLabel="Origin port"
                 value={value.originCode}
-                options={PORTS.filter((p) => p.code !== value.destinationCode)}
+                options={allPorts.filter((p) => portId(p) !== value.destinationCode)}
                 placeholder="Select origin"
-                onChange={(code) => onChange({ ...value, originCode: code })}
+                onChange={(id) => onChange({ ...value, originCode: id })}
+                onAddPort={(p) => { addCustomPort(p); onChange({ ...value, originCode: portId(p) }); }}
               />
             </FieldGroup>
 
@@ -155,7 +193,8 @@ export default function RoutesStep({
                 value={value.destinationCode}
                 options={destinationOptions}
                 placeholder="Select destination"
-                onChange={(code) => onChange({ ...value, destinationCode: code })}
+                onChange={(id) => onChange({ ...value, destinationCode: id })}
+                onAddPort={(p) => { addCustomPort(p); onChange({ ...value, destinationCode: portId(p) }); }}
               />
             </FieldGroup>
           </div>
@@ -299,18 +338,39 @@ function PortSelect({
   onChange,
   ariaLabel,
   placeholder,
+  onAddPort,
 }: {
+  /** Selected portId (see portId()). */
   value: string;
   options: Port[];
-  onChange: (code: string) => void;
+  /** Receives the chosen portId. */
+  onChange: (id: string) => void;
   ariaLabel: string;
   placeholder: string;
+  /** Add a brand-new port to the catalog and select it. */
+  onAddPort: (port: Port) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
   const [query, setQuery] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
-  const selected = options.find((p) => p.code === value) ?? null;
+  // Open upward when there isn't enough room below the trigger (e.g. the
+  // picker sits low in a modal). The dropdown is ~300px at full height.
+  const DROPDOWN_H = 300;
+  const openMenu = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      const below = window.innerHeight - rect.bottom;
+      const above = rect.top;
+      setDropUp(below < DROPDOWN_H && above > below);
+    }
+    setOpen((o) => !o);
+  };
+
+  const selected = options.find((p) => portId(p) === value) ?? null;
 
   useEffect(() => {
     if (!open) return;
@@ -329,14 +389,20 @@ function PortSelect({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
-    return options.filter((p) => p.city.toLowerCase().includes(q) || p.code.toLowerCase().includes(q));
+    return options.filter(
+      (p) =>
+        p.city.toLowerCase().includes(q) ||
+        p.code.toLowerCase().includes(q) ||
+        (p.name?.toLowerCase().includes(q) ?? false),
+    );
   }, [query, options]);
 
   return (
     <div ref={wrapRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={openMenu}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
@@ -383,7 +449,7 @@ function PortSelect({
           {selected ? (
             <span className="flex items-baseline gap-2">
               <span className="truncate text-[14px] font-semibold tracking-tight text-slate-900">
-                {selected.city}
+                {selected.name ?? selected.city}
               </span>
               <span className="inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums tracking-[0.08em] text-slate-600 ring-1 ring-slate-200/60">
                 {selected.code}
@@ -417,7 +483,10 @@ function PortSelect({
       {open && (
         <div
           role="listbox"
-          className="absolute left-0 top-full z-40 mt-1.5 w-full overflow-hidden rounded-xl bg-white p-1.5 ring-1 ring-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-8px_rgba(15,23,42,0.18)]"
+          className={
+            "absolute left-0 z-40 w-full overflow-hidden rounded-xl bg-white p-1.5 ring-1 ring-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-8px_rgba(15,23,42,0.18)] " +
+            (dropUp ? "bottom-full mb-1.5" : "top-full mt-1.5")
+          }
           style={{ animation: "row-menu-in 120ms cubic-bezier(0.16, 1, 0.3, 1)" }}
         >
           {/* Search input — reduces friction once the catalog grows. */}
@@ -440,21 +509,23 @@ function PortSelect({
               <div className="px-2 py-3 text-center text-[12px] text-slate-400">No matching ports.</div>
             ) : (
               filtered.map((p) => {
-                const active = p.code === value;
+                const id = portId(p);
+                const active = id === value;
                 return (
                   <button
-                    key={p.code}
+                    key={id}
                     type="button"
                     role="option"
                     aria-selected={active}
-                    onClick={() => { onChange(p.code); setOpen(false); setQuery(""); }}
+                    onClick={() => { onChange(id); setOpen(false); setQuery(""); }}
                     className={
                       "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors " +
                       (active ? "bg-brand-50 text-brand-700" : "text-slate-700 hover:bg-slate-100")
                     }
                   >
                     <span className="font-mono text-[11px] tabular-nums tracking-wider text-slate-400">{p.code}</span>
-                    <span className="font-medium">{p.city}</span>
+                    <span className="font-medium">{p.name ?? p.city}</span>
+                    {p.name && <span className="text-[11px] text-slate-400">{p.city}</span>}
                     {active && (
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="ml-auto h-3.5 w-3.5">
                         <path d="M5 12l5 5L20 7" />
@@ -465,8 +536,28 @@ function PortSelect({
               })
             )}
           </div>
+
+          {/* Sticky footer — opens the structured Add-port dialog. */}
+          <div className="sticky bottom-0 -mx-1.5 -mb-1.5 mt-1 border-t border-slate-100 bg-white px-1.5 pb-1.5 pt-1">
+            <button
+              type="button"
+              onClick={() => { setOpen(false); setAddOpen(true); }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[12.5px] font-medium text-brand-700 transition-colors hover:bg-brand-50"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Add new port
+            </button>
+          </div>
         </div>
       )}
+
+      <AddPortDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onAdd={(port) => { onAddPort(port); }}
+      />
     </div>
   );
 }
@@ -495,8 +586,8 @@ function ConnectorArrow({ active }: { active: boolean }) {
 /** Standalone read-only Route card — used in assign mode where the form
  *  fields are intentionally absent. */
 export function RouteContextCard({ value }: { value: RoutesValue }) {
-  const origin = PORTS.find((p) => p.code === value.originCode);
-  const destination = PORTS.find((p) => p.code === value.destinationCode);
+  const origin = findPort(PORTS, value.originCode);
+  const destination = findPort(PORTS, value.destinationCode);
   if (!origin || !destination) return null;
   return <LockedPortsCard origin={origin} destination={destination} />;
 }

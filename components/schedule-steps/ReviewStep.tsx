@@ -2,10 +2,11 @@
 import { useMemo } from "react";
 import type { ScheduleValue, DayKey } from "@/components/schedule-steps/ScheduleStep";
 import type { RoutesValue, Port } from "@/components/schedule-steps/RoutesStep";
-import { PORTS } from "@/components/schedule-steps/RoutesStep";
+import { PORTS, findPort } from "@/components/schedule-steps/RoutesStep";
 import type { VesselValue, FleetVessel } from "@/components/schedule-steps/VesselStep";
 import type { FaresValue } from "@/components/schedule-steps/FaresStep";
 import { useShippingLine } from "@/components/ShippingLineContext";
+import { useCustomPorts } from "@/lib/custom-ports";
 import VoyageCard from "@/components/VoyageCard";
 
 /**
@@ -49,8 +50,10 @@ export default function ReviewStep({
 }) {
   const { active: activeLine } = useShippingLine();
   // ── Cross-step lookups ──
-  const origin      = useMemo(() => PORTS.find((p) => p.code === routes.originCode) ?? null, [routes.originCode]);
-  const destination = useMemo(() => PORTS.find((p) => p.code === routes.destinationCode) ?? null, [routes.destinationCode]);
+  const customPorts = useCustomPorts();
+  const allPorts = useMemo(() => [...PORTS, ...customPorts], [customPorts]);
+  const origin      = useMemo(() => findPort(allPorts, routes.originCode), [allPorts, routes.originCode]);
+  const destination = useMemo(() => findPort(allPorts, routes.destinationCode), [allPorts, routes.destinationCode]);
   const pickedFleet = useMemo(() => fleet.find((v) => v.id === vessel.fleetVesselId) ?? null, [fleet, vessel.fleetVesselId]);
 
   const vesselName  = vessel.mode === "fleet" ? pickedFleet?.name ?? null : vessel.name.trim() || null;

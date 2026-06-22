@@ -6,7 +6,8 @@ import Select from "@/components/Select";
 import Tooltip from "@/components/Tooltip";
 import CreateScheduleModal from "@/components/CreateScheduleModal";
 import { MOCK_FLEET, type VesselType } from "@/components/schedule-steps/VesselStep";
-import { PORTS } from "@/components/schedule-steps/RoutesStep";
+import { PORTS, findPort, codeOf } from "@/components/schedule-steps/RoutesStep";
+import { getCustomPorts } from "@/lib/custom-ports";
 import Modal from "@/components/Modal";
 import DateRangePicker, { type DateRange } from "@/components/DateRangePicker";
 import { lines as allLines } from "@/lib/shipping-lines";
@@ -84,8 +85,11 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
   const paxCapacity =
     accomPax > 0 ? accomPax : fromFleet?.passengerCapacity ?? (Number(vessel.passengerCapacity) || 0);
 
-  const origin = PORTS.find((p) => p.code === routes.originCode);
-  const destination = PORTS.find((p) => p.code === routes.destinationCode);
+  // Include operator-added ports so a voyage on a custom route shows city names.
+  // routes.originCode/destinationCode hold a portId (code or code::name).
+  const allPorts = [...PORTS, ...getCustomPorts()];
+  const origin = findPort(allPorts, routes.originCode);
+  const destination = findPort(allPorts, routes.destinationCode);
 
   // ── Derive cheapest / priciest passenger fares from the catalog + prices ──
   const base = Number(fares.baseFare) || 0;
@@ -163,10 +167,10 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
     durationHours: avgDuration,
     vesselName,
     vesselType,
-    originCode: origin?.code ?? routes.originCode,
-    destinationCode: destination?.code ?? routes.destinationCode,
-    originCity: origin?.city ?? routes.originCode,
-    destinationCity: destination?.city ?? routes.destinationCode,
+    originCode: origin?.code ?? codeOf(routes.originCode),
+    destinationCode: destination?.code ?? codeOf(routes.destinationCode),
+    originCity: origin?.city ?? codeOf(routes.originCode),
+    destinationCity: destination?.city ?? codeOf(routes.destinationCode),
     paxCapacity,
     lineId: vessel.lineId,
     cheapestFare,

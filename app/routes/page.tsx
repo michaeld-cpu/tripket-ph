@@ -13,7 +13,8 @@ import { loadStore, saveStore } from "@/lib/persisted-store";
 import { reviveRoutes } from "@/lib/routes-data";
 import AssignVesselsEditor from "@/components/AssignVesselsEditor";
 import Modal from "@/components/Modal";
-import { PORTS, type RoutesValue } from "@/components/schedule-steps/RoutesStep";
+import { PORTS, portId, findPort, type RoutesValue } from "@/components/schedule-steps/RoutesStep";
+import { getCustomPorts } from "@/lib/custom-ports";
 
 // ─────────── Route catalog ───────────
 // Each route is a directional origin → destination pair with a nautical-mile distance
@@ -25,8 +26,8 @@ type Route = {
   id: string;
   /** Short human-friendly reference code displayed in the table. */
   ref: string;
-  origin: { code: string; city: string };
-  destination: { code: string; city: string };
+  origin: { code: string; city: string; name?: string };
+  destination: { code: string; city: string; name?: string };
   distanceNm: number;       // nautical miles
   durationHrs: [number, number]; // [low, high]
   status: RouteStatus;
@@ -48,8 +49,8 @@ type VesselAssignment = {
 // Map a table Route into the wizard-shaped RoutesValue the edit dialog expects.
 function routeToValue(r: Route): RoutesValue {
   return {
-    originCode: r.origin.code,
-    destinationCode: r.destination.code,
+    originCode: portId(r.origin),
+    destinationCode: portId(r.destination),
     distanceNm: String(r.distanceNm),
     durationLowHrs: String(r.durationHrs[0]),
     durationHighHrs: String(r.durationHrs[1]),
@@ -504,8 +505,9 @@ export default function RoutesPage() {
         onCreate={(payload) => {
           // Convert the wizard-shaped RoutesValue into the page's Route shape
           // and prepend it so the new entry sits at the top of the table.
-          const origin = PORTS.find((p) => p.code === payload.originCode);
-          const destination = PORTS.find((p) => p.code === payload.destinationCode);
+          const all = [...PORTS, ...getCustomPorts()];
+          const origin = findPort(all, payload.originCode);
+          const destination = findPort(all, payload.destinationCode);
           if (!origin || !destination) return;
           const lo = Number(payload.durationLowHrs) || 0;
           const hi = Number(payload.durationHighHrs) || lo;
@@ -542,8 +544,9 @@ export default function RoutesPage() {
         editValue={editRoute ? routeToValue(editRoute) : null}
         onSave={(payload) => {
           if (!editRoute) return;
-          const origin = PORTS.find((p) => p.code === payload.originCode);
-          const destination = PORTS.find((p) => p.code === payload.destinationCode);
+          const all = [...PORTS, ...getCustomPorts()];
+          const origin = findPort(all, payload.originCode);
+          const destination = findPort(all, payload.destinationCode);
           if (!origin || !destination) return;
           const lo = Number(payload.durationLowHrs) || 0;
           const hi = Number(payload.durationHighHrs) || lo;
