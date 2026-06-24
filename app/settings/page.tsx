@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "motion/react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
@@ -165,7 +166,13 @@ function BookingTab({ lineId }: { lineId: string }) {
 
       {/* Scrollable content column. The save bar is pinned to its bottom. */}
       <div ref={scrollRef} className="relative max-h-[calc(100vh-180px)] min-w-0 flex-1 overflow-y-auto pb-24 pr-1" style={{ scrollbarGutter: "stable" }}>
-        <div className="space-y-5">
+        <motion.div
+          key={activeSection}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+          className="space-y-5"
+        >
           {activeSection === "vehicle-classes" && (
           <section id="vehicle-classes">
             <Card title="Vehicle classes" subtitle="Define the vehicle catalog for this shipping line. Vessels toggle which classes they accept; edits here flow live into every vessel that uses them.">
@@ -281,7 +288,7 @@ function BookingTab({ lineId }: { lineId: string }) {
             </PresetCard>
           </section>
           )}
-        </div>
+        </motion.div>
 
       </div>
 
