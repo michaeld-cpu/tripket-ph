@@ -127,25 +127,11 @@ function BookingTab({ lineId }: { lineId: string }) {
   const onSave = () => { saveSettings(lineId, draft); setSaved(draft); };
   const onDiscard = () => setDraft(saved);
 
-  // Scroll-spy — highlight the section currently in view.
-  useEffect(() => {
-    const root = scrollRef.current;
-    if (!root) return;
-    const els = CONFIG_SECTIONS.map((s) => document.getElementById(s.id)).filter(Boolean) as HTMLElement[];
-    const io = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible[0]) setActiveSection(visible[0].target.id);
-      },
-      { root, rootMargin: "-10% 0px -70% 0px", threshold: 0 }
-    );
-    els.forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, [lineId]);
-
+  // Tab-style navigation — clicking a rail topic swaps the visible panel
+  // (each section renders only when active), reset scroll to top.
   const jumpTo = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
     setActiveSection(id);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
   };
 
   return (
@@ -180,7 +166,8 @@ function BookingTab({ lineId }: { lineId: string }) {
       {/* Scrollable content column. The save bar is pinned to its bottom. */}
       <div ref={scrollRef} className="relative max-h-[calc(100vh-180px)] min-w-0 flex-1 overflow-y-auto pb-24 pr-1" style={{ scrollbarGutter: "stable" }}>
         <div className="space-y-5">
-          <section id="vehicle-classes" className="scroll-mt-4">
+          {activeSection === "vehicle-classes" && (
+          <section id="vehicle-classes">
             <Card title="Vehicle classes" subtitle="Define the vehicle catalog for this shipping line. Vessels toggle which classes they accept; edits here flow live into every vessel that uses them.">
               <VehicleClassesEditor
                 value={draft.catalog.vehicleClasses}
@@ -188,8 +175,10 @@ function BookingTab({ lineId }: { lineId: string }) {
               />
             </Card>
           </section>
+          )}
 
-          <section id="passenger-types" className="scroll-mt-4">
+          {activeSection === "passenger-types" && (
+          <section id="passenger-types">
             <Card title="Passenger types" subtitle="Fare categories with their default discount and required document. These appear when pricing every departure.">
               <PassengerTypesEditor
                 value={draft.catalog.passengerTypes}
@@ -197,8 +186,10 @@ function BookingTab({ lineId }: { lineId: string }) {
               />
             </Card>
           </section>
+          )}
 
-          <section id="add-ons" className="scroll-mt-4">
+          {activeSection === "add-ons" && (
+          <section id="add-ons">
             <Card title="Add-ons" subtitle="Optional extras passengers can buy on top of their base ticket. Vessels toggle which extras they offer; the price comes from here.">
               <AddOnsEditor
                 value={draft.catalog.addOns}
@@ -206,14 +197,18 @@ function BookingTab({ lineId }: { lineId: string }) {
               />
             </Card>
           </section>
+          )}
 
-          <section id="passenger-reqs" className="scroll-mt-4">
+          {activeSection === "passenger-reqs" && (
+          <section id="passenger-reqs">
             <Card title="Passenger requirements" subtitle="Fields collected from passengers during booking. Full name and age are always required.">
               <RequirementGrid items={PASSENGER_REQUIREMENTS} state={draft.requirements} onToggle={toggleReq} />
             </Card>
           </section>
+          )}
 
-          <section id="vehicle-reqs" className="scroll-mt-4">
+          {activeSection === "vehicle-reqs" && (
+          <section id="vehicle-reqs">
             <Card title="Vehicle requirements" subtitle="Fields and documents required when a passenger boards with a vehicle (RoRo).">
               <Eyebrow>Required details</Eyebrow>
               <RequirementGrid items={VEHICLE_DETAIL_REQUIREMENTS} state={draft.requirements} onToggle={toggleReq} />
@@ -223,8 +218,10 @@ function BookingTab({ lineId }: { lineId: string }) {
               </div>
             </Card>
           </section>
+          )}
 
-          <section id="booking-policy" className="scroll-mt-4">
+          {activeSection === "booking-policy" && (
+          <section id="booking-policy">
             <Card title="Booking policy" subtitle="Rules that govern how bookings are accepted, paid for, and cancelled on this line.">
               <PolicySection title="Cutoff & cancellation">
                 <PolicyNumber label="Booking cutoff" hint="Booking closes this long before departure" value={draft.policy.bookingCutoffHours} onChange={(v) => setPolicy("bookingCutoffHours", v)} suffix="hours" />
@@ -253,30 +250,37 @@ function BookingTab({ lineId }: { lineId: string }) {
               </PolicySection>
             </Card>
           </section>
+          )}
 
-          <section id="booking-window" className="scroll-mt-4">
+          {activeSection === "booking-window" && (
+          <section id="booking-window">
             <PresetCard title="Booking window" subtitle="Control when bookings open and close relative to the departure time.">
               <PolicySelect label="Booking opens" value={draft.policy.bookingOpens} options={POLICY_OPTIONS.bookingOpens} onChange={(v) => setPolicy("bookingOpens", v)} />
               <PolicySelect label="Booking closes" value={draft.policy.bookingCloses} options={POLICY_OPTIONS.bookingCloses} onChange={(v) => setPolicy("bookingCloses", v)} />
               <PolicySelect label="Overbooking allowance" value={draft.policy.overbookingMode} options={POLICY_OPTIONS.overbookingMode} onChange={(v) => setPolicy("overbookingMode", v)} full />
             </PresetCard>
           </section>
+          )}
 
-          <section id="cancellation" className="scroll-mt-4">
+          {activeSection === "cancellation" && (
+          <section id="cancellation">
             <PresetCard title="Cancellation & refunds" subtitle="Define the default refund rules passengers see when booking.">
               <PolicySelect label="Cancellation policy" value={draft.policy.cancellationPolicy} options={POLICY_OPTIONS.cancellationPolicy} onChange={(v) => setPolicy("cancellationPolicy", v)} full />
               <PolicySelect label="Reschedule allowed" value={draft.policy.rescheduleAllowed} options={POLICY_OPTIONS.rescheduleAllowed} onChange={(v) => setPolicy("rescheduleAllowed", v)} />
               <PolicySelect label="Rescheduling fee" value={draft.policy.reschedulingFee} options={POLICY_OPTIONS.reschedulingFee} onChange={(v) => setPolicy("reschedulingFee", v)} />
             </PresetCard>
           </section>
+          )}
 
-          <section id="passenger-rules" className="scroll-mt-4">
+          {activeSection === "passenger-rules" && (
+          <section id="passenger-rules">
             <PresetCard title="Passenger rules" subtitle="Age and group restrictions applied at checkout.">
               <PolicySelect label="Minimum age (unaccompanied)" value={draft.policy.minUnaccompaniedAge} options={POLICY_OPTIONS.minUnaccompaniedAge} onChange={(v) => setPolicy("minUnaccompaniedAge", v)} />
               <PolicySelect label="Infant age threshold" value={draft.policy.infantAgeThreshold} options={POLICY_OPTIONS.infantAgeThreshold} onChange={(v) => setPolicy("infantAgeThreshold", v)} />
               <PolicySelect label="ID verification" value={draft.policy.idVerification} options={POLICY_OPTIONS.idVerification} onChange={(v) => setPolicy("idVerification", v)} full />
             </PresetCard>
           </section>
+          )}
         </div>
 
       </div>
