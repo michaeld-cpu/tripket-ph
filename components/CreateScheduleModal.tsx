@@ -61,21 +61,6 @@ function initialScheduleValue(seed?: { date?: Date; hour?: number }): ScheduleVa
   return { dayTimes: {} };
 }
 
-/**
- * CreateScheduleModal — five-step wizard for spinning up a new schedule.
- *
- * Steps:
- *   1. Schedule  – when it runs (dates, recurrence)
- *   2. Routes    – which origin/destination pair it serves
- *   3. Vessel    – which ship to assign
- *   4. Fares     – pricing by passenger type and vehicle class
- *   5. Review    – summary + confirm
- *
- * Uses the shared wizard chrome:
- *  - <WizardHeader> for the icon tile + title + step caption + close button
- *  - <Stepper>      for the active/done/upcoming circles
- *  - <WizardFooter> for Cancel · Back · Continue buttons
- */
 type StepId = "schedule" | "routes" | "vessel" | "fares" | "review";
 
 const STEPS: { id: StepId; label: string; description: string }[] = [
@@ -102,17 +87,24 @@ export default function CreateScheduleModal({
   open,
   onClose,
   onCreate,
+  onSave,
   prefill,
+  editValue,
 }: {
   open: boolean;
   onClose: () => void;
   onCreate?: (payload: CreatedSchedule) => void;
+  /** Called instead of onCreate when editing an existing schedule series. */
+  onSave?: (payload: CreatedSchedule) => void;
   /** Seed the Schedule step with a specific date/hour when an operator clicks
    *  an empty calendar slot. Weekly recurrence still works — the clicked day
    *  becomes the start date, the operator can pick the runs-on weekdays. */
   prefill?: { date: Date; hour: number };
+  /** When set, the wizard opens in EDIT mode pre-filled with this payload. */
+  editValue?: CreatedSchedule | null;
 }) {
   const { active } = useShippingLine();
+  const isEdit = !!editValue;
   const [stepIdx, setStepIdx] = useState(0);
   const [schedule, setSchedule] = useState<ScheduleValue>(initialScheduleValue);
   const [routes, setRoutes] = useState<RoutesValue>(initialRoutesValue);
@@ -121,14 +113,20 @@ export default function CreateScheduleModal({
   const step = STEPS[stepIdx];
   const isLast = stepIdx === STEPS.length - 1;
 
-  // Reset every time the modal opens. If a prefill came in (slot click), seed
-  // the Schedule step with its date/hour; otherwise use the default of today
-  // at 04:00. Stringify the prefill so a new object identity isn't required
-  // for the effect to re-seed.
+  // Reset every time the modal opens. In edit mode, hydrate from editValue;
+  // otherwise start fresh (optionally seeded by a clicked calendar slot).
   const prefillKey = prefill ? `${prefill.date.toISOString()}|${prefill.hour}` : "";
+  const editKey = editValue ? JSON.stringify(editValue) : "";
   useEffect(() => {
     if (!open) return;
     setStepIdx(0);
+    if (editValue) {
+      setSchedule(editValue.schedule);
+      setRoutes(editValue.routes);
+      setVessel(editValue.vessel);
+      setFares(editValue.fares);
+      return;
+    }
     setSchedule(initialScheduleValue(prefill));
     setRoutes(initialRoutesValue());
     // Stamp the active shipping line so created voyages are owned by it and
@@ -136,7 +134,7 @@ export default function CreateScheduleModal({
     setVessel({ ...initialVesselValue(), lineId: active.id });
     setFares(initialFaresValue());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, prefillKey]);
+  }, [open, prefillKey, editKey]);
 
 
   // ── Per-step validity gates ──
@@ -173,13 +171,9 @@ export default function CreateScheduleModal({
     vesselNewIdentityValid && (subStepForGate < 2 || vesselNewCapacityValid);
   const vesselValid = vessel.mode === "fleet" ? vesselFleetValid : vesselNewValid;
 
-  // Fares is valid when there's a base fare > 0 and at least one passenger
-  // type enabled with a price set (or auto-computed from the base).
+ 
   const faresValid = Number(fares.baseFare) > 0;
 
-  // Review's "Create schedule" only fires when every prior step passes.
-  // Otherwise the Stepper lets users jump to Review out of order and
-  // submit a half-built schedule.
   const everyPriorValid = scheduleValid && routesValid && vesselValid && faresValid;
   const stepValid: Record<StepId, boolean> = {
     schedule: scheduleValid,
@@ -190,10 +184,6 @@ export default function CreateScheduleModal({
   };
   const continueDisabled = !stepValid[step.id];
 
-  // When the operator is registering a new vessel inline (step 3, mode === "new"),
-  // intercept the outer wizard's Continue/Back to first walk through the embedded
-  // sub-wizard (Identity → Classes & fares → Review). Only after sub-step 3 does
-  // Continue advance to the outer step 4.
   const inNewVesselFlow = step.id === "vessel" && vessel.mode === "new";
   const subStep: 1 | 2 | 3 = vessel.newSubStep ?? 1;
   const goNext = () => {
@@ -202,8 +192,6 @@ export default function CreateScheduleModal({
       return;
     }
     if (isLast) {
-      // Reverse handoff: a vessel registered inline here is saved to the same
-      // per-line store the Vessels page reads, so it shows up there too.
       if (vessel.mode === "new") {
         const lineId = vessel.lineId || active.id;
         const tiers = vessel.accommodations.filter((a) => a.enabled);
@@ -229,7 +217,9 @@ export default function CreateScheduleModal({
         const existing = loadStore<Vessel[]>("vessels", lineId) ?? [];
         saveStore("vessels", lineId, [newVessel, ...existing]);
       }
-      onCreate?.({ schedule, routes, vessel, fares });
+      const payload = { schedule, routes, vessel, fares };
+      if (isEdit) onSave?.(payload);
+      else onCreate?.(payload);
       onClose();
       setStepIdx(0); // reset for next mount
       return;
@@ -248,7 +238,7 @@ export default function CreateScheduleModal({
     <Modal open={open} onClose={onClose} maxWidth="max-w-3xl">
       <div className="flex max-h-[90vh] flex-col">
         <WizardHeader
-          title="Create schedule"
+          title={isEdit ? "Edit schedule" : "Create schedule"}
           caption={step.description}
           onClose={onClose}
           icon={
@@ -290,7 +280,7 @@ export default function CreateScheduleModal({
           ) : step.id === "vessel" ? (
             <VesselStep value={vessel} onChange={setVessel} />
           ) : step.id === "fares" ? (
-            <FaresStep value={fares} onChange={setFares} vessel={vessel} />
+            <FaresStep value={fares} onChange={setFares} vessel={vessel} routes={routes} onRoutesChange={setRoutes} />
           ) : (
             <ReviewStep
               schedule={schedule}
@@ -310,7 +300,7 @@ export default function CreateScheduleModal({
           onBack={goBack}
           onContinue={goNext}
           isLast={isLast}
-          continueLabel={isLast ? "Create schedule" : "Continue"}
+          continueLabel={isLast ? (isEdit ? "Save changes" : "Create schedule") : "Continue"}
           continueDisabled={continueDisabled}
         />
       </div>

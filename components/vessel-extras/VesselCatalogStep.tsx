@@ -92,9 +92,10 @@ export default function VesselCatalogStep(props: Props) {
   const addOnPrice = (key: string, cat?: AddOn) =>
     props.addOns.find((a) => a.key === key)?.defaultPrice ?? cat?.defaultPrice;
   const paxOn = (key: string) => {
-    const row = props.passengerTypes.find((p) => p.key === key) as PassengerType | undefined;
+    const row = props.passengerTypes.find((p) => p.key === key);
     if (!row) return true;
-    return !(row as unknown as { _excluded?: boolean })._excluded;
+    // is_active defaults to true (legacy rows / not yet toggled).
+    return row.is_active !== false;
   };
 
   const writeClass = (c: VehicleClass, on: boolean) => {
@@ -134,10 +135,7 @@ export default function VesselCatalogStep(props: Props) {
   };
   const writePax = (p: PassengerType, on: boolean) => {
     const others = props.passengerTypes.filter((x) => x.key !== p.key);
-    const row = { ...p } as PassengerType & { _excluded?: boolean };
-    if (on) delete (row as { _excluded?: boolean })._excluded;
-    else (row as { _excluded?: boolean })._excluded = true;
-    props.setPassengerTypes([...others, row]);
+    props.setPassengerTypes([...others, { ...p, is_active: on }]);
   };
 
   const enabledClasses = catalog.vehicleClasses.filter((c) => classOn(c.key)).length;

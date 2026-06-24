@@ -5,6 +5,7 @@ import Stepper from "@/components/Stepper";
 import WizardHeader from "@/components/wizard/WizardHeader";
 import WizardFooter from "@/components/wizard/WizardFooter";
 import RoutesStep, { type RoutesValue, PORTS, RouteContextCard, findPort } from "@/components/schedule-steps/RoutesStep";
+import NumberInput from "@/components/NumberInput";
 import { getCustomPorts } from "@/lib/custom-ports";
 
 /**
@@ -133,8 +134,6 @@ export default function CreateRouteModal({
           }
         />
 
-        {/* Stepper — only in create mode. Editing is a single form, so the
-            two-pip wizard chrome would be noise. */}
         {!isEdit && (
           <div className="border-b border-slate-100 px-6 py-4">
             <Stepper
@@ -165,6 +164,7 @@ export default function CreateRouteModal({
               ) : (
                 <>
                   <RoutesStep value={value} onChange={setValue} hideReturnToggle showStatus lockPorts />
+                  <ServiceFeeEditor value={value} onChange={setValue} />
                   {editExtra}
                 </>
               )}
@@ -292,8 +292,8 @@ function RouteReview({ value, onEdit }: { value: RoutesValue; onEdit: () => void
           </button>
         </div>
         <dl className="divide-y divide-slate-100 px-4 pb-3.5">
-          <Row label="Origin" value={origin ? `${origin.city} (${origin.code})` : "—"} />
-          <Row label="Destination" value={destination ? `${destination.city} (${destination.code})` : "—"} />
+          <Row label="Origin" value={origin ? (origin.name ?? origin.city) : "—"} />
+          <Row label="Destination" value={destination ? (destination.name ?? destination.city) : "—"} />
           <Row
             label="Distance"
             value={
@@ -306,12 +306,12 @@ function RouteReview({ value, onEdit }: { value: RoutesValue; onEdit: () => void
           <Row
             label="Crossing"
             value={
-              value.durationLowHrs && value.durationHighHrs ? (
+              value.durationLowHrs ? (
                 <span>
                   <span className="font-mono font-semibold tabular-nums text-slate-900">
-                    {value.durationLowHrs}–{value.durationHighHrs}
+                    {value.durationLowHrs}
                   </span>
-                  <span className="ml-1 text-[10.5px] text-slate-400">hrs</span>
+                  <span className="ml-1 text-[10.5px] text-slate-400">hrs avg</span>
                 </span>
               ) : (
                 <span className="text-slate-400">—</span>
@@ -333,19 +333,6 @@ function RouteReview({ value, onEdit }: { value: RoutesValue; onEdit: () => void
           />
         </dl>
       </div>
-
-      {/* Footer note */}
-      <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 text-emerald-600">
-          <path d="M5 12l5 5L20 7" />
-        </svg>
-        <span className="text-[12.5px] tracking-tight text-slate-700">
-          <span className="font-semibold text-slate-900">Ready to create.</span>{" "}
-          <span className="text-slate-500">
-            {value.createReturn ? "1 route + return leg" : "1 route"} will be added to your catalog.
-          </span>
-        </span>
-      </div>
     </div>
   );
 }
@@ -355,6 +342,39 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
     <div className="flex items-baseline justify-between gap-4 py-2 first:pt-0 last:pb-0">
       <dt className="shrink-0 text-[12px] text-slate-500">{label}</dt>
       <dd className="min-w-0 flex-1 text-right text-[12.5px] font-medium tracking-tight text-slate-900">{value}</dd>
+    </div>
+  );
+}
+
+// ─────────── Service fee editor (Edit route only) ───────────
+// Flat per-leg fee added on top of fares for this route.
+function ServiceFeeEditor({
+  value,
+  onChange,
+}: {
+  value: RoutesValue;
+  onChange: (next: RoutesValue) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-2">
+        <div className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+          Service fee
+        </div>
+        <p className="mt-1 text-[11.5px] text-slate-500">
+          A flat fee for this route, added on top of every fare on this leg.
+        </p>
+      </div>
+      <div className="flex w-[160px] items-center rounded-lg border border-slate-200 bg-white transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100">
+        <span className="pl-3 text-[11px] text-slate-400">₱</span>
+        <NumberInput
+          min={0}
+          value={value.serviceFee ?? ""}
+          onChange={(e) => onChange({ ...value, serviceFee: e.target.value.replace(/[^\d]/g, "") })}
+          placeholder="0"
+          className="w-full bg-transparent px-2 py-2 text-right text-[13px] tabular-nums text-slate-900 placeholder:text-slate-400 focus:outline-none"
+        />
+      </div>
     </div>
   );
 }

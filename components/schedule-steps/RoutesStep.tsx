@@ -16,7 +16,7 @@ import AddPortDialog from "@/components/AddPortDialog";
  *   │ ── Origin → Destination preview pill ──────────────────────   │
  *   │                                                               │
  *   │ Distance (nm)       [   42        ]   ← auto-filled, editable │
- *   │ Avg duration        [ 3.5 – 4 hrs ]   ← auto-filled, editable │
+ *   │ Avg duration        [ 3.75 hrs ]      ← auto-filled, editable │
  *   │                                                               │
  *   │ ⟲  Create return route        [ toggle ]                      │
  *   │     Adds the opposite leg as a separate record                │
@@ -33,6 +33,22 @@ import AddPortDialog from "@/components/AddPortDialog";
 
 export type RouteStatus = "Active" | "Inactive";
 
+/** Accommodation tier offered on a route, with its fare. Seats/capacity are
+ *  NOT here — those belong to the vessel/schedule. This is route-level pricing
+ *  per seating tier only. */
+export type RouteAccommodationFare = {
+  key: string;
+  label: string;
+  enabled: boolean;
+  fare: string; // kept as string for controlled inputs
+};
+
+export const DEFAULT_ROUTE_ACCOMMODATION_FARES: RouteAccommodationFare[] = [
+  { key: "economy",  label: "Economy",  enabled: true,  fare: "" },
+  { key: "tourist",  label: "Tourist",  enabled: false, fare: "" },
+  { key: "business", label: "Business", enabled: false, fare: "" },
+];
+
 export type RoutesValue = {
   originCode: string;
   destinationCode: string;
@@ -42,6 +58,11 @@ export type RoutesValue = {
   createReturn: boolean;
   /** Operational status. Only surfaced/edited in edit mode; new routes start Active. */
   status?: RouteStatus;
+  /** Per-accommodation-tier fares offered on this route (tiers + fare only). */
+  accommodationFares?: RouteAccommodationFare[];
+  /** Flat service fee (₱) for this leg/route, added on top of the fare. Set in
+   *  the Fares step; shown as its own line in fare breakdowns. */
+  serviceFee?: string;
 };
 
 export type Port = {
@@ -147,8 +168,14 @@ export default function RoutesStep({
     const next = { ...value };
     let touched = false;
     if (!value.distanceNm) { next.distanceNm = String(cross.distanceNm); touched = true; }
-    if (!value.durationLowHrs)  { next.durationLowHrs  = String(cross.durationHrs[0]); touched = true; }
-    if (!value.durationHighHrs) { next.durationHighHrs = String(cross.durationHrs[1]); touched = true; }
+    // Single average duration — midpoint of the catalog's [low, high] range,
+    // written to both fields (the range UI was collapsed to one input).
+    if (!value.durationLowHrs) {
+      const avg = (cross.durationHrs[0] + cross.durationHrs[1]) / 2;
+      next.durationLowHrs = String(avg);
+      next.durationHighHrs = String(avg);
+      touched = true;
+    }
     if (touched) onChange(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value.originCode, value.destinationCode]);
@@ -228,21 +255,14 @@ export default function RoutesStep({
           />
         </FieldGroup>
         <FieldGroup label="Average duration" suffix="hours">
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-            <NumberInput
-              value={value.durationLowHrs}
-              onChange={(v) => onChange({ ...value, durationLowHrs: v })}
-              placeholder="3.5"
-              ariaLabel="Minimum duration"
-            />
-            <span className="text-[12px] text-slate-400">to</span>
-            <NumberInput
-              value={value.durationHighHrs}
-              onChange={(v) => onChange({ ...value, durationHighHrs: v })}
-              placeholder="4"
-              ariaLabel="Maximum duration"
-            />
-          </div>
+          <NumberInput
+            // Single average value. Stored to both low/high so downstream
+            // averaging and validation keep working without a range UI.
+            value={value.durationLowHrs}
+            onChange={(v) => onChange({ ...value, durationLowHrs: v, durationHighHrs: v })}
+            placeholder="3.5"
+            ariaLabel="Average duration"
+          />
         </FieldGroup>
       </div>
 
@@ -447,19 +467,14 @@ function PortSelect({
             booking flows display picked airports. */}
         <span className="flex-1 min-w-0">
           {selected ? (
-            <span className="flex items-baseline gap-2">
-              <span className="truncate text-[14px] font-semibold tracking-tight text-slate-900">
-                {selected.name ?? selected.city}
-              </span>
-              <span className="inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums tracking-[0.08em] text-slate-600 ring-1 ring-slate-200/60">
-                {selected.code}
-              </span>
+            <span className="block truncate text-[14px] font-semibold tracking-tight text-slate-900">
+              {selected.name ?? selected.city}
             </span>
           ) : (
             <span className="block truncate text-[14px] font-medium tracking-tight text-slate-400">{placeholder}</span>
           )}
           <span className="mt-0.5 block truncate text-[11.5px] text-slate-400">
-            {selected ? "Tap to change" : "Search by city or code"}
+            {selected ? (selected.name ? selected.city : "Tap to change") : "Search by city"}
           </span>
         </span>
 
@@ -523,7 +538,6 @@ function PortSelect({
                       (active ? "bg-brand-50 text-brand-700" : "text-slate-700 hover:bg-slate-100")
                     }
                   >
-                    <span className="font-mono text-[11px] tabular-nums tracking-wider text-slate-400">{p.code}</span>
                     <span className="font-medium">{p.name ?? p.city}</span>
                     {p.name && <span className="text-[11px] text-slate-400">{p.city}</span>}
                     {active && (
@@ -600,17 +614,13 @@ function LockedPortsCard({ origin, destination }: { origin: Port; destination: P
       </div>
       <div className="flex items-center justify-between gap-4 px-5 py-5">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[18px] font-semibold tracking-tight text-slate-900">{origin.city}</div>
-          <span className="mt-1 inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold tabular-nums tracking-[0.08em] text-slate-600 ring-1 ring-slate-200/60">
-            {origin.code}
-          </span>
+          <div className="truncate text-[18px] font-semibold tracking-tight text-slate-900">{origin.name ?? origin.city}</div>
+          {origin.name && <div className="mt-1 truncate text-[11.5px] text-slate-400">{origin.city}</div>}
         </div>
         <span aria-hidden className="shrink-0 text-[18px] font-medium text-slate-300">→</span>
         <div className="min-w-0 flex-1 text-right">
-          <div className="truncate text-[18px] font-semibold tracking-tight text-slate-900">{destination.city}</div>
-          <span className="mt-1 inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold tabular-nums tracking-[0.08em] text-slate-600 ring-1 ring-slate-200/60">
-            {destination.code}
-          </span>
+          <div className="truncate text-[18px] font-semibold tracking-tight text-slate-900">{destination.name ?? destination.city}</div>
+          {destination.name && <div className="mt-1 truncate text-[11.5px] text-slate-400">{destination.city}</div>}
         </div>
       </div>
     </div>
@@ -627,9 +637,9 @@ function RoutePreview({ origin, destination }: { origin: Port; destination: Port
       <span className="text-[12.5px] tracking-tight text-slate-700">
         <span className="font-semibold text-slate-900">Route set.</span>{" "}
         <span className="text-slate-500">
-          {origin.city} <span className="font-mono text-[10.5px] tabular-nums text-slate-400">({origin.code})</span>
+          {origin.name ?? origin.city}
           {" → "}
-          {destination.city} <span className="font-mono text-[10.5px] tabular-nums text-slate-400">({destination.code})</span>
+          {destination.name ?? destination.city}
         </span>
       </span>
     </div>

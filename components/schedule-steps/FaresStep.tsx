@@ -16,6 +16,7 @@
  */
 
 import type { VesselValue } from "@/components/schedule-steps/VesselStep";
+import type { RoutesValue } from "@/components/schedule-steps/RoutesStep";
 import type { VehicleClass, PassengerType, AddOn } from "@/lib/dashboard-data";
 
 export type FareRow = { enabled: boolean; price: string };
@@ -24,8 +25,12 @@ export type FareRow = { enabled: boolean; price: string };
  *  comped seats ride free under the same fee (commonly 0-2). */
 export type VehicleFareRow = FareRow & { includedCompanions: number };
 export type FaresValue = {
-  /** Headline Economy / base passenger fare. */
+  /** Headline base fare — the cheapest enabled accommodation tier. Drives the
+   *  discounted passenger-price math. */
   baseFare: string;
+  /** Per-accommodation-tier fares, keyed by AccommodationClass.key. The vessel
+   *  may offer several tiers (Economy/Tourist/Business); each gets a fare. */
+  accommodationPrices: Record<string, string>;
   /** Keyed by PassengerType.key — the vessel-defined catalog. */
   passengerPrices: Record<string, FareRow>;
   /** Keyed by VehicleClass.key. */
@@ -36,8 +41,9 @@ export type FaresValue = {
 
 export function initialFaresValue(): FaresValue {
   return {
-    // Empty so it seeds from the chosen vessel's accommodation fare on hydrate.
+    // Empty so it seeds from the chosen vessel's accommodation fares on hydrate.
     baseFare: "",
+    accommodationPrices: {},
     passengerPrices: {},
     vehiclePrices: {},
     addOnPrices: {},
@@ -57,13 +63,22 @@ const PASSENGER_DEFAULT_ENABLED = new Set<string>(["senior", "pwd", "student"]);
  *     start ON in step 4 (so toggling once propagates through).
  *   - Senior Citizen / PWD / Student passenger types start ON regardless. */
 function hydrate(value: FaresValue, vessel: VesselValue): FaresValue {
-  // Seamless handoff: default the base fare from the vessel's accommodation
-  // tiers (set in Add Vessel → Capacity & fares). A vessel can offer several
-  // tiers, so the headline base fare seeds from the cheapest enabled one. Only
-  // seed when the operator hasn't entered a fare yet, so manual edits stick.
-  const fares = (vessel.accommodations ?? [])
-    .filter((a) => a.enabled && a.fare > 0)
-    .map((a) => a.fare);
+  // Seamless handoff: seed a fare per enabled accommodation tier from the
+  // vessel (Add Vessel → Capacity & fares). The headline base fare is the
+  // cheapest enabled tier and drives discounted passenger math. Only seed
+  // entries the operator hasn't touched, so manual edits stick.
+  const enabledTiers = (vessel.accommodations ?? []).filter((a) => a.enabled);
+
+  const accommodationPrices = { ...value.accommodationPrices };
+  let accomTouched = false;
+  enabledTiers.forEach((a) => {
+    if (accommodationPrices[a.key] === undefined) {
+      accommodationPrices[a.key] = a.fare > 0 ? String(a.fare) : "";
+      accomTouched = true;
+    }
+  });
+
+  const fares = enabledTiers.filter((a) => a.fare > 0).map((a) => a.fare);
   const cheapestFare = fares.length ? Math.min(...fares) : undefined;
   const seededBase =
     (!value.baseFare || value.baseFare === "0") && cheapestFare
@@ -72,11 +87,12 @@ function hydrate(value: FaresValue, vessel: VesselValue): FaresValue {
 
   const next: FaresValue = {
     baseFare: seededBase,
+    accommodationPrices,
     passengerPrices: { ...value.passengerPrices },
     vehiclePrices: { ...value.vehiclePrices },
     addOnPrices: { ...value.addOnPrices },
   };
-  let touched = seededBase !== value.baseFare;
+  let touched = seededBase !== value.baseFare || accomTouched;
   vessel.passengerTypes.forEach((p) => {
     if (!next.passengerPrices[p.key]) {
       next.passengerPrices[p.key] = {
@@ -115,11 +131,16 @@ export default function FaresStep({
   value,
   onChange,
   vessel,
+  routes,
+  onRoutesChange,
 }: {
   value: FaresValue;
   onChange: (next: FaresValue) => void;
   /** The vessel chosen in step 3 — defines what's priceable here. */
   vessel: VesselValue;
+  /** Route value — carries the per-leg service fee, edited in its own section. */
+  routes: RoutesValue;
+  onRoutesChange: (next: RoutesValue) => void;
 }) {
   const hydrated = hydrate(value, vessel);
   if (hydrated !== value) {
@@ -133,6 +154,8 @@ export default function FaresStep({
   const passengers = vessel.passengerTypes;
   const vehicles = vessel.vehicleClasses.filter((c) => c.enabled);
   const addOns = vessel.addOns;
+  // Enabled accommodation tiers — each gets its own editable fare row.
+  const accomTiers = (vessel.accommodations ?? []).filter((a) => a.enabled);
 
   const baseFare = Number(hydrated.baseFare) || 0;
 
@@ -144,7 +167,16 @@ export default function FaresStep({
   };
 
   // ── Setters ──
-  const setBase = (v: string) => onChange({ ...hydrated, baseFare: v.replace(/[^\d]/g, "") });
+  // Set one tier's fare; the headline base fare tracks the cheapest enabled
+  // tier (drives discounted passenger math).
+  const setAccommodation = (key: string, v: string) => {
+    const accommodationPrices = { ...hydrated.accommodationPrices, [key]: v.replace(/[^\d]/g, "") };
+    const nums = accomTiers
+      .map((a) => Number(accommodationPrices[a.key]))
+      .filter((n) => n > 0);
+    const cheapest = nums.length ? Math.min(...nums) : 0;
+    onChange({ ...hydrated, accommodationPrices, baseFare: cheapest ? String(cheapest) : "" });
+  };
   const setPassenger = (key: string, patch: Partial<FareRow>) =>
     onChange({
       ...hydrated,
@@ -172,24 +204,63 @@ export default function FaresStep({
       {/* ── Vessel-context banner ── */}
       <VesselContext vessel={vessel} />
 
-      {/* ── Base fare — single flat row, no gradients or eyebrows ── */}
+      {/* ── Accommodation fares — one row per enabled seating tier. The
+            cheapest tier is the base from which discounted passenger fares
+            derive. ── */}
       <Section
-        eyebrow="Base fare"
-        helper="Economy / standard fare. Discounted tiers derive from this."
+        eyebrow="Accommodation fares"
+        helper="Fare per seating tier this vessel offers. Discounted passenger tiers derive from the cheapest one."
+      >
+        {accomTiers.length === 0 ? (
+          <EmptyCatalog message="This vessel has no accommodation tiers. Add some in step 3 → Capacity & fares." />
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            {accomTiers.map((a, i) => (
+              <label
+                key={a.key}
+                className={"flex items-center gap-3 px-3.5 py-2.5 " + (i > 0 ? "border-t border-slate-100" : "")}
+              >
+                <span className="flex-1 text-[13px] font-semibold tracking-tight text-slate-900">
+                  {a.label}
+                  <span className="ml-1.5 text-[11px] font-normal text-slate-400">{a.capacity.toLocaleString()} seats</span>
+                </span>
+                <div className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100">
+                  <span className="text-[12px] font-medium text-slate-400">₱</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={hydrated.accommodationPrices[a.key] ?? ""}
+                    onChange={(e) => setAccommodation(a.key, e.target.value)}
+                    placeholder="0"
+                    aria-label={`${a.label} fare`}
+                    className="w-20 bg-transparent text-right font-mono text-[13px] font-semibold tabular-nums text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                  />
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {/* ── Service fee — flat, per-leg/route. Added on top of every fare and
+            shown as its own line in fare breakdowns. ── */}
+      <Section
+        eyebrow="Service fee"
+        helper="A flat fee for this route, added on top of every fare on this leg."
       >
         <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
           <span className="flex-1 text-[13px] font-semibold tracking-tight text-slate-900">
-            Economy
+            Service fee
           </span>
           <div className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100">
             <span className="text-[12px] font-medium text-slate-400">₱</span>
             <input
               type="text"
               inputMode="numeric"
-              value={hydrated.baseFare}
-              onChange={(e) => setBase(e.target.value)}
+              value={routes.serviceFee ?? ""}
+              onChange={(e) => onRoutesChange({ ...routes, serviceFee: e.target.value.replace(/[^\d]/g, "") })}
               placeholder="0"
-              aria-label="Economy base fare"
+              aria-label="Service fee"
               className="w-20 bg-transparent text-right font-mono text-[13px] font-semibold tabular-nums text-slate-900 placeholder:text-slate-400 focus:outline-none"
             />
           </div>

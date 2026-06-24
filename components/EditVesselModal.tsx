@@ -3,7 +3,13 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import Modal from "./Modal";
 import { useToast } from "./ToastContext";
-import VesselFormBody, { passengerOnlyTypes } from "./VesselFormBody";
+import VesselFormBody, { passengerOnlyTypes, statusOptions } from "./VesselFormBody";
+
+// A vessel is edited as Active or Inactive only; Maintenance/Retired are
+// lifecycle states not set from this dialog.
+const EDIT_STATUSES = statusOptions.filter(
+  (s) => s.value === "Active" || s.value === "Inactive",
+);
 import {
   StepIndicator,
   Step2,
@@ -120,6 +126,7 @@ export default function EditVesselModal({ open, vessel, onClose, onSave }: Props
       passengers: parseInt(values.passengers, 10),
       vehicleSlots: isPassengerOnly ? null : parseInt(values.vehicleSlots, 10),
       status: values.status,
+      is_enabled: values.status === "Active",
       location: values.status === "Active" ? vessel.location : values.status,
       vehicleClasses: isPassengerOnly ? [] : vehicleClasses.filter((c) => c.enabled),
       passengerTypes,
@@ -193,6 +200,7 @@ export default function EditVesselModal({ open, vessel, onClose, onSave }: Props
                   values={values}
                   onChange={(k, v) => setValues((prev) => ({ ...prev, [k]: v }))}
                   autoFocusName={false}
+                  statuses={EDIT_STATUSES}
                 />
               </motion.div>
             )}

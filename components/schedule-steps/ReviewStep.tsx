@@ -139,10 +139,12 @@ export default function ReviewStep({
       amount: Number(fares.addOnPrices[a.key]?.price) || a.defaultPrice,
     }));
 
+  // Flat per-leg service fee for this route (set in the Fares step).
+  const serviceFee = Number(routes.serviceFee) || 0;
   const passengerSubtotal = passengerLines.filter((l) => !l.free).reduce((s, l) => s + l.amount, 0);
   const vehicleSubtotal = vehicleLines.reduce((s, l) => s + l.amount, 0);
   const addOnSubtotal = addOnLines.reduce((s, l) => s + l.amount, 0);
-  const sampleBasket = passengerSubtotal + vehicleSubtotal + addOnSubtotal;
+  const sampleBasket = passengerSubtotal + vehicleSubtotal + addOnSubtotal + serviceFee;
 
   const cheapest = passengerLines.filter((l) => !l.free).reduce<FareLine | null>((min, l) => !min || l.amount < min.amount ? l : min, null);
   const priciest = passengerLines.filter((l) => !l.free).reduce<FareLine | null>((max, l) => !max || l.amount > max.amount ? l : max, null);
@@ -427,12 +429,30 @@ export default function ReviewStep({
                 </>
               )}
 
+              {/* Service fee — flat per-leg fee for this route. */}
+              {serviceFee > 0 && (
+                <>
+                  <div className="my-1.5 flex items-center gap-2">
+                    <div className="h-px flex-1 bg-slate-100" />
+                    <span className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Service fee</span>
+                    <div className="h-px flex-1 bg-slate-100" />
+                  </div>
+                  <FareLineRow label="Service fee" sublabel="Flat fee for this route" amount={serviceFee} />
+                </>
+              )}
+
               {/* Subtotals + sample basket */}
               <div className="mt-2 space-y-0.5 rounded-md bg-slate-50/80 px-2.5 py-2 ring-1 ring-slate-100">
                 <div className="flex items-center justify-between text-[10.5px] text-slate-500">
                   <span>Passenger subtotal</span>
                   <Mono className="text-[11px] text-slate-700">₱{passengerSubtotal.toLocaleString()}</Mono>
                 </div>
+                {serviceFee > 0 && (
+                  <div className="flex items-center justify-between text-[10.5px] text-slate-500">
+                    <span>Service fee</span>
+                    <Mono className="text-[11px] text-slate-700">₱{serviceFee.toLocaleString()}</Mono>
+                  </div>
+                )}
                 {vehicleLines.length > 0 && (
                   <div className="flex items-center justify-between text-[10.5px] text-slate-500">
                     <span>Vehicle subtotal</span>
@@ -468,34 +488,6 @@ export default function ReviewStep({
           )}
         </ReviewCard>
       </div>
-
-      {/* ─── Ready-to-create confirmation panel ─── */}
-      <ReadyToCreate tripsTotal={tripsTotal} />
-    </div>
-  );
-}
-
-
-// ─────────── ReadyToCreate — flat, minimal confirmation row ───────────
-function ReadyToCreate({
-  tripsTotal,
-}: {
-  tripsTotal: number;
-}) {
-  const queued =
-    tripsTotal > 0
-      ? `${tripsTotal} ${tripsTotal === 1 ? "voyage" : "voyages"} will be queued`
-      : "no voyages queued yet";
-
-  return (
-    <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 text-emerald-600">
-        <path d="M5 12l5 5L20 7" />
-      </svg>
-      <span className="text-[12.5px] tracking-tight text-slate-700">
-        <span className="font-semibold text-slate-900">Ready to create.</span>{" "}
-        <span className="text-slate-500">{queued}.</span>
-      </span>
     </div>
   );
 }
@@ -591,8 +583,8 @@ function WeekdayChips({ active }: { active: DayKey[] }) {
 function PortLine({ port }: { port: Port }) {
   return (
     <span className="inline-flex items-baseline gap-1.5">
-      <span className="font-medium text-slate-900">{port.city}</span>
-      <span className="font-mono text-[10.5px] tabular-nums text-slate-400">({port.code})</span>
+      <span className="font-medium text-slate-900">{port.name ?? port.city}</span>
+      {port.name && <span className="text-[10.5px] text-slate-400">{port.city}</span>}
     </span>
   );
 }
