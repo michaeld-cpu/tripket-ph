@@ -289,7 +289,7 @@ export default function RoutesPage() {
   const dismissCancel = () => setCancelRoute(null);
 
   // Reset to page 1 whenever filters change so users don't land on an empty later page.
-  useEffect(() => { setPage(1); }, [query, originFilter, destinationFilter, lifecycleFilter, activeFilter]);
+  useEffect(() => { setPage(1); }, [query, originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange]);
 
   // Origin / destination options from the catalog cities, alphabetized.
   const originOptions = useMemo(() => {
