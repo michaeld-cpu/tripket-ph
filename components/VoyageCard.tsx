@@ -111,8 +111,7 @@ export default function VoyageCard({
         <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3 px-4 pt-1.5">
           <div className="min-w-0">
             <div className="font-mono text-[26px] font-semibold leading-none tracking-tight text-slate-900">{fromTime}</div>
-            <div className="mt-1.5 font-mono text-[28px] font-extrabold leading-none tracking-[0.02em] text-slate-900">{fromCode}</div>
-            <div className="mt-1 truncate text-[12px] text-slate-500">{fromCity}</div>
+            <div className="mt-1.5 truncate text-[17px] font-bold leading-tight tracking-tight text-slate-900">{fromCity}</div>
           </div>
 
           {/* Route bar — orange/gray filled segment with a duration label centered */}
@@ -136,8 +135,7 @@ export default function VoyageCard({
 
           <div className="min-w-0 text-right">
             <div className="font-mono text-[26px] font-semibold leading-none tracking-tight text-slate-900">{toTime}</div>
-            <div className={`mt-1.5 font-mono text-[28px] font-extrabold leading-none tracking-[0.02em] ${codeCls}`}>{toCode}</div>
-            <div className="mt-1 truncate text-[12px] text-slate-500">{toCity}</div>
+            <div className={`mt-1.5 truncate text-[17px] font-bold leading-tight tracking-tight ${codeCls}`}>{toCity}</div>
           </div>
         </div>
 

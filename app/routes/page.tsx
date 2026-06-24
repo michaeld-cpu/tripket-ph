@@ -5,35 +5,49 @@ import { motion } from "motion/react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import { TableSkeleton } from "@/components/Skeleton";
-import Select from "@/components/Select";
+import FiltersDialog, { FiltersButton } from "@/components/FiltersDialog";
+import { type DateRange } from "@/components/DateRangePicker";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import CreateRouteModal from "@/components/CreateRouteModal";
 import { loadStore, saveStore } from "@/lib/persisted-store";
-import { reviveRoutes } from "@/lib/routes-data";
 import AssignVesselsEditor from "@/components/AssignVesselsEditor";
 import Modal from "@/components/Modal";
-import { PORTS, portId, findPort, type RoutesValue } from "@/components/schedule-steps/RoutesStep";
+import RouteStatusDialog from "@/components/RouteStatusDialog";
+import { PORTS, portId, findPort, DEFAULT_ROUTE_ACCOMMODATION_FARES, type RoutesValue } from "@/components/schedule-steps/RoutesStep";
 import { getCustomPorts } from "@/lib/custom-ports";
+import type { Booking } from "@/lib/bookings-data";
 
 // ─────────── Route catalog ───────────
 // Each route is a directional origin → destination pair with a nautical-mile distance
 // and a typical crossing-duration range. Status drives the pill colour:
 //   Active   – running on the regular schedule
 //   Inactive – paused but kept on file for re-activation
-type RouteStatus = "Active" | "Inactive";
+// Lifecycle of a leg's trip — distinct from the enabled flag (isEnabled).
+type RouteStatus = "Scheduled" | "Departed" | "Cancelled";
 type Route = {
   id: string;
-  /** Short human-friendly reference code displayed in the table. */
+  /** Short human-friendly reference code (kept for data; ID column shows 1..n). */
   ref: string;
   origin: { code: string; city: string; name?: string };
   destination: { code: string; city: string; name?: string };
+  /** Per-accommodation-tier fares offered on this route (tiers + fare only). */
+  accommodationFares?: import("@/components/schedule-steps/RoutesStep").RouteAccommodationFare[];
+  /** Flat service fee (₱) for this leg, added on top of fares. */
+  serviceFee?: number;
   distanceNm: number;       // nautical miles
   durationHrs: [number, number]; // [low, high]
+  /** Scheduled date & time of this leg's departure. */
+  scheduleAt: Date;
+  /** Actual departure timestamp — set via "Set actual departure". */
+  departedAt?: Date;
+  /** Trip lifecycle: Scheduled → Departed (or Cancelled). */
   status: RouteStatus;
-  /** Vessel assignments on this route. A route can run multiple vessels,
-      each with its own dated departures. Empty = unassigned. */
-  assignments: VesselAssignment[];
+  /** Enabled flag (the Active/Inactive toggle), independent of lifecycle.
+      Submitted to the API as is_enabled. */
+  isEnabled: boolean;
+  /** Single assigned vessel on this leg (empty string = unassigned). */
+  vessel: string;
 };
 
 // One vessel's sailings on a route.
@@ -52,78 +66,63 @@ function routeToValue(r: Route): RoutesValue {
     originCode: portId(r.origin),
     destinationCode: portId(r.destination),
     distanceNm: String(r.distanceNm),
-    durationLowHrs: String(r.durationHrs[0]),
-    durationHighHrs: String(r.durationHrs[1]),
+    // Collapse any stored [low, high] range to its average for the single field.
+    durationLowHrs: String((r.durationHrs[0] + r.durationHrs[1]) / 2),
+    durationHighHrs: String((r.durationHrs[0] + r.durationHrs[1]) / 2),
     createReturn: false,
-    status: r.status,
+    status: r.isEnabled ? "Active" : "Inactive",
+    accommodationFares: r.accommodationFares ?? DEFAULT_ROUTE_ACCOMMODATION_FARES,
+    serviceFee: r.serviceFee != null ? String(r.serviceFee) : "",
   };
 }
 
-function mockDepartures(count: number, weekdays: number[], hour: number): Date[] {
-  if (count === 0) return [];
-  const out: Date[] = [];
-  const cursor = new Date();
-  cursor.setHours(hour, 0, 0, 0);
-  let guard = 0;
-  while (out.length < count && guard < 60) {
-    if (weekdays.includes(cursor.getDay())) out.push(new Date(cursor));
-    cursor.setDate(cursor.getDate() + 1);
-    guard++;
-  }
-  return out;
+// Build a scheduled datetime: today (or +dayOffset) at h:00.
+function at(hour: number, dayOffset = 0): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(hour, 0, 0, 0);
+  return d;
 }
 
-// Flatten all departures across a route's vessel assignments, sorted
-// ascending — used for the "next + N more" summary in the table cell.
-function allDepartures(r: Route): Date[] {
-  return (r.assignments ?? [])
-    .flatMap((a) => a.departures ?? [])
-    .sort((x, y) => x.getTime() - y.getTime());
-}
-
-// Unified status palette — uppercase labels, no dots, restrained tones.
-// Active uses opaque emerald (running / healthy); Inactive is struck slate.
 const statusTone: Record<RouteStatus, string> = {
-  Active:   "bg-emerald-100 text-emerald-800",
-  Inactive: "bg-slate-100 text-slate-500",
+  Scheduled: "bg-blue-100 text-blue-800",
+  Departed:  "bg-amber-100 text-amber-800",
+  Cancelled: "bg-rose-100 text-rose-700",
 };
 
-// Mock catalog — mirrors the reference, both directions of each pair so dispatchers see
-// origin → destination and the return leg as separate rows.
+// Mock catalog — each row is a dated leg with a schedule time, lifecycle
+// status, an enabled flag, and a single assigned vessel.
 const MOCK_ROUTES: Route[] = [
-  // Multi-vessel routes (r1, r5) demonstrate the assignments model — same
-  // route served by more than one vessel, each on its own cadence.
-  { id: "r1",  ref: "RT-0001", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 42, durationHrs: [3.5, 4],   status: "Active",   assignments: [
-    { vessel: "MV Filipinas Cebu", departures: mockDepartures(13, [1,3,5], 8) },
-    { vessel: "FC Sinulog",        departures: mockDepartures(8, [2,4], 13) },
-  ] },
-  { id: "r2",  ref: "RT-0002", origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "CEB", city: "Cebu City" },      distanceNm: 42, durationHrs: [3.5, 4],   status: "Active",   assignments: [{ vessel: "MV Filipinas Cebu", departures: mockDepartures(13, [1,3,5], 14) }] },
-  { id: "r3",  ref: "RT-0003", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "TAG", city: "Tagbilaran City" },distanceNm: 65, durationHrs: [2, 2.5],   status: "Active",   assignments: [{ vessel: "FC Sinulog", departures: mockDepartures(8, [2,4], 6) }] },
-  { id: "r4",  ref: "RT-0004", origin: { code: "TAG", city: "Tagbilaran City" }, destination: { code: "CEB", city: "Cebu City" },      distanceNm: 65, durationHrs: [2, 2.5],   status: "Active",   assignments: [{ vessel: "FC Sinulog", departures: mockDepartures(8, [2,4], 11) }] },
-  { id: "r5",  ref: "RT-0005", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "ORM", city: "Ormoc City" },     distanceNm: 95, durationHrs: [3.5, 4],   status: "Active",   assignments: [
-    { vessel: "MV Reina del Cielo", departures: mockDepartures(21, [1,2,3,4,5], 9) },
-    { vessel: "MV Visayan Star",    departures: mockDepartures(8, [6,0], 9) },
-  ] },
-  { id: "r6",  ref: "RT-0006", origin: { code: "ORM", city: "Ormoc City" },      destination: { code: "CEB", city: "Cebu City" },      distanceNm: 95, durationHrs: [3.5, 4],   status: "Active",   assignments: [{ vessel: "MV Reina del Cielo", departures: mockDepartures(21, [1,2,3,4,5], 16) }] },
-  { id: "r7",  ref: "RT-0007", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "BAC", city: "Bacolod City" },   distanceNm: 80, durationHrs: [4, 5],     status: "Active",   assignments: [{ vessel: "MV Visayan Star", departures: mockDepartures(8, [6,0], 7) }] },
-  { id: "r8",  ref: "RT-0008", origin: { code: "BAC", city: "Bacolod City" },    destination: { code: "CEB", city: "Cebu City" },      distanceNm: 80, durationHrs: [4, 5],     status: "Active",   assignments: [{ vessel: "MV Visayan Star", departures: mockDepartures(8, [6,0], 13) }] },
-  { id: "r9",  ref: "RT-0009", origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "DAP", city: "Dapitan City" },   distanceNm: 38, durationHrs: [2.5, 3],   status: "Inactive", assignments: [] },
-  { id: "r10", ref: "RT-0010", origin: { code: "DAP", city: "Dapitan City" },    destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 38, durationHrs: [2.5, 3],   status: "Inactive", assignments: [] },
-  { id: "r11", ref: "RT-0011", origin: { code: "BAT", city: "Batangas City" },   destination: { code: "CAL", city: "Calapan City" },   distanceNm: 26, durationHrs: [2.5, 3],   status: "Active",   assignments: [{ vessel: "MV Maligaya", departures: mockDepartures(26, [1,2,3,4,5,6,0], 5) }] },
-  { id: "r12", ref: "RT-0012", origin: { code: "CAL", city: "Calapan City" },    destination: { code: "BAT", city: "Batangas City" },  distanceNm: 26, durationHrs: [2.5, 3],   status: "Active",   assignments: [{ vessel: "MV Maligaya", departures: mockDepartures(26, [1,2,3,4,5,6,0], 10) }] },
-  { id: "r13", ref: "RT-0013", origin: { code: "MNL", city: "Manila" },          destination: { code: "PPS", city: "Puerto Princesa" },distanceNm: 350,durationHrs: [22, 24],  status: "Active",   assignments: [{ vessel: "2GO Masinloc", departures: mockDepartures(4, [5], 18) }] },
-  { id: "r14", ref: "RT-0014", origin: { code: "PPS", city: "Puerto Princesa" }, destination: { code: "MNL", city: "Manila" },         distanceNm: 350,durationHrs: [22, 24],  status: "Active",   assignments: [{ vessel: "2GO Masinloc", departures: mockDepartures(4, [0], 18) }] },
-  { id: "r15", ref: "RT-0015", origin: { code: "MNL", city: "Manila" },          destination: { code: "ILO", city: "Iloilo City" },    distanceNm: 250,durationHrs: [18, 20],  status: "Active",   assignments: [{ vessel: "2GO Saint Pope John Paul II", departures: mockDepartures(4, [3], 20) }] },
-  { id: "r16", ref: "RT-0016", origin: { code: "ILO", city: "Iloilo City" },     destination: { code: "MNL", city: "Manila" },         distanceNm: 250,durationHrs: [18, 20],  status: "Active",   assignments: [{ vessel: "2GO Saint Pope John Paul II", departures: mockDepartures(4, [6], 20) }] },
+  // CEB→DGT 8:00 demo: already departed.
+  { id: "r1",  ref: "RT-0001", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 42, durationHrs: [3.5, 4],  scheduleAt: at(8), departedAt: at(8), status: "Departed",  isEnabled: true,  vessel: "MV Filipinas Cebu" },
+  { id: "r2",  ref: "RT-0002", origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "CEB", city: "Cebu City" },      distanceNm: 42, durationHrs: [3.5, 4],  scheduleAt: at(14), status: "Scheduled", isEnabled: true,  vessel: "MV Filipinas Cebu" },
+  { id: "r3",  ref: "RT-0003", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "TAG", city: "Tagbilaran City" },distanceNm: 65, durationHrs: [2, 2.5],  scheduleAt: at(6),  status: "Scheduled", isEnabled: true,  vessel: "FC Sinulog" },
+  { id: "r4",  ref: "RT-0004", origin: { code: "TAG", city: "Tagbilaran City" }, destination: { code: "CEB", city: "Cebu City" },      distanceNm: 65, durationHrs: [2, 2.5],  scheduleAt: at(11), status: "Scheduled", isEnabled: true,  vessel: "FC Sinulog" },
+  { id: "r5",  ref: "RT-0005", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "ORM", city: "Ormoc City" },     distanceNm: 95, durationHrs: [3.5, 4],  scheduleAt: at(9),  status: "Scheduled", isEnabled: true,  vessel: "MV Reina del Cielo" },
+  { id: "r6",  ref: "RT-0006", origin: { code: "ORM", city: "Ormoc City" },      destination: { code: "CEB", city: "Cebu City" },      distanceNm: 95, durationHrs: [3.5, 4],  scheduleAt: at(16), status: "Scheduled", isEnabled: true,  vessel: "MV Reina del Cielo" },
+  { id: "r7",  ref: "RT-0007", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "BAC", city: "Bacolod City" },   distanceNm: 80, durationHrs: [4, 5],    scheduleAt: at(7),  status: "Scheduled", isEnabled: true,  vessel: "MV Visayan Star" },
+  { id: "r8",  ref: "RT-0008", origin: { code: "BAC", city: "Bacolod City" },    destination: { code: "CEB", city: "Cebu City" },      distanceNm: 80, durationHrs: [4, 5],    scheduleAt: at(13), status: "Scheduled", isEnabled: true,  vessel: "MV Visayan Star" },
+  { id: "r9",  ref: "RT-0009", origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "DAP", city: "Dapitan City" },   distanceNm: 38, durationHrs: [2.5, 3],  scheduleAt: at(10), status: "Scheduled", isEnabled: false, vessel: "" },
+  { id: "r10", ref: "RT-0010", origin: { code: "DAP", city: "Dapitan City" },    destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 38, durationHrs: [2.5, 3],  scheduleAt: at(15), status: "Scheduled", isEnabled: false, vessel: "" },
+  { id: "r11", ref: "RT-0011", origin: { code: "BAT", city: "Batangas City" },   destination: { code: "CAL", city: "Calapan City" },   distanceNm: 26, durationHrs: [2.5, 3],  scheduleAt: at(5),  status: "Scheduled", isEnabled: true,  vessel: "MV Maligaya" },
+  { id: "r12", ref: "RT-0012", origin: { code: "CAL", city: "Calapan City" },    destination: { code: "BAT", city: "Batangas City" },  distanceNm: 26, durationHrs: [2.5, 3],  scheduleAt: at(10), status: "Scheduled", isEnabled: true,  vessel: "MV Maligaya" },
+  { id: "r13", ref: "RT-0013", origin: { code: "MNL", city: "Manila" },          destination: { code: "PPS", city: "Puerto Princesa" },distanceNm: 350,durationHrs: [22, 24], scheduleAt: at(18), status: "Scheduled", isEnabled: true,  vessel: "2GO Masinloc" },
+  { id: "r14", ref: "RT-0014", origin: { code: "PPS", city: "Puerto Princesa" }, destination: { code: "MNL", city: "Manila" },         distanceNm: 350,durationHrs: [22, 24], scheduleAt: at(18), status: "Scheduled", isEnabled: true,  vessel: "2GO Masinloc" },
+  { id: "r15", ref: "RT-0015", origin: { code: "MNL", city: "Manila" },          destination: { code: "ILO", city: "Iloilo City" },    distanceNm: 250,durationHrs: [18, 20], scheduleAt: at(20), status: "Scheduled", isEnabled: true,  vessel: "2GO Saint Pope John Paul II" },
+  { id: "r16", ref: "RT-0016", origin: { code: "ILO", city: "Iloilo City" },     destination: { code: "MNL", city: "Manila" },         distanceNm: 250,durationHrs: [18, 20], scheduleAt: at(20), status: "Scheduled", isEnabled: true,  vessel: "2GO Saint Pope John Paul II" },
+  { id: "r17", ref: "RT-0017", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 42, durationHrs: [3.5, 4],  scheduleAt: at(13), status: "Scheduled", isEnabled: true,  vessel: "FC Sinulog" },
+  { id: "r18", ref: "RT-0018", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "ORM", city: "Ormoc City" },     distanceNm: 95, durationHrs: [3.5, 4],  scheduleAt: at(15), status: "Scheduled", isEnabled: true,  vessel: "MV Visayan Star" },
+  // Same CEB→DGT leg + vessel as RT-0001, later time — its own dated row.
+  { id: "r19", ref: "RT-0019", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 42, durationHrs: [3.5, 4],  scheduleAt: at(16), status: "Scheduled", isEnabled: true,  vessel: "MV Filipinas Cebu" },
 ];
 
 const PAGE_SIZE = 10;
 
-function PortCell({ code, city }: { code: string; city: string }) {
+function PortCell({ city, name }: { code?: string; city: string; name?: string }) {
   return (
     <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
-      <span className="text-[13.5px] font-medium tracking-tight text-slate-900">{city}</span>
-      <span className="font-mono text-[11px] tabular-nums tracking-wider text-slate-400">({code})</span>
+      <span className="text-[13.5px] font-medium tracking-tight text-slate-900">{name ?? city}</span>
+      {name && <span className="text-[11px] text-slate-400">{city}</span>}
     </span>
   );
 }
@@ -171,18 +170,28 @@ export default function RoutesPage() {
   const [routes, setRoutes] = useState<Route[] | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [locationFilter, setLocationFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | RouteStatus>("all");
+  const [originFilter, setOriginFilter] = useState<string>("all");
+  const [destinationFilter, setDestinationFilter] = useState<string>("all");
+  // Voyage lifecycle (Scheduled/Departed/…) from the route's next voyage.
+  const [lifecycleFilter, setLifecycleFilter] = useState<string>("all");
+  // Enabled state — Active / Inactive.
+  const [activeFilter, setActiveFilter] = useState<string>("all");
+  // Date & time window — defaults to today.
+  const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    return { start: d, end: d };
+  });
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [page, setPage] = useState(1);
   // Route whose vessel/departure schedule dialog is open (null = closed).
-  const [scheduleRoute, setScheduleRoute] = useState<Route | null>(null);
   const [editRoute, setEditRoute] = useState<Route | null>(null);
   // When true, the edit dialog is opened via "Assign vessel" — the same
   // dialog, but with the assigned-vessels editor rendered alongside the form.
   const [assignMode, setAssignMode] = useState(false);
   // Draft selection of vessel names while the assign editor is open.
   const [assignDraft, setAssignDraft] = useState<string[]>([]);
-  const [deleteRoute, setDeleteRoute] = useState<Route | null>(null);
+  // Route pending an enable/disable confirmation.
+  const [statusRoute, setStatusRoute] = useState<Route | null>(null);
   const router = useRouter();
 
   // "Manage schedule" → jump to the Voyages page pre-filtered by this route's
@@ -200,10 +209,19 @@ export default function RoutesPage() {
   useEffect(() => {
     let cancelled = false;
     setRoutes(null);
+    // Bump when MOCK_ROUTES changes so an updated seed re-applies instead of a
+    // stale cached copy lingering in localStorage.
+    const SEED_VERSION = "2026-06-24-dated-legs";
     try {
-      const persisted = loadStore<unknown>("routes", active.id);
-      if (persisted) {
-        const revived = reviveRoutes(persisted);
+      const seededVersion = window.localStorage.getItem("tripket.routes-seed-version");
+      const persisted = loadStore<Route[]>("routes", active.id);
+      if (persisted && Array.isArray(persisted) && seededVersion === SEED_VERSION) {
+        // Revive Date fields after the JSON round-trip.
+        const revived = persisted.map((r) => ({
+          ...r,
+          scheduleAt: new Date(r.scheduleAt),
+          departedAt: r.departedAt ? new Date(r.departedAt) : undefined,
+        }));
         if (revived.length > 0) { setRoutes(revived); return; }
       }
     } catch { /* fall through to mock */ }
@@ -211,6 +229,7 @@ export default function RoutesPage() {
       if (cancelled) return;
       setRoutes(MOCK_ROUTES);
       saveStore("routes", active.id, MOCK_ROUTES);
+      try { window.localStorage.setItem("tripket.routes-seed-version", SEED_VERSION); } catch { /* ignore */ }
     }, 200);
     return () => { cancelled = true; clearTimeout(t); };
   }, [active.id]);
@@ -224,32 +243,114 @@ export default function RoutesPage() {
     });
   };
 
-  // Reset to page 1 whenever filters change so users don't land on an empty later page.
-  useEffect(() => { setPage(1); }, [query, locationFilter, statusFilter]);
+  // Toggle a route's enabled flag (no deletion — kept on file, re-enableable).
+  const toggleRouteStatus = (id: string) =>
+    updateRoutes((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, isEnabled: !r.isEnabled } : r)),
+    );
 
-  // Unique locations across the catalog, alphabetized — feeds the filter dropdown.
-  const locationOptions = useMemo(() => {
-    const cities = new Set<string>();
-    (routes ?? []).forEach((r) => {
-      cities.add(r.origin.city);
-      cities.add(r.destination.city);
-    });
-    return [{ value: "all", label: "All locations" }, ...Array.from(cities).sort().map((c) => ({ value: c, label: c }))];
+  // Mark the leg's actual departure: stamp departedAt + set status Departed.
+  const [departRoute, setDepartRoute] = useState<Route | null>(null);
+  const confirmActualDeparture = (id: string, when: Date) =>
+    updateRoutes((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, status: "Departed", departedAt: when } : r)),
+    );
+
+  // Cancel a trip/leg — opens a dialog listing the leg's bookings with a batch
+  // "mark refunded" action (refunds happen manually). Completing it sets the
+  // route Cancelled and flips the leg's bookings + tickets to Refunded.
+  const [cancelRoute, setCancelRoute] = useState<Route | null>(null);
+
+  // Batch-refund: mark this leg's bookings (and their tickets) Refunded in the
+  // bookings store, then mark the route Cancelled.
+  const completeCancel = (route: Route) => {
+    const o = route.origin.code, d = route.destination.code;
+    try {
+      const bookings = loadStore<Booking[]>("bookings", active.id);
+      if (bookings && Array.isArray(bookings)) {
+        const next = bookings.map((b) =>
+          b.routeOriginCode === o && b.routeDestinationCode === d
+            ? {
+                ...b,
+                status: "Refunded" as const,
+                paymentStatus: "Refunded" as const,
+                tickets: b.tickets.map((t) => ({ ...t, status: "Refunded" as const })),
+              }
+            : b,
+        );
+        saveStore("bookings", active.id, next);
+      }
+    } catch { /* ignore — store may be empty */ }
+    updateRoutes((prev) => prev.map((r) => (r.id === route.id ? { ...r, status: "Cancelled" } : r)));
+    setCancelRoute(null);
+  };
+
+  // Plain dismiss — closing the dialog (Close / X / backdrop) makes no change.
+  const dismissCancel = () => setCancelRoute(null);
+
+  // Reset to page 1 whenever filters change so users don't land on an empty later page.
+  useEffect(() => { setPage(1); }, [query, originFilter, destinationFilter, lifecycleFilter, activeFilter]);
+
+  // Origin / destination options from the catalog cities, alphabetized.
+  const originOptions = useMemo(() => {
+    const c = new Set<string>();
+    (routes ?? []).forEach((r) => c.add(r.origin.name ?? r.origin.city));
+    return [{ value: "all", label: "All origins" }, ...Array.from(c).sort().map((x) => ({ value: x, label: x }))];
   }, [routes]);
+  const destinationOptions = useMemo(() => {
+    const c = new Set<string>();
+    (routes ?? []).forEach((r) => c.add(r.destination.name ?? r.destination.city));
+    return [{ value: "all", label: "All destinations" }, ...Array.from(c).sort().map((x) => ({ value: x, label: x }))];
+  }, [routes]);
+
+  // Set of "origin-destination" keys that have ≥1 CONFIRMED booking. Admin
+  // can't change the vessel or disable a route once a leg has confirmed
+  // bookings. Read from the bookings store for the active line.
+  const legsWithConfirmed = useMemo(() => {
+    const s = new Set<string>();
+    try {
+      const all = loadStore<Booking[]>("bookings", active.id) ?? [];
+      for (const b of all) {
+        if (b.status === "Confirmed") s.add(`${b.routeOriginCode}-${b.routeDestinationCode}`);
+      }
+    } catch { /* empty store */ }
+    return s;
+  }, [active.id]);
+  const hasConfirmed = (r: Route) => legsWithConfirmed.has(`${r.origin.code}-${r.destination.code}`);
+
+  // Count of non-default filters — shown on the Filters button.
+  const todayRange = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
+  const isDefaultDate =
+    dateRange.start?.getTime() === todayRange.getTime() && dateRange.end?.getTime() === todayRange.getTime();
+  const activeFilterCount =
+    (originFilter !== "all" ? 1 : 0) +
+    (destinationFilter !== "all" ? 1 : 0) +
+    (lifecycleFilter !== "all" ? 1 : 0) +
+    (activeFilter !== "all" ? 1 : 0) +
+    (isDefaultDate ? 0 : 1);
 
   const filtered = useMemo(() => {
     if (!routes) return [];
     const q = query.trim().toLowerCase();
     return routes.filter((r) => {
-      if (statusFilter !== "all" && r.status !== statusFilter) return false;
-      if (locationFilter !== "all" && r.origin.city !== locationFilter && r.destination.city !== locationFilter) return false;
+      if (activeFilter !== "all" && (activeFilter === "Active") !== r.isEnabled) return false;
+      if (originFilter !== "all" && (r.origin.name ?? r.origin.city) !== originFilter) return false;
+      if (destinationFilter !== "all" && (r.destination.name ?? r.destination.city) !== destinationFilter) return false;
+      if (lifecycleFilter !== "all" && r.status !== lifecycleFilter) return false;
+      // Date & time window — match the leg's scheduled day within [start, end].
+      if (dateRange.start && dateRange.end) {
+        const day = new Date(r.scheduleAt); day.setHours(0, 0, 0, 0);
+        const from = new Date(dateRange.start); from.setHours(0, 0, 0, 0);
+        const to = new Date(dateRange.end); to.setHours(0, 0, 0, 0);
+        if (day < from || day > to) return false;
+      }
       if (q) {
-        const hay = `${r.origin.city} ${r.origin.code} ${r.destination.city} ${r.destination.code}`.toLowerCase();
+        const hay = `${r.origin.city} ${r.origin.name ?? ""} ${r.destination.city} ${r.destination.name ?? ""}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [routes, query, locationFilter, statusFilter]);
+  }, [routes, query, originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -289,27 +390,7 @@ export default function RoutesPage() {
                 />
               </div>
 
-              <Select
-                size="sm"
-                value={locationFilter}
-                onChange={setLocationFilter}
-                ariaLabel="Filter by location"
-                className="w-44"
-                options={locationOptions}
-              />
-
-              <Select
-                size="sm"
-                value={statusFilter}
-                onChange={setStatusFilter}
-                ariaLabel="Filter by status"
-                className="w-36"
-                options={[
-                  { value: "all", label: "All status" },
-                  { value: "Active", label: "Active" },
-                  { value: "Inactive", label: "Inactive" },
-                ]}
-              />
+              <FiltersButton onClick={() => setFiltersOpen(true)} activeCount={activeFilterCount} />
             </div>
           </div>
 
@@ -318,29 +399,23 @@ export default function RoutesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                  <th className="px-5 py-2.5 font-medium">Route ref</th>
-                  <th className="px-5 py-2.5 font-medium">Status</th>
-                  <th className="px-5 py-2.5 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Origin <SortIcon /></button>
-                  </th>
-                  <th className="px-5 py-2.5 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Destination <SortIcon /></button>
-                  </th>
+                  <th className="px-5 py-2.5 font-medium">Id</th>
+                  <th className="px-5 py-2.5 font-medium">Schedule</th>
+                  <th className="px-5 py-2.5 font-medium">Origin</th>
+                  <th className="px-5 py-2.5 font-medium">Destination</th>
                   <th className="px-5 py-2.5 font-medium">Vessel</th>
-                  <th className="px-5 py-2.5 font-medium">Departures</th>
-                  <th className="px-5 py-2.5 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Distance <SortIcon /></button>
-                  </th>
-                  <th className="px-5 py-2.5 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Duration <SortIcon /></button>
-                  </th>
+                  <th className="px-5 py-2.5 font-medium">Status</th>
+                  <th className="px-5 py-2.5 font-medium">Departed at</th>
+                  <th className="px-5 py-2.5 font-medium text-center">Active</th>
+                  <th className="px-5 py-2.5 font-medium">Distance</th>
+                  <th className="px-5 py-2.5 font-medium">Duration</th>
                   <th className="sticky right-0 z-10 w-10 bg-slate-50 px-5 py-2.5 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)]" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={11} className="px-5 py-12 text-center text-sm text-slate-400">
                       No routes match your filters.
                     </td>
                   </tr>
@@ -356,12 +431,10 @@ export default function RoutesPage() {
                   >
                     <td className="relative px-5 py-3.5 align-middle">
                       <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
-                      <RouteRef value={r.ref} />
+                      <span className="font-mono text-[12.5px] tabular-nums text-slate-500">{(page - 1) * PAGE_SIZE + i + 1}</span>
                     </td>
-                    <td className="px-5 py-3.5">
-                      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[r.status]}`}>
-                        {r.status}
-                      </span>
+                    <td className="px-5 py-3.5 align-middle whitespace-nowrap">
+                      <span className="text-[12.5px] tabular-nums text-slate-900">{fmtDateTime(r.scheduleAt)}</span>
                     </td>
                     <td className="px-5 py-3.5 whitespace-nowrap"><PortCell {...r.origin} /></td>
                     <td className="px-5 py-3.5 whitespace-nowrap">
@@ -373,90 +446,68 @@ export default function RoutesPage() {
                       </div>
                     </td>
                     <td className="px-5 py-3.5 align-middle whitespace-nowrap">
-                      {(() => {
-                        const assignments = r.assignments ?? [];
-                        if (assignments.length === 0) return <span className="text-[12px] text-slate-400">Unassigned</span>;
-                        if (assignments.length === 1) return (
-                          <button
-                            type="button"
-                            onClick={() => setScheduleRoute(r)}
-                            className="text-left text-[13px] font-medium tracking-tight text-slate-900 underline-offset-2 hover:underline whitespace-nowrap"
-                          >
-                            {assignments[0].vessel}
-                          </button>
-                        );
-                        return (
-                          <button
-                            type="button"
-                            onClick={() => setScheduleRoute(r)}
-                            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 text-[12px] font-medium text-slate-700 transition-colors hover:bg-slate-200"
-                          >
-                            {assignments.length} vessels
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-slate-400">
-                              <path d="M9 6l6 6-6 6" />
-                            </svg>
-                          </button>
-                        );
-                      })()}
+                      {r.vessel ? (
+                        <span className="text-[13px] font-medium tracking-tight text-slate-900 whitespace-nowrap">{r.vessel}</span>
+                      ) : (
+                        <span className="text-[12px] text-slate-400">Unassigned</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[r.status]}`}>
+                        {r.status}
+                      </span>
                     </td>
                     <td className="px-5 py-3.5 align-middle whitespace-nowrap">
-                      {(() => {
-                        const deps = allDepartures(r);
-                        if (deps.length === 0) return <span className="text-[12px] text-slate-400">No upcoming</span>;
-                        const next = deps[0];
-                        return (
-                          <button
-                            type="button"
-                            onClick={() => setScheduleRoute(r)}
-                            className="flex items-baseline gap-1.5 whitespace-nowrap text-left"
-                          >
-                            <span className="text-[12.5px] font-medium tracking-tight text-slate-900 underline-offset-2 hover:underline">
-                              {next.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                            </span>
-                            <span className="font-mono text-[11px] tabular-nums text-slate-500">
-                              {((next.getHours() + 11) % 12) + 1}:{String(next.getMinutes()).padStart(2, "0")} {next.getHours() < 12 ? "AM" : "PM"}
-                            </span>
-                            {deps.length > 1 && (
-                              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-500">
-                                +{deps.length - 1}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })()}
+                      {r.departedAt ? (
+                        <span className="text-[12.5px] tabular-nums text-slate-900">{fmtDateTime(r.departedAt)}</span>
+                      ) : (
+                        <span className="text-[12px] text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5 text-center">
+                      {r.isEnabled ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M5 12l5 5L20 7" /></svg>
+                          Active
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-600 ring-1 ring-rose-200">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                          Inactive
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5 align-middle tabular-nums">
                       <span className="font-semibold text-slate-900">{r.distanceNm}</span>
                       <span className="ml-1 text-[11px] text-slate-400">nm</span>
                     </td>
                     <td className="px-5 py-3.5 align-middle tabular-nums">
-                      <span className="font-semibold text-slate-900">{r.durationHrs[0]}–{r.durationHrs[1]}</span>
-                      <span className="ml-1 text-[11px] text-slate-400">hrs</span>
+                      <span className="font-semibold text-slate-900">{(r.durationHrs[0] + r.durationHrs[1]) / 2}</span>
+                      <span className="ml-1 text-[11px] text-slate-400">hrs avg</span>
                     </td>
                     <td
                       className="sticky right-0 z-10 bg-white px-5 py-3 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] transition-colors duration-150 group-hover:bg-slate-50"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <RowMenu
-                        ariaLabel={`Actions for ${r.origin.code} → ${r.destination.code}`}
+                        ariaLabel={`Actions for ${r.origin.name ?? r.origin.city} → ${r.destination.name ?? r.destination.city}`}
                         items={[
                           {
-                            label: "Edit route",
-                            onClick: () => { setAssignMode(false); setEditRoute(r); },
+                            label: "Set actual departure",
+                            // Only meaningful while still Scheduled.
+                            disabled: r.status !== "Scheduled",
+                            onClick: () => setDepartRoute(r),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                <path d="M12 20h9" />
-                                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                                <path d="M5 12h13M13 6l6 6-6 6" />
                               </svg>
                             ),
                           },
                           {
                             label: "Assign vessel",
-                            onClick: () => {
-                              setAssignDraft(r.assignments.map((a) => a.vessel));
-                              setAssignMode(true);
-                              setEditRoute(r);
-                            },
+                            // Locked once the leg has confirmed bookings.
+                            disabled: r.status !== "Scheduled" || hasConfirmed(r),
+                            onClick: () => { setAssignDraft(r.vessel ? [r.vessel] : []); setAssignMode(true); setEditRoute(r); },
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                 <path d="M3 14h18l-2 5a2 2 0 0 1-1.9 1.3H6.9A2 2 0 0 1 5 19l-2-5Z" />
@@ -465,16 +516,38 @@ export default function RoutesPage() {
                               </svg>
                             ),
                           },
+                          r.isEnabled
+                            ? {
+                                label: "Disable route",
+                                danger: true,
+                                // Can't disable once the leg has confirmed bookings.
+                                disabled: hasConfirmed(r),
+                                onClick: () => setStatusRoute(r),
+                                icon: (
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                    <circle cx="12" cy="12" r="9" />
+                                    <path d="M5.6 5.6l12.8 12.8" />
+                                  </svg>
+                                ),
+                              }
+                            : {
+                                label: "Enable route",
+                                onClick: () => setStatusRoute(r),
+                                icon: (
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                    <path d="M20 6 9 17l-5-5" />
+                                  </svg>
+                                ),
+                              },
                           {
-                            label: "Delete route",
+                            label: r.status === "Cancelled" ? "Cancelled" : "Cancel route",
                             danger: true,
-                            onClick: () => setDeleteRoute(r),
+                            disabled: r.status === "Cancelled" || r.status === "Departed",
+                            onClick: () => setCancelRoute(r),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                <path d="M3 6h18" />
-                                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                                <path d="M10 11v6M14 11v6" />
+                                <circle cx="12" cy="12" r="9" />
+                                <path d="M15 9l-6 6M9 9l6 6" />
                               </svg>
                             ),
                           },
@@ -518,8 +591,12 @@ export default function RoutesPage() {
             destination,
             distanceNm: Number(payload.distanceNm) || 0,
             durationHrs: [lo, hi],
-            status: "Active",
-            assignments: [],
+            scheduleAt: at(8),
+            status: "Scheduled",
+            isEnabled: payload.status !== "Inactive",
+            vessel: "",
+            accommodationFares: payload.accommodationFares,
+            serviceFee: payload.serviceFee ? Number(payload.serviceFee) : undefined,
           };
           if (payload.createReturn) {
             const returnLeg: Route = {
@@ -550,15 +627,8 @@ export default function RoutesPage() {
           if (!origin || !destination) return;
           const lo = Number(payload.durationLowHrs) || 0;
           const hi = Number(payload.durationHighHrs) || lo;
-          // In assign mode reconcile the assignments roster with the draft:
-          // kept vessels retain their existing departures; new vessels start
-          // with an empty departure list; removed vessels drop out.
-          const nextAssignments = assignMode
-            ? assignDraft.map((name) => {
-                const prev = editRoute.assignments.find((a) => a.vessel === name);
-                return prev ?? { vessel: name, departures: [] };
-              })
-            : editRoute.assignments;
+          // Assign mode sets the single vessel; edit mode tweaks details.
+          const nextVessel = assignMode ? (assignDraft[0] ?? "") : editRoute.vessel;
           updateRoutes((prev) =>
             prev.map((r) =>
               r.id === editRoute.id
@@ -568,8 +638,10 @@ export default function RoutesPage() {
                     destination,
                     distanceNm: Number(payload.distanceNm) || 0,
                     durationHrs: [lo, hi],
-                    status: payload.status ?? r.status,
-                    assignments: nextAssignments,
+                    isEnabled: payload.status ? payload.status !== "Inactive" : r.isEnabled,
+                    vessel: nextVessel,
+                    accommodationFares: payload.accommodationFares ?? r.accommodationFares,
+                    serviceFee: payload.serviceFee != null && payload.serviceFee !== "" ? Number(payload.serviceFee) : r.serviceFee,
                   }
                 : r
             )
@@ -581,373 +653,317 @@ export default function RoutesPage() {
         ) : null}
       />
 
-      <DeleteRouteDialog
-        route={deleteRoute}
-        onClose={() => setDeleteRoute(null)}
-        onConfirm={(r) => updateRoutes((prev) => prev.filter((x) => x.id !== r.id))}
+      <RouteStatusDialog
+        open={!!statusRoute}
+        label={statusRoute ? `${statusRoute.origin.name ?? statusRoute.origin.city} → ${statusRoute.destination.name ?? statusRoute.destination.city}` : ""}
+        mode={statusRoute?.isEnabled ? "disable" : "activate"}
+        onClose={() => setStatusRoute(null)}
+        onConfirm={() => { if (statusRoute) toggleRouteStatus(statusRoute.id); }}
       />
 
-      <RouteScheduleDialog route={scheduleRoute} onClose={() => setScheduleRoute(null)} />
+      <CancelRouteDialog
+        route={cancelRoute}
+        lineId={active.id}
+        onComplete={completeCancel}
+        onClose={dismissCancel}
+      />
+
+      <SetDepartureDialog
+        route={departRoute}
+        onConfirm={confirmActualDeparture}
+        onClose={() => setDepartRoute(null)}
+      />
+
+      <FiltersDialog
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        activeCount={activeFilterCount}
+        fields={[
+          { kind: "dateRange", key: "date", label: "Date & time", value: dateRange, onChange: setDateRange, defaultValue: { start: todayRange, end: todayRange } },
+          { kind: "select", key: "origin", label: "Origin", value: originFilter, options: originOptions, onChange: setOriginFilter, defaultValue: "all" },
+          { kind: "select", key: "destination", label: "Destination", value: destinationFilter, options: destinationOptions, onChange: setDestinationFilter, defaultValue: "all" },
+          { kind: "select", key: "lifecycle", label: "Status", value: lifecycleFilter, onChange: setLifecycleFilter, defaultValue: "all",
+            options: [
+              { value: "all", label: "All statuses" },
+              { value: "Scheduled", label: "Scheduled" },
+              { value: "Departed", label: "Departed" },
+              { value: "Cancelled", label: "Cancelled" },
+            ] },
+          { kind: "select", key: "active", label: "Active / Inactive", value: activeFilter, onChange: setActiveFilter, defaultValue: "all",
+            options: [
+              { value: "all", label: "All" },
+              { value: "Active", label: "Active" },
+              { value: "Inactive", label: "Inactive" },
+            ] },
+        ]}
+      />
     </div>
   );
 }
 
-// ─────────── RouteRef ───────────
-// Route reference code with a copy-to-clipboard affordance. The icon stays
-// quiet until row hover, then flips to a check for a beat on copy.
-function RouteRef({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = (e: React.MouseEvent) => {
-    e.stopPropagation(); // don't trigger the row's edit click
-    navigator.clipboard?.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1400);
-    }).catch(() => {});
-  };
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-900">{value}</span>
-      {copied ? (
-        <span aria-label="Copied" className="grid h-5 w-5 place-items-center rounded text-emerald-600">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-            <path d="M5 12l5 5 9-11" />
-          </svg>
-        </span>
-      ) : (
-        <button
-          type="button"
-          onClick={copy}
-          aria-label={`Copy ${value}`}
-          className="grid h-5 w-5 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-90 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-            <rect x="9" y="9" width="11" height="11" rx="2" />
-            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-          </svg>
-        </button>
-      )}
-    </span>
-  );
+
+// Date + time label for the Schedule / Departed-at columns, e.g. "Jun 23, 8:00 AM".
+function fmtDateTime(d: Date): string {
+  return d.toLocaleString("en-US", {
+    month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
 }
 
-// ─────────── DeleteRouteDialog ───────────
-// Lightweight confirm — the row menu is now the only delete path, so it must
-// guard against accidental removal. Mirrors DeleteVesselDialog's visuals
-// without the type-to-confirm friction (a route is lower-stakes than a vessel).
-function DeleteRouteDialog({
-  route,
-  onClose,
-  onConfirm,
+// ─────────── SetDepartureDialog ───────────
+// Confirms the leg's actual departure time (defaults to now) and flips the
+// route status to Departed.
+function SetDepartureDialog({
+  route, onConfirm, onClose,
 }: {
   route: Route | null;
+  onConfirm: (id: string, when: Date) => void;
   onClose: () => void;
-  onConfirm: (r: Route) => void;
 }) {
-  const assignedCount = route?.assignments.length ?? 0;
+  const [when, setWhen] = useState("");
+  useEffect(() => {
+    if (!route) return;
+    // Default to now, formatted for <input type="datetime-local">.
+    const n = new Date();
+    n.setSeconds(0, 0);
+    const pad = (x: number) => String(x).padStart(2, "0");
+    setWhen(`${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}T${pad(n.getHours())}:${pad(n.getMinutes())}`);
+  }, [route]);
+
+  if (!route) return null;
+  const legLabel = `${route.origin.name ?? route.origin.city} → ${route.destination.name ?? route.destination.city}`;
+
   return (
     <Modal open={!!route} onClose={onClose} maxWidth="max-w-md">
       <div className="px-6 pb-5 pt-6">
         <div className="flex items-start gap-4">
-          <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-rose-50 text-rose-600 ring-1 ring-rose-200/70">
+          <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-amber-50 text-amber-700 ring-1 ring-amber-200/70">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-              <path d="M3 6h18" />
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-              <path d="M10 11v6M14 11v6" />
+              <path d="M5 12h13M13 6l6 6-6 6" />
             </svg>
           </span>
           <div className="min-w-0 flex-1">
-            <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Delete this route?</h2>
+            <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Set actual departure</h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
-              {route ? (
-                <>
-                  <span className="font-medium text-slate-900">
-                    {route.origin.city} ({route.origin.code}) → {route.destination.city} ({route.destination.code})
-                  </span>{" "}
-                  will be removed from your catalog.
-                  {assignedCount > 0 && (
-                    <> Its {assignedCount} vessel assignment{assignedCount === 1 ? "" : "s"} and their departures will be unlinked.</>
-                  )}{" "}
-                  This cannot be undone.
-                </>
-              ) : "—"}
+              <span className="font-medium text-slate-900">{legLabel}</span> will be marked
+              <span className="font-medium text-slate-900"> Departed</span> at the time below.
             </p>
           </div>
         </div>
+        <div className="mt-5">
+          <label className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Actual departure</label>
+          <input
+            type="datetime-local"
+            value={when}
+            onChange={(e) => setWhen(e.target.value)}
+            className="mt-1.5 w-full rounded-md border border-slate-200 bg-white px-2.5 py-2 text-[13px] text-slate-900 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-brand-300 focus:outline-none focus:ring-2 focus:ring-brand-100"
+          />
+        </div>
       </div>
-
       <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-3.5">
-        <button
-          type="button"
-          onClick={onClose}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-slate-300"
-        >
+        <button type="button" onClick={onClose} className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
           Cancel
         </button>
         <button
           type="button"
-          onClick={() => { if (route) { onConfirm(route); onClose(); } }}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-rose-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-rose-400"
+          disabled={!when}
+          onClick={() => { onConfirm(route.id, new Date(when)); onClose(); }}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Delete route
+          Mark departed
         </button>
       </div>
     </Modal>
   );
 }
 
-// ─────────── AssignedVesselsSummary ───────────
-// Read-only roster of the vessels sailing a route, shown in the edit dialog.
-// Departures are managed in the RouteScheduleDialog — the "Manage" link hands
-// off there rather than duplicating that editor here.
-function AssignedVesselsSummary({ route, onManage }: { route: Route; onManage: (vessel?: string) => void }) {
-  const { assignments } = route;
+// ─────────── CancelRouteDialog ───────────
+// Lists the bookings under a leg with a single batch "mark refunded" action
+// (refunds are manual). Completing flips the bookings/tickets to Refunded and
+// cancels the route; closing without completing flags the route Action needed.
+function CancelRouteDialog({
+  route,
+  lineId,
+  onComplete,
+  onClose,
+}: {
+  route: Route | null;
+  lineId: string;
+  /** Refund all the leg's bookings + cancel cleanly. */
+  onComplete: (r: Route) => void;
+  /** Plain dismiss — no change. */
+  onClose: () => void;
+}) {
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [bkPage, setBkPage] = useState(1);
+
+  useEffect(() => {
+    if (!route) { setBkPage(1); return; }
+    setBkPage(1);
+    const o = route.origin.code, d = route.destination.code;
+    try {
+      const all = loadStore<Booking[]>("bookings", lineId) ?? [];
+      const found = all.filter((b) => b.routeOriginCode === o && b.routeDestinationCode === d);
+      // Demo: if a leg has no bookings in the store, show a few sample ones so
+      // the cancel/refund flow is presentable. (Remove for production data.)
+      setBookings(found.length > 0 ? found : sampleLegBookings(route));
+    } catch {
+      setBookings(sampleLegBookings(route));
+    }
+  }, [route, lineId]);
+
+  if (!route) return null;
+
+  const legLabel = `${route.origin.name ?? route.origin.city} → ${route.destination.name ?? route.destination.city}`;
+  const toRefund = bookings.filter((b) => b.status !== "Refunded");
+  const totalAmount = toRefund.reduce((s, b) => s + (b.amount || 0), 0);
+  const totalPax = bookings.reduce((s, b) => s + (b.pax || 0), 0);
+
+  const PER_PAGE = 12;
+  const pageCount = Math.max(1, Math.ceil(bookings.length / PER_PAGE));
+  const safePage = Math.min(bkPage, pageCount);
+  const pageBookings = bookings.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
+
   return (
-    <div className="rounded-xl border border-slate-200 bg-white">
-      <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2.5">
-        <div className="flex items-baseline gap-2">
-          <h4 className="text-[13px] font-semibold tracking-tight text-slate-900">Assigned vessels</h4>
-          <span className="font-mono text-[11px] tabular-nums text-slate-400">{assignments.length}</span>
+    <Modal open={!!route} onClose={onClose} maxWidth="max-w-3xl">
+      <div className="flex h-[80vh] max-h-[80vh] flex-col">
+        <div className="border-b border-slate-100 px-6 pb-4 pt-6">
+          <div className="flex items-start gap-4">
+            <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-rose-50 text-rose-600 ring-1 ring-rose-200/70">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M15 9l-6 6M9 9l6 6" />
+              </svg>
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Cancel this trip?</h2>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
+                <span className="font-medium text-slate-900">{legLabel}</span> will be cancelled.
+                Refund the bookings below, then confirm. Refunds are processed manually —
+                this records them as refunded in the system.
+              </p>
+            </div>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={() => onManage()}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] font-medium text-brand-700 transition-colors duration-150 hover:bg-brand-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300"
-        >
-          Manage schedule
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
-            <path d="M9 6l6 6-6 6" />
-          </svg>
-        </button>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {bookings.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/40 px-4 py-8 text-center text-[12.5px] text-slate-400">
+              No bookings on this leg. The trip can be cancelled cleanly.
+            </div>
+          ) : (
+            <>
+              {/* Summary — bookings · pax · total to refund. */}
+              <div className="mb-3 grid grid-cols-3 gap-2">
+                <SummaryStat label="Bookings" value={bookings.length.toLocaleString()} />
+                <SummaryStat label="Passengers" value={totalPax.toLocaleString()} />
+                <SummaryStat label="To refund" value={`₱${totalAmount.toLocaleString()}`} />
+              </div>
+
+              <div className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+                {pageBookings.map((b) => (
+                  <div key={b.ref} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-[13px] font-medium tracking-tight text-slate-900">{b.ticketholder}</div>
+                      <div className="font-mono text-[10.5px] text-slate-400">{b.ref} · {b.pax} pax</div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="font-mono text-[12px] tabular-nums text-slate-600">₱{(b.amount || 0).toLocaleString()}</span>
+                      <span className={
+                        "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide " +
+                        (b.status === "Refunded" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")
+                      }>
+                        {b.status === "Refunded" ? "Refunded" : "Pending refund"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pager — only when more than one page. */}
+              {pageCount > 1 && (
+                <div className="mt-3 flex items-center justify-between text-[12px] text-slate-500">
+                  <span>
+                    Showing {(safePage - 1) * PER_PAGE + 1}–{Math.min(safePage * PER_PAGE, bookings.length)} of {bookings.length}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setBkPage((p) => Math.max(1, p - 1))}
+                      disabled={safePage <= 1}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[12px] font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <span className="px-1 tabular-nums">{safePage} / {pageCount}</span>
+                    <button
+                      type="button"
+                      onClick={() => setBkPage((p) => Math.min(pageCount, p + 1))}
+                      disabled={safePage >= pageCount}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[12px] font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-6 py-3.5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={() => onComplete(route)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-rose-700"
+          >
+            {bookings.length === 0 ? "Cancel trip" : "Mark all refunded & cancel"}
+          </button>
+        </div>
       </div>
-      {assignments.length === 0 ? (
-        <div className="px-4 pb-3.5 text-[12px] text-slate-400">
-          No vessels assigned yet. Use Manage schedule to add one.
-        </div>
-      ) : (
-        <ul className="divide-y divide-slate-100 px-4 pb-2">
-          {assignments.map((a) => {
-            const cadence = derivewWeekdayCadence(a.departures);
-            return (
-              <li key={a.vessel}>
-                <button
-                  type="button"
-                  onClick={() => onManage(a.vessel)}
-                  className="group flex w-full items-center gap-2.5 rounded-lg py-2.5 text-left transition-colors duration-150 hover:bg-slate-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300"
-                >
-                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                      <path d="M3 14h18l-2 5a2 2 0 0 1-1.9 1.3H6.9A2 2 0 0 1 5 19l-2-5Z" />
-                      <path d="M5 14V8a1 1 0 0 1 1-1h7l5 4" />
-                      <path d="M9 7V4h2" />
-                    </svg>
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-medium tracking-tight text-slate-900">{a.vessel}</span>
-                    {cadence && <span className="block truncate text-[11px] text-slate-400">{cadence}</span>}
-                  </span>
-                  <span className="shrink-0 text-[11.5px] tabular-nums text-slate-500">
-                    {a.departures.length} departure{a.departures.length === 1 ? "" : "s"}
-                  </span>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0 text-slate-300 transition-colors group-hover:text-brand-500">
-                    <path d="M9 6l6 6-6 6" />
-                  </svg>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+    </Modal>
+  );
+}
+
+// Compact stat tile for the cancel dialog's summary row.
+function SummaryStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{label}</div>
+      <div className="mt-0.5 font-mono text-[15px] font-semibold tabular-nums tracking-tight text-slate-900">{value}</div>
     </div>
   );
 }
 
-// ─────────── RouteScheduleDialog ───────────
-// Shows every vessel assigned to a route + that vessel's dated departures.
-// Filterable by vessel. Fixed body height so the dialog never resizes when
-// the filter changes (avoids the layout-shift / masking issue).
-function RouteScheduleDialog({
-  route,
-  onClose,
-}: {
-  route: Route | null;
-  onClose: () => void;
-}) {
-  const [vesselFilter, setVesselFilter] = useState<string>("all");
-
-  // Reset the filter whenever a different route opens.
-  useEffect(() => { setVesselFilter("all"); }, [route?.id]);
-
-  const vesselOptions = useMemo(() => {
-    if (!route) return [{ value: "all", label: "All vessels" }];
-    return [
-      { value: "all", label: "All vessels" },
-      ...route.assignments.map((a) => ({ value: a.vessel, label: a.vessel })),
-    ];
-  }, [route]);
-
-  const visible = useMemo(() => {
-    if (!route) return [];
-    return route.assignments.filter((a) => vesselFilter === "all" || a.vessel === vesselFilter);
-  }, [route, vesselFilter]);
-
-  // The earliest upcoming departure across all visible assignments — used to
-  // tag the single "Next" sailing so the operator's eye lands on it.
-  const nextDeparture = useMemo(() => {
-    const all = visible.flatMap((a) => a.departures).filter((d) => d.getTime() >= Date.now());
-    return all.length ? all.reduce((min, d) => (d < min ? d : min)) : null;
-  }, [visible]);
-
-  const totalDepartures = useMemo(
-    () => visible.reduce((s, a) => s + a.departures.length, 0),
-    [visible],
-  );
-
-  if (!route) return null;
-
-  const fmtTime = (d: Date) =>
-    `${((d.getHours() + 11) % 12) + 1}:${String(d.getMinutes()).padStart(2, "0")} ${d.getHours() < 12 ? "AM" : "PM"}`;
-
-  return (
-    <Modal open={!!route} onClose={onClose} maxWidth="max-w-2xl">
-      {/* Fixed height — body scrolls internally so the dialog box stays the
-          same size regardless of the vessel filter. */}
-      <div className="flex h-[760px] max-h-[90vh] flex-col">
-        {/* Header — boarding-pass style route headline. */}
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
-          <div className="min-w-0">
-            <span className="font-mono text-[11px] font-semibold tabular-nums tracking-[0.08em] text-slate-400">{route.ref}</span>
-            <div className="mt-1 flex items-center gap-2">
-              <span className="font-mono text-[17px] font-bold uppercase tabular-nums tracking-[0.04em] text-slate-900">{route.origin.code}</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-300">
-                <path d="M5 12h14M13 6l6 6-6 6" />
-              </svg>
-              <span className="font-mono text-[17px] font-bold uppercase tabular-nums tracking-[0.04em] text-slate-900">{route.destination.code}</span>
-            </div>
-            <p className="mt-0.5 truncate text-[12px] text-slate-500">{route.origin.city} → {route.destination.city}</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-              <path d="M6 6l12 12M18 6 6 18" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Filter + summary row */}
-        <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-3">
-          <Select
-            size="sm"
-            value={vesselFilter}
-            onChange={setVesselFilter}
-            ariaLabel="Filter by vessel"
-            className="flex-1"
-            options={vesselOptions}
-          />
-          <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-slate-500">
-            {totalDepartures} departure{totalDepartures === 1 ? "" : "s"}
-          </span>
-        </div>
-
-        {/* Vessel → departures list */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {visible.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-[12.5px] text-slate-400">
-              No vessels assigned to this route.
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {visible.map((a) => {
-                const cadence = derivewWeekdayCadence(a.departures);
-                return (
-                  <div key={a.vessel}>
-                    {/* Vessel group header — icon tile + name + cadence chip,
-                        with the departure count tucked to the right. */}
-                    <div className="flex items-center gap-2.5">
-                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                          <path d="M3 18c1.5 0 2-1 4-1s2.5 1 4 1 2-1 4-1 2.5 1 4 1" />
-                          <path d="M5 18V9l7-4 7 4v9" />
-                          <path d="M9 13h6" />
-                        </svg>
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{a.vessel}</h3>
-                          {cadence && (
-                            <span className="hidden shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] tracking-wide text-slate-500 sm:inline">
-                              {cadence}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-slate-400">
-                          {a.departures.length} departure{a.departures.length === 1 ? "" : "s"}
-                        </div>
-                      </div>
-                    </div>
-
-                    {a.departures.length === 0 ? (
-                      <p className="mt-2 pl-[42px] text-[12px] text-slate-400">No upcoming departures.</p>
-                    ) : (
-                      <ul className="mt-2.5 grid grid-cols-2 gap-1.5 pl-[42px]">
-                        {a.departures.map((d, i) => {
-                          const isNext = nextDeparture != null && d.getTime() === nextDeparture.getTime();
-                          const isPast = d.getTime() < Date.now();
-                          return (
-                            <li
-                              key={i}
-                              className={
-                                "flex items-baseline justify-between rounded-md px-2.5 py-1.5 text-[12px] " +
-                                (isNext
-                                  ? "bg-brand-50"
-                                  : isPast
-                                    ? "bg-transparent"
-                                    : "bg-slate-50")
-                              }
-                            >
-                              <span className="flex items-center gap-1.5">
-                                <span className={"font-medium tracking-tight " + (isPast ? "text-slate-400" : "text-slate-900")}>
-                                  {d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                                </span>
-                                {isNext && (
-                                  <span className="rounded bg-brand-500 px-1 py-0.5 text-[8.5px] font-bold uppercase tracking-[0.08em] text-white">
-                                    Next
-                                  </span>
-                                )}
-                              </span>
-                              <span className={"font-mono tabular-nums " + (isPast ? "text-slate-300" : "text-slate-500")}>
-                                {fmtTime(d)}
-                              </span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-// Derive a compact weekday-cadence label ("Mon · Wed · Fri") from a list of
-// departures — gives the operator the recurring pattern at a glance. Returns
-// null when there's nothing meaningful to show.
-function derivewWeekdayCadence(departures: Date[]): string | null {
-  if (departures.length === 0) return null;
-  const short = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const present = new Set(departures.map((d) => d.getDay()));
-  // Order Mon→Sun for readability.
-  const order = [1, 2, 3, 4, 5, 6, 0];
-  const days = order.filter((dow) => present.has(dow)).map((dow) => short[dow]);
-  if (days.length === 0 || days.length === 7) return days.length === 7 ? "Daily" : null;
-  return days.join(" · ");
+// Demo-only — synthesize sample bookings for a leg that has none in the store,
+// so the cancel/refund modal is presentable at realistic volume (and the
+// pager has something to page through). Remove once real bookings flow in.
+function sampleLegBookings(route: Route): Booking[] {
+  const first = ["Maria", "Juan", "Andrea", "Mark", "Liza", "Paolo", "Grace", "Noel", "Faith", "Rico", "Ella", "Dan"];
+  const last = ["Santos", "dela Cruz", "Reyes", "Villanueva", "Mendoza", "Aquino", "Tan", "Lim", "Cruz", "Garcia"];
+  const o = route.origin.code, d = route.destination.code;
+  const oc = route.origin.city, dc = route.destination.city;
+  const COUNT = 28;
+  return Array.from({ length: COUNT }, (_, i) => {
+    const pax = 1 + (i % 4);
+    return {
+      ref: `BK-${o}${d}-${String(i + 1).padStart(3, "0")}`,
+      ticketholder: `${first[i % first.length]} ${last[(i * 3) % last.length]}`,
+      pax,
+      routeOriginCode: o,
+      routeDestinationCode: d,
+      routeOriginCity: oc,
+      routeDestinationCity: dc,
+      amount: 850 * pax,
+      status: "Confirmed",
+      tickets: [],
+    } as unknown as Booking;
+  });
 }

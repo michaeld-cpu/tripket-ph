@@ -82,6 +82,9 @@ export type PassengerType = {
   discountFlat?: number;
   requiredDoc: string;
   isInfant?: boolean;
+  /** Whether this passenger type is offered on the vessel. Submitted as
+      is_active; defaults to true when absent (legacy rows). */
+  is_active?: boolean;
 };
 
 // Optional extras a vessel can sell on top of the base ticket (e.g. cabin meal,
@@ -118,6 +121,9 @@ export type Vessel = {
   passengers: number;
   vehicleSlots: number | null; // null when type is passenger-only
   status: "Active" | "Inactive" | "Retired" | "Maintenance";
+  /** Enabled flag for the API resource (is_enabled). Mirrors status==="Active".
+      Defaults to true when absent (legacy rows). */
+  is_enabled?: boolean;
   location: string;
   vehicleClasses?: VehicleClass[];
   passengerTypes?: PassengerType[];

@@ -67,8 +67,7 @@ export default function AddPortDialog({ open, onClose, onAdd }: Props) {
           <div className="min-w-0 flex-1">
             <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Add a port</h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
-              Search for the city or municipality, then name the port. The city
-              code is generated automatically from your choice.
+              Search for the city or municipality, then name the port.
             </p>
           </div>
         </div>
@@ -145,15 +144,14 @@ export default function AddPortDialog({ open, onClose, onAdd }: Props) {
                 <p className="mt-1 text-[11px] text-slate-400">The specific terminal or pier at this city.</p>
               </div>
 
-              {/* Generated, read-only city code. */}
-              <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
-                <div className="min-w-0">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">City code</div>
-                  <div className="mt-0.5 text-[11px] text-slate-400">{picked.city} · {picked.province}</div>
-                </div>
-                <span className="rounded-md bg-white px-2.5 py-1 font-mono text-[13px] font-semibold tracking-[0.12em] text-slate-900 ring-1 ring-slate-200">
-                  {code}
-                </span>
+              {/* Location confirmation. (City code is generated internally but
+                  hidden for now — the dev team hasn't finalized codes.) */}
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 text-slate-400">
+                  <path d="M12 21s-7-7.5-7-12a7 7 0 1 1 14 0c0 4.5-7 12-7 12Z" />
+                  <circle cx="12" cy="9" r="2.5" />
+                </svg>
+                <span className="text-[12px] text-slate-500">{picked.city} · {picked.province}</span>
               </div>
             </>
           )}

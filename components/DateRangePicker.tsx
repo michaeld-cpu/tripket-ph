@@ -104,8 +104,9 @@ export default function DateRangePicker({ value, onChange }: Props) {
       const top = spaceBelow < POPOVER_HEIGHT && r.top > POPOVER_HEIGHT
         ? r.top - POPOVER_HEIGHT - 8
         : r.bottom + 8;
-      // Right-align with the trigger, but clamp inside the viewport.
-      const rawLeft = r.right - POPOVER_WIDTH;
+      // Left-align with the trigger (so it sits under the field, not spilling
+      // left of a narrow modal), but clamp inside the viewport.
+      const rawLeft = r.left;
       const left = Math.max(8, Math.min(rawLeft, window.innerWidth - POPOVER_WIDTH - 8));
       setCoords({ top, left });
     };

@@ -167,6 +167,7 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
       passengers: totalPassengers,
       vehicleSlots: isPassengerOnly ? null : totalVehicleSlots,
       status: values.status,
+      is_enabled: values.status === "Active",
       location: values.status === "Active" ? "At port" : values.status,
       accommodations: enabledAccommodations,
       vehicleClasses: isPassengerOnly ? [] : vehicleClasses.filter(c => c.enabled),

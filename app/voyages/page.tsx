@@ -2,9 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
+import { useToast } from "@/components/ToastContext";
 import Select from "@/components/Select";
 import Tooltip from "@/components/Tooltip";
 import CreateScheduleModal from "@/components/CreateScheduleModal";
+import { getSeries, saveSeries } from "@/lib/schedule-series";
 import { MOCK_FLEET, type VesselType } from "@/components/schedule-steps/VesselStep";
 import { PORTS, findPort, codeOf } from "@/components/schedule-steps/RoutesStep";
 import { getCustomPorts } from "@/lib/custom-ports";
@@ -53,17 +55,27 @@ type Voyage = {
   cheapestFare: number;
   priciestFare: number;
   /** Itemized fare lines for the dialog — passenger tiers + add-ons. */
-  fareLines: { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon"; free?: boolean }[];
+  fareLines: { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon" | "service"; free?: boolean }[];
   /** Confirmed bookings count — defaults to 0 until a booking system lands. */
   paxConfirmed: number;
   status: VoyageStatus;
   /** Optional operator label for recurring schedules (e.g. "Schedule A").
       Carried from the schedule wizard; surfaces on the calendar card. */
   scheduleLabel?: string;
+  /** Groups every voyage expanded from the same wizard payload, so the series
+      can be edited later. Absent on legacy voyages (status-only editable). */
+  seriesId?: string;
 };
 
 // Helper — turn a CreatedSchedule payload into one-or-many calendar Voyages.
-function expandSchedulePayload(payload: import("@/components/CreateScheduleModal").CreatedSchedule): Voyage[] {
+// `seriesId` tags every voyage so the series can be edited later. `fromDate`,
+// when given, only generates voyages on/after that day (used when re-applying
+// an edit "from this voyage's date forward").
+function expandSchedulePayload(
+  payload: import("@/components/CreateScheduleModal").CreatedSchedule,
+  seriesId: string,
+  fromDate?: Date,
+): Voyage[] {
   const { schedule, routes, vessel, fares } = payload;
 
   // Resolve vessel display info (name + capacity + type) from either the
@@ -101,13 +113,16 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
       return p.discountPct > 0 ? Math.round(base * (1 - p.discountPct / 100)) : base;
     })
     .filter((n) => n > 0);
-  const cheapestFare = enabledPrices.length > 0 ? Math.min(...enabledPrices) : base;
-  const priciestFare = enabledPrices.length > 0 ? Math.max(...enabledPrices) : base;
+  // Flat per-leg service fee (global for this route), added on top of fares.
+  const serviceFee = Number(routes.serviceFee) || 0;
+  const cheapestFare = (enabledPrices.length > 0 ? Math.min(...enabledPrices) : base) + serviceFee;
+  const priciestFare = (enabledPrices.length > 0 ? Math.max(...enabledPrices) : base) + serviceFee;
 
   // ── Itemized fare breakdown for the detail dialog. ──
   // Passenger tiers come from the vessel's catalog (with per-schedule price
-  // overrides applied), vehicle classes from the same source, add-ons last.
-  type FareLine = { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon"; free?: boolean };
+  // overrides applied), vehicle classes from the same source, add-ons, then the
+  // route-level service fee as its own line.
+  type FareLine = { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon" | "service"; free?: boolean };
   const fareLines: FareLine[] = [];
   vessel.passengerTypes
     .filter((p) => fares.passengerPrices[p.key]?.enabled)
@@ -134,6 +149,9 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
       const row = fares.addOnPrices[a.key];
       fareLines.push({ key: `addon-${a.key}`, label: a.label, sublabel: a.descriptor, amount: Number(row?.price) || a.defaultPrice, group: "addon" });
     });
+  if (serviceFee > 0) {
+    fareLines.push({ key: "service-fee", label: "Service fee", sublabel: "Flat fee for this route", amount: serviceFee, group: "service" });
+  }
 
   const avgDuration =
     (Number(routes.durationLowHrs) + Number(routes.durationHighHrs)) / 2 || 1.5;
@@ -145,6 +163,12 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
   const RANGE_DAYS = 30;
   const start = new Date();
   start.setHours(0, 0, 0, 0);
+  // When re-applying an edit forward, don't generate before that date.
+  if (fromDate) {
+    const floor = new Date(fromDate);
+    floor.setHours(0, 0, 0, 0);
+    if (floor > start) start.setTime(floor.getTime());
+  }
   const dowKeys = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
   const expansions: { date: Date; hour: number }[] = [];
@@ -159,8 +183,9 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
 
   const scheduleLabel = schedule.label?.trim() || undefined;
 
+  const stamp = Date.now();
   return expansions.map(({ date, hour }, i) => ({
-    id: `vy-${Date.now()}-${i}`,
+    id: `vy-${stamp}-${i}`,
     date,
     hour,
     minute: 0,
@@ -179,6 +204,7 @@ function expandSchedulePayload(payload: import("@/components/CreateScheduleModal
     paxConfirmed: 0,
     status: "Scheduled" as const,
     scheduleLabel,
+    seriesId,
   }));
 }
 
@@ -217,6 +243,7 @@ function fmtDuration(hours: number): string {
 
 export default function VoyagesPage() {
   const { active, locked } = useShippingLine();
+  const { showToast } = useToast();
   const [weekStart] = useState<Date>(() => startOfWeek(TODAY));
   const [vesselFilter, setVesselFilter] = useState<string>("all");
   const [portFilter, setPortFilter] = useState<string>("all");
@@ -321,6 +348,54 @@ export default function VoyagesPage() {
     setOpenVoyageId(null);
   };
 
+  // ── Edit a schedule series ──
+  // Opening pulls the originating wizard payload (kept in the series store).
+  // Saving re-applies the new config from the edited voyage's date FORWARD,
+  // touching only still-"Scheduled" voyages in the same series; earlier dates
+  // and Departed/Arrived/Cancelled voyages are left as-is.
+  const [editVoyageId, setEditVoyageId] = useState<string | null>(null);
+  const editVoyage = useMemo(
+    () => voyages.find((v) => v.id === editVoyageId) ?? null,
+    [voyages, editVoyageId],
+  );
+  const editSeries = editVoyage?.seriesId ? getSeries(editVoyage.seriesId) : null;
+
+  const beginEditSchedule = (id: string) => {
+    const v = voyages.find((x) => x.id === id);
+    if (!v?.seriesId || !getSeries(v.seriesId)) {
+      showToast("This voyage isn't linked to an editable schedule.", "error");
+      return;
+    }
+    setOpenVoyageId(null);
+    setEditVoyageId(id);
+  };
+
+  const saveEditedSchedule = (payload: import("@/components/CreateScheduleModal").CreatedSchedule) => {
+    const target = editVoyage;
+    if (!target?.seriesId) return;
+    const seriesId = target.seriesId;
+    const fromDate = new Date(target.date);
+    fromDate.setHours(0, 0, 0, 0);
+
+    saveSeries(seriesId, payload);
+    const regenerated = expandSchedulePayload(payload, seriesId, fromDate);
+
+    setVoyages((prev) => {
+      // Drop the to-be-replaced voyages: same series, date >= fromDate, still
+      // Scheduled. Everything else (earlier dates, other statuses, other
+      // series) is preserved.
+      const kept = prev.filter((v) => {
+        if (v.seriesId !== seriesId) return true;
+        const d = new Date(v.date); d.setHours(0, 0, 0, 0);
+        if (d < fromDate) return true;
+        return v.status !== "Scheduled";
+      });
+      return [...kept, ...regenerated];
+    });
+    setEditVoyageId(null);
+    showToast("Schedule updated from this date forward.");
+  };
+
   // ── Batch select / delete ──
   // In select mode, clicking a slot toggles it (by slotKey) instead of opening
   // the detail dialog. Deleting clears every occurrence of the chosen slots.
@@ -350,7 +425,7 @@ export default function VoyagesPage() {
     voyages.forEach((v) => { seen.set(v.originCode, v.originCity); seen.set(v.destinationCode, v.destinationCity); });
     return [
       { value: "all", label: "All ports" },
-      ...Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1])).map(([code, city]) => ({ value: code, label: `${city} (${code})` })),
+      ...Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1])).map(([code, city]) => ({ value: code, label: city })),
     ];
   }, [voyages]);
 
@@ -700,8 +775,10 @@ export default function VoyagesPage() {
         onCreate={(payload) => {
           // The calendar is a weekday template, so newly-created voyages land
           // on their weekday columns immediately — no week-jump needed.
-          const newVoyages = expandSchedulePayload(payload);
+          const seriesId = `sr-${Date.now()}`;
+          const newVoyages = expandSchedulePayload(payload, seriesId);
           if (newVoyages.length === 0) return;
+          saveSeries(seriesId, payload); // retain payload so the series is editable
           setVoyages((prev) => [...prev, ...newVoyages]);
         }}
       />
@@ -712,6 +789,16 @@ export default function VoyagesPage() {
         onClose={() => setOpenVoyageId(null)}
         onStatusChange={updateVoyageStatus}
         onRemove={removeVoyage}
+        onEditSchedule={openVoyage?.seriesId ? () => beginEditSchedule(openVoyage.id) : undefined}
+      />
+
+      {/* Edit-schedule wizard — pre-filled from the series payload; saving
+          re-applies the config from this voyage's date forward. */}
+      <CreateScheduleModal
+        open={!!editVoyage && !!editSeries}
+        editValue={editSeries}
+        onClose={() => setEditVoyageId(null)}
+        onSave={saveEditedSchedule}
       />
 
       <ManifestDialog
@@ -846,8 +933,8 @@ function VoyageCard({
       aria-pressed={selectMode ? selected : undefined}
       aria-label={
         selectMode
-          ? `${selected ? "Deselect" : "Select"} ${voyage.originCode} to ${voyage.destinationCode} on ${voyage.vesselName}`
-          : `Open ${voyage.originCode} to ${voyage.destinationCode} on ${voyage.vesselName} — ${voyage.status.toLowerCase()}`
+          ? `${selected ? "Deselect" : "Select"} ${voyage.originCity} to ${voyage.destinationCity} on ${voyage.vesselName}`
+          : `Open ${voyage.originCity} to ${voyage.destinationCity} on ${voyage.vesselName} — ${voyage.status.toLowerCase()}`
       }
       className={
         "group/voyage relative flex w-full flex-col overflow-hidden rounded-lg py-1.5 pl-3 pr-2.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[box-shadow,transform] duration-150 ease-out " +
@@ -878,13 +965,13 @@ function VoyageCard({
       {/* Route — headline. */}
       <span
         className={
-          "truncate font-mono text-[11.5px] font-bold uppercase tabular-nums tracking-[0.08em] " +
+          "truncate text-[11.5px] font-bold tracking-tight " +
           `${tone.routeText} ${strike ? "line-through decoration-rose-400/70 " : ""}`
         }
       >
-        {voyage.originCode}
+        {voyage.originCity}
         <span className={"mx-1 " + tone.arrow} aria-hidden>→</span>
-        {voyage.destinationCode}
+        {voyage.destinationCity}
       </span>
       {/* Vessel — supporting caption. The whole card is tinted per vessel so
           stacked cards (same day+time, different vessels) read as distinct. */}
@@ -1032,10 +1119,12 @@ function VoyageFooter({
   voyage,
   onRemove,
   onStatusChange,
+  onEditSchedule,
 }: {
   voyage: Voyage;
   onRemove: (id: string) => void;
   onStatusChange: (id: string, next: VoyageStatus) => void;
+  onEditSchedule?: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
 
@@ -1083,16 +1172,31 @@ function VoyageFooter({
 
   return (
     <div className="flex items-center justify-between gap-3 px-5 py-4">
-      <button
-        type="button"
-        onClick={() => setConfirming(true)}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-rose-600 transition-colors duration-150 hover:bg-rose-50"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6" />
-        </svg>
-        Remove
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-rose-600 transition-colors duration-150 hover:bg-rose-50"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+            <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6" />
+          </svg>
+          Remove
+        </button>
+        {onEditSchedule && (
+          <button
+            type="button"
+            onClick={onEditSchedule}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+            Edit schedule
+          </button>
+        )}
+      </div>
       <VoyageStatusPicker
         current={voyage.status}
         onChange={(next) => onStatusChange(voyage.id, next)}
@@ -1107,12 +1211,15 @@ function VoyageDetailDialog({
   onClose,
   onStatusChange,
   onRemove,
+  onEditSchedule,
 }: {
   voyage: Voyage | null;
   open: boolean;
   onClose: () => void;
   onStatusChange: (id: string, status: VoyageStatus) => void;
   onRemove: (id: string) => void;
+  /** Present only when the voyage belongs to an editable schedule series. */
+  onEditSchedule?: () => void;
 }) {
   // The dialog mirrors whichever line is currently active in the top-bar
   // switcher — voyages always read from the live context, never the stored
@@ -1206,10 +1313,7 @@ function VoyageDetailDialog({
                 <div className="rounded-xl bg-white px-5 py-4">
                   <div className="flex items-center justify-center gap-3">
                     <div className="min-w-0 text-center">
-                      <div className="truncate font-mono text-[22px] font-bold uppercase tabular-nums tracking-[0.06em] text-slate-900">
-                        {voyage.originCode}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                      <div className="truncate text-[18px] font-bold tracking-tight text-slate-900">
                         {voyage.originCity}
                       </div>
                     </div>
@@ -1222,10 +1326,7 @@ function VoyageDetailDialog({
                     </div>
                     <DashedArrow />
                     <div className="min-w-0 text-center">
-                      <div className="truncate font-mono text-[22px] font-bold uppercase tabular-nums tracking-[0.06em] text-slate-900">
-                        {voyage.destinationCode}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                      <div className="truncate text-[18px] font-bold tracking-tight text-slate-900">
                         {voyage.destinationCity}
                       </div>
                     </div>
@@ -1287,6 +1388,7 @@ function VoyageDetailDialog({
           voyage={voyage}
           onRemove={onRemove}
           onStatusChange={onStatusChange}
+          onEditSchedule={onEditSchedule}
         />
       </div>
     </Modal>
@@ -1340,7 +1442,7 @@ function DashedArrow() {
 function FareBreakdown({
   lines,
 }: {
-  lines: { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon"; free?: boolean }[] | undefined;
+  lines: { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon" | "service"; free?: boolean }[] | undefined;
 }) {
   // Older voyages persisted before fareLines existed won't have this field.
   // Treat missing/empty the same way.
@@ -1354,10 +1456,11 @@ function FareBreakdown({
     );
   }
 
-  const groups: { key: "passenger" | "vehicle" | "addon"; title: string }[] = [
+  const groups: { key: "passenger" | "vehicle" | "addon" | "service"; title: string }[] = [
     { key: "passenger", title: "Passenger fares" },
     { key: "vehicle",   title: "Vehicle fares" },
     { key: "addon",     title: "Add-ons" },
+    { key: "service",   title: "Service fee" },
   ];
 
   return (
@@ -1455,7 +1558,7 @@ function ManifestDialog({
     const dateLabel = v.date.toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit" });
     const timeLabel = `${String(v.hour).padStart(2, "0")}:${String(v.minute).padStart(2, "0")}`;
     const lines = [
-      `Manifest — ${v.originCode} → ${v.destinationCode}`,
+      `Manifest — ${v.originCity} → ${v.destinationCity}`,
       `Vessel,${v.vesselName}`,
       `Departure,${dateLabel} ${timeLabel}`,
       `Capacity,${v.paxCapacity}`,
@@ -1546,8 +1649,8 @@ function ManifestDialog({
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-[12.5px] font-bold uppercase tabular-nums tracking-[0.04em] text-slate-900">
-                        {v.originCode} → {v.destinationCode}
+                      <span className="text-[12.5px] font-bold tracking-tight text-slate-900">
+                        {v.originCity} → {v.destinationCity}
                       </span>
                     </div>
                     <div className="mt-0.5 truncate text-[11.5px] text-slate-500">{v.vesselName}</div>
