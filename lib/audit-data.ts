@@ -9,7 +9,7 @@ import { lines } from "@/lib/shipping-lines";
 export type AuditArea = "Bookings" | "Tickets" | "Routes" | "Vessels" | "Schedules" | "Users";
 export type AuditAction =
   | "created" | "updated" | "approved" | "cancelled" | "refunded"
-  | "paid" | "suspended" | "reactivated" | "deleted";
+  | "paid" | "disabled" | "enabled" | "deleted";
 
 export type AuditEntry = {
   id: string;
@@ -28,10 +28,10 @@ export const actionTone: Record<AuditAction, string> = {
   updated:     "bg-slate-100 text-slate-600 ring-1 ring-slate-200/70",
   approved:    "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100",
   paid:        "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100",
-  reactivated: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100",
+  enabled:     "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100",
   cancelled:   "bg-rose-50 text-rose-700 ring-1 ring-rose-100",
   refunded:    "bg-sky-50 text-sky-700 ring-1 ring-sky-100",
-  suspended:   "bg-rose-50 text-rose-700 ring-1 ring-rose-100",
+  disabled:    "bg-rose-50 text-rose-700 ring-1 ring-rose-100",
   deleted:     "bg-rose-50 text-rose-700 ring-1 ring-rose-100",
 };
 
@@ -44,7 +44,9 @@ export const areaTone: Record<AuditArea, string> = {
   Users:     "bg-slate-100 text-slate-600",
 };
 
-const STAFF = ["Ada Reyes", "Marco Santos", "Liza Cruz", "Ramon Mendoza", "Carla Flores", "Diego Navarro", "System"];
+// Staff actions are attributed generically to "Someone"; "System" stays last
+// for system-generated entries (the picker excludes the final element).
+const STAFF = ["Someone", "System"];
 
 // Plausible (area → action → target) tuples for believable entries.
 const TEMPLATES: { area: AuditArea; action: AuditAction; target: () => string; detail?: string }[] = [
@@ -60,8 +62,8 @@ const TEMPLATES: { area: AuditArea; action: AuditAction; target: () => string; d
   { area: "Vessels",  action: "updated",   target: () => vesselName(), detail: "Capacity updated" },
   { area: "Schedules",action: "created",   target: () => `Schedule ${pick(["A", "B", "C"])}`, detail: "Recurring weekly · 30 days" },
   { area: "Users",    action: "created",   target: () => personName() },
-  { area: "Users",    action: "suspended", target: () => personName() },
-  { area: "Users",    action: "reactivated", target: () => personName() },
+  { area: "Users",    action: "disabled",  target: () => personName() },
+  { area: "Users",    action: "enabled",   target: () => personName() },
 ];
 
 const VESSEL_NAMES = ["MV Filipinas Cebu", "MV Reina del Cielo", "MV Visayan Star", "FC Sinulog", "MV Santa Maria"];

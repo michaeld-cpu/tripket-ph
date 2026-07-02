@@ -3,12 +3,12 @@ import { useEffect, useState } from "react";
 import Modal from "./Modal";
 import type { Vessel } from "@/lib/dashboard-data";
 
-type Mode = "disable" | "activate";
+type Mode = "disable" | "enable";
 
 type Props = {
   open: boolean;
   vessel: Vessel | null;
-  /** "disable" (Active → Inactive) or "activate" (Inactive → Active). */
+  /** "disable" (Active → Inactive) or "enable" (Inactive → Active). */
   mode: Mode;
   onClose: () => void;
   onConfirm: (v: Vessel) => void;
@@ -64,12 +64,12 @@ export default function VesselStatusDialog({ open, vessel, mode, onClose, onConf
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">
-              {isDisable ? "Disable this vessel?" : "Activate this vessel?"}
+              {isDisable ? "Disable this vessel?" : "Enable this vessel?"}
             </h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
               <span className="font-medium text-slate-900">{expected || "—"}</span>{" "}
               {isDisable
-                ? "will be set to Inactive — it stops being available for new schedules and bookings. Nothing is deleted; you can activate it again at any time."
+                ? "will be set to Inactive — it stops being available for new schedules and bookings. Nothing is deleted; you can enable it again at any time."
                 : "will be set to Active and available again for scheduling and bookings."}
             </p>
           </div>
@@ -97,8 +97,8 @@ export default function VesselStatusDialog({ open, vessel, mode, onClose, onConf
           }
         >
           {submitting
-            ? (isDisable ? "Disabling…" : "Activating…")
-            : (isDisable ? "Disable vessel" : "Activate vessel")}
+            ? (isDisable ? "Disabling…" : "Enabling…")
+            : (isDisable ? "Disable vessel" : "Enable vessel")}
         </button>
       </div>
     </Modal>

@@ -4,10 +4,7 @@ import type { ScheduleValue, DayKey } from "@/components/schedule-steps/Schedule
 import type { RoutesValue, Port } from "@/components/schedule-steps/RoutesStep";
 import { PORTS, findPort } from "@/components/schedule-steps/RoutesStep";
 import type { VesselValue, FleetVessel } from "@/components/schedule-steps/VesselStep";
-import type { FaresValue } from "@/components/schedule-steps/FaresStep";
-import { useShippingLine } from "@/components/ShippingLineContext";
 import { useCustomPorts } from "@/lib/custom-ports";
-import VoyageCard from "@/components/VoyageCard";
 
 /**
  * Review step — final stop of the Create-Schedule wizard.
@@ -37,18 +34,15 @@ export default function ReviewStep({
   schedule,
   routes,
   vessel,
-  fares,
   fleet,
   onEdit,
 }: {
   schedule: ScheduleValue;
   routes: RoutesValue;
   vessel: VesselValue;
-  fares: FaresValue;
   fleet: FleetVessel[];
   onEdit: (stepIdx: number) => void;
 }) {
-  const { active: activeLine } = useShippingLine();
   // ── Cross-step lookups ──
   const customPorts = useCustomPorts();
   const allPorts = useMemo(() => [...PORTS, ...customPorts], [customPorts]);
@@ -100,54 +94,6 @@ export default function ReviewStep({
     }
     return "";
   }, [schedule.dayTimes, activeDays]);
-
-  // ── Fares math — read from the vessel's catalog + the schedule's pricing ──
-  const baseEconomy = Number(fares.baseFare) || 0;
-
-  type FareLine = { key: string; label: string; sublabel: string; amount: number; free?: boolean };
-
-  const passengerLines: FareLine[] = vessel.passengerTypes
-    .filter((p) => fares.passengerPrices[p.key]?.enabled)
-    .map((p) => {
-      const row = fares.passengerPrices[p.key];
-      if (p.isInfant) {
-        return { key: p.key, label: p.label, sublabel: p.requiredDoc, amount: 0, free: true };
-      }
-      const computed = p.discountPct > 0 ? Math.round(baseEconomy * (1 - p.discountPct / 100)) : baseEconomy;
-      const amount = row.price ? Number(row.price) || 0 : computed;
-      const sublabel = p.discountPct > 0 ? `${p.discountPct}% off base · ${p.requiredDoc}` : p.requiredDoc;
-      return { key: p.key, label: p.label, sublabel, amount };
-    });
-
-  const vehicleLines = vesselSlots > 0
-    ? vessel.vehicleClasses
-        .filter((c) => c.enabled && fares.vehiclePrices[c.key]?.enabled)
-        .map((c) => ({
-          key: c.key,
-          label: c.label,
-          sublabel: c.descriptor,
-          amount: Number(fares.vehiclePrices[c.key]?.price) || 0,
-        }))
-    : [];
-
-  const addOnLines = vessel.addOns
-    .filter((a) => fares.addOnPrices[a.key]?.enabled)
-    .map((a) => ({
-      key: a.key,
-      label: a.label,
-      sublabel: a.descriptor,
-      amount: Number(fares.addOnPrices[a.key]?.price) || a.defaultPrice,
-    }));
-
-  // Flat per-leg service fee for this route (set in the Fares step).
-  const serviceFee = Number(routes.serviceFee) || 0;
-  const passengerSubtotal = passengerLines.filter((l) => !l.free).reduce((s, l) => s + l.amount, 0);
-  const vehicleSubtotal = vehicleLines.reduce((s, l) => s + l.amount, 0);
-  const addOnSubtotal = addOnLines.reduce((s, l) => s + l.amount, 0);
-  const sampleBasket = passengerSubtotal + vehicleSubtotal + addOnSubtotal + serviceFee;
-
-  const cheapest = passengerLines.filter((l) => !l.free).reduce<FareLine | null>((min, l) => !min || l.amount < min.amount ? l : min, null);
-  const priciest = passengerLines.filter((l) => !l.free).reduce<FareLine | null>((max, l) => !max || l.amount > max.amount ? l : max, null);
 
   // ── Estimated arrival time for the hero pill ──
   // Uses the first slot of the first active weekday as a representative
@@ -204,34 +150,6 @@ export default function ReviewStep({
           }
         }
       `}</style>
-
-      {/* ─── Hero summary — shared VoyageCard for a unified preview look ─── */}
-      {origin && destination && vesselName ? (
-        <VoyageCard
-          tone="active"
-          statusLabel="Weekly Schedule"
-          vesselName={vesselName}
-          vesselType={vesselType ?? ""}
-          lineName={activeLine.name}
-          dateLabel={new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", weekday: "long", year: "numeric" })}
-          fromCode={origin.code}
-          fromCity={origin.city}
-          fromTime={formatTime(sampleDepartureTime) || "—"}
-          toCode={destination.code}
-          toCity={destination.city}
-          toTime={eta ?? "—"}
-          durationLabel={
-            routes.durationLowHrs && routes.durationHighHrs
-              ? `${routes.durationLowHrs}–${routes.durationHighHrs} HRS`
-              : `${tripsTotal} VOYAGES`
-          }
-          progress={0}
-        />
-      ) : (
-        <div className="grid place-items-center rounded-2xl border border-dashed border-slate-300 bg-slate-50/40 px-5 py-10 text-[12.5px] font-medium text-slate-400">
-          Route or vessel not set yet.
-        </div>
-      )}
 
       {/* ─── Single-column timeline ───
          Four sections stack vertically with hairline dividers between them.
@@ -364,127 +282,6 @@ export default function ReviewStep({
             </DefList>
           ) : (
             <EmptyHint message="No vessel selected yet." />
-          )}
-        </ReviewCard>
-
-        {/* Fares — collapsed by default. */}
-        <ReviewCard
-          title="Fares"
-          defaultOpen={false}
-          subtitle={
-            passengerLines.length === 0
-              ? "Not configured"
-              : `${passengerLines.length} ${passengerLines.length === 1 ? "tier" : "tiers"}${addOnLines.length ? ` · ${addOnLines.length} add-${addOnLines.length === 1 ? "on" : "ons"}` : ""} · Sample ₱${sampleBasket.toLocaleString()}`
-          }
-          icon={
-            // Ticket / tag — clearer "fare" semantics than the peso glyph.
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-              <path d="M3 8a2 2 0 0 1 2-2h11l5 5v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z" />
-              <path d="M16 6v4a1 1 0 0 0 1 1h4" />
-              <path d="M7 13h6M7 16h4" />
-            </svg>
-          }
-          onEdit={() => onEdit(3)}
-        >
-          {passengerLines.length === 0 ? (
-            <EmptyHint message="No passenger fares enabled." />
-          ) : (
-            <div className="space-y-2">
-              {/* Passenger lines */}
-              <div className="space-y-1">
-                {passengerLines.map((l) => (
-                  <FareLineRow key={l.key} label={l.label} sublabel={l.sublabel} amount={l.amount} free={l.free} />
-                ))}
-              </div>
-
-              {/* Vehicle fares — only when the selected vessel has a car deck. */}
-              {vehicleLines.length > 0 && (
-                <>
-                  <div className="my-1.5 flex items-center gap-2">
-                    <div className="h-px flex-1 bg-slate-100" />
-                    <span className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Vehicle fares</span>
-                    <div className="h-px flex-1 bg-slate-100" />
-                  </div>
-                  <div className="space-y-1">
-                    {vehicleLines.map((l) => (
-                      <FareLineRow key={l.key} label={l.label} amount={l.amount} />
-                    ))}
-                  </div>
-                </>
-              )}
-
-              {/* Add-ons */}
-              {addOnLines.length > 0 && (
-                <>
-                  <div className="my-1.5 flex items-center gap-2">
-                    <div className="h-px flex-1 bg-slate-100" />
-                    <span className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Add-ons</span>
-                    <div className="h-px flex-1 bg-slate-100" />
-                  </div>
-                  <div className="space-y-1">
-                    {addOnLines.map((l) => (
-                      <FareLineRow key={l.key} label={l.label} sublabel={l.sublabel} amount={l.amount} />
-                    ))}
-                  </div>
-                </>
-              )}
-
-              {/* Service fee — flat per-leg fee for this route. */}
-              {serviceFee > 0 && (
-                <>
-                  <div className="my-1.5 flex items-center gap-2">
-                    <div className="h-px flex-1 bg-slate-100" />
-                    <span className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Service fee</span>
-                    <div className="h-px flex-1 bg-slate-100" />
-                  </div>
-                  <FareLineRow label="Service fee" sublabel="Flat fee for this route" amount={serviceFee} />
-                </>
-              )}
-
-              {/* Subtotals + sample basket */}
-              <div className="mt-2 space-y-0.5 rounded-md bg-slate-50/80 px-2.5 py-2 ring-1 ring-slate-100">
-                <div className="flex items-center justify-between text-[10.5px] text-slate-500">
-                  <span>Passenger subtotal</span>
-                  <Mono className="text-[11px] text-slate-700">₱{passengerSubtotal.toLocaleString()}</Mono>
-                </div>
-                {serviceFee > 0 && (
-                  <div className="flex items-center justify-between text-[10.5px] text-slate-500">
-                    <span>Service fee</span>
-                    <Mono className="text-[11px] text-slate-700">₱{serviceFee.toLocaleString()}</Mono>
-                  </div>
-                )}
-                {vehicleLines.length > 0 && (
-                  <div className="flex items-center justify-between text-[10.5px] text-slate-500">
-                    <span>Vehicle subtotal</span>
-                    <Mono className="text-[11px] text-slate-700">₱{vehicleSubtotal.toLocaleString()}</Mono>
-                  </div>
-                )}
-                {addOnLines.length > 0 && (
-                  <div className="flex items-center justify-between text-[10.5px] text-slate-500">
-                    <span>Add-on subtotal</span>
-                    <Mono className="text-[11px] text-slate-700">₱{addOnSubtotal.toLocaleString()}</Mono>
-                  </div>
-                )}
-                <div className="mt-1 flex items-center justify-between border-t border-slate-200/70 pt-1.5">
-                  <span className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-brand-700">Sample basket</span>
-                  <span className="font-mono text-[14px] font-bold tabular-nums tracking-tight text-slate-900">
-                    ₱{sampleBasket.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-
-              {/* Range hint */}
-              {cheapest && priciest && cheapest.key !== priciest.key && (
-                <div className="text-[10.5px] text-slate-500">
-                  Per-passenger range:{" "}
-                  <Mono className="text-slate-700">₱{cheapest.amount.toLocaleString()}</Mono>{" "}
-                  <span className="text-slate-400">({cheapest.label})</span>
-                  {" → "}
-                  <Mono className="text-slate-700">₱{priciest.amount.toLocaleString()}</Mono>{" "}
-                  <span className="text-slate-400">({priciest.label})</span>
-                </div>
-              )}
-            </div>
           )}
         </ReviewCard>
       </div>
@@ -637,14 +434,6 @@ function FareLineRow({ label, sublabel, amount, free }: { label: string; sublabe
 }
 
 // ─────────── Time helpers ───────────
-function formatTime(hhmm: string): string {
-  const m = hhmm?.match(/^(\d{1,2}):(\d{2})$/);
-  if (!m) return "—";
-  const h24 = parseInt(m[1], 10);
-  const period = h24 < 12 ? "AM" : "PM";
-  const h12 = ((h24 + 11) % 12) + 1;
-  return `${h12}:${m[2]} ${period}`;
-}
 // Compact hour-only label ("4 AM", "11 PM") used by the per-day time chips.
 function formatHourLabel(h: number): string {
   const period = h < 12 ? "AM" : "PM";

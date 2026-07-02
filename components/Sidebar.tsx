@@ -81,6 +81,13 @@ const UsersIcon = ({ className }: IconProps) => (
   </svg>
 );
 
+const OperatorsIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
+  </svg>
+);
+
 const SettingsIcon = ({ className }: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <circle cx="12" cy="12" r="3" />
@@ -130,6 +137,7 @@ function buildNavEntries(role: "admin" | "operator"): (NavEntry | { kind: "divid
     Icon: ShieldIcon,
     children: [
       { kind: "leaf", href: "/users",      label: "Users",      Icon: UsersIcon },
+      { kind: "leaf", href: "/operators",  label: "Operators",  Icon: OperatorsIcon },
       { kind: "leaf", href: "/audit-logs", label: "Audit logs", Icon: AuditIcon },
     ],
   };

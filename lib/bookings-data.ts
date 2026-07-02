@@ -3,13 +3,17 @@
 // (stored in `tripket.voyages` localStorage). Each voyage seeds 1-3 mock
 // bookings so the table has something to render before a real booking system
 // is wired up.
-export type BookingStatus = "Confirmed" | "Pending" | "Cancelled" | "Refunded";
+// Booking lifecycle. Submitted = paid but awaiting operator approval;
+// Confirmed = approved; To Refund = cancelled and eligible for a refund
+// (money not yet returned); Refunded = money returned.
+export type BookingStatus = "Confirmed" | "Submitted" | "Cancelled" | "To Refund" | "Refunded";
 
 export type FareClass = "Economy" | "Tourist" | "Business";
 export type PassengerSex = "Male" | "Female";
-// Per-ticket lifecycle. Pending = awaiting payment/approval; Paid = settled;
-// Cancelled = refund pending; Refunded = money returned.
-export type TicketStatus = "Pending" | "Issued" | "Cancelled" | "Refunded";
+// Per-ticket lifecycle. Submitted = paid, awaiting approval; Issued = settled;
+// Cancelled = void; To Refund = eligible for refund (money not yet returned);
+// Refunded = money returned.
+export type TicketStatus = "Submitted" | "Issued" | "Cancelled" | "To Refund" | "Refunded";
 
 // Per-pax ticket carried under one booking. Each ticket has its own ID
 // suffixed off the booking ref (TKT-0001-A, TKT-0001-B, …) so passengers can
@@ -165,9 +169,9 @@ export type Booking = {
   /** Contact details captured at booking. */
   contactMobile: string;
   contactEmail: string;
-  /** Payment metadata. */
+  /** Payment metadata. Submitted = paid, awaiting operator approval. */
   paymentMethod: "Tripket Wallet";
-  paymentStatus: "Issued" | "Pending" | "Refunded";
+  paymentStatus: "Issued" | "Submitted" | "Refunded";
   /** Per-pax tickets. tickets.length === pax. */
   tickets: Ticket[];
   /** Audit trail. Seeded from history on first load, then appended to live as
@@ -191,7 +195,7 @@ export function makeActivity(
 // derived deterministically from a booking's lifecycle until a real audit
 // backend feeds them. Newest first.
 export type ActivityKind =
-  | "created" | "approved" | "paid" | "ticket_paid" | "refunded" | "cancelled" | "edited" | "note";
+  | "created" | "approved" | "paid" | "ticket_paid" | "to_refund" | "refunded" | "cancelled" | "edited" | "note";
 
 export type ActivityEntry = {
   id: string;
@@ -205,7 +209,9 @@ export type ActivityEntry = {
   at: Date;
 };
 
-const ACTORS = ["Ada Reyes", "Marco Santos", "Liza Cruz", "System"];
+// Staff actions are attributed generically to "Someone"; "System" stays last
+// for system-generated entries (staff() excludes the final element).
+const ACTORS = ["Someone", "System"];
 
 // Re-hydrate bookings after a JSON round-trip — Date fields land as ISO
 // strings in localStorage and need to come back as Date objects so the
@@ -254,9 +260,14 @@ export function deriveActivity(b: Booking): ActivityEntry[] {
   }
 
   // 3. Terminal transitions.
-  if (b.status === "Cancelled") {
+  if (b.status === "Cancelled" || b.status === "To Refund" || b.status === "Refunded") {
     step(60 + Math.floor(rand() * 600));
     push("cancelled", "Booking cancelled", staff(), "Cancelled by operator");
+  }
+  // To Refund = cancelled and flagged eligible; the payout hasn't run yet.
+  if (b.status === "To Refund") {
+    step(30 + Math.floor(rand() * 300));
+    push("to_refund", "Marked for refund", staff(), `₱${b.amount.toLocaleString()} eligible for return`);
   }
   if (b.status === "Refunded") {
     step(120 + Math.floor(rand() * 1200));
@@ -288,7 +299,11 @@ export function deriveTicketActivity(t: Ticket, ref: string, createdAt: Date): A
     step(20 + Math.floor(rand() * 200));
     push("ticket_paid", "Marked as paid", staff(), t.ticketNumber ? `Ticket no. ${t.ticketNumber}` : undefined);
   }
-  if (t.status === "Cancelled") { step(60 + Math.floor(rand() * 400)); push("cancelled", "Ticket cancelled", staff()); }
+  if (t.status === "Cancelled" || t.status === "To Refund" || t.status === "Refunded") {
+    step(60 + Math.floor(rand() * 400));
+    push("cancelled", "Ticket cancelled", staff());
+  }
+  if (t.status === "To Refund") { step(30 + Math.floor(rand() * 200)); push("to_refund", "Marked for refund", staff(), `Fare ₱${t.grossFare.toLocaleString()} eligible for return`); }
   if (t.status === "Refunded") { step(120 + Math.floor(rand() * 800)); push("refunded", "Ticket refunded", staff(), `Fare ₱${t.grossFare.toLocaleString()} returned`); }
 
   void ref;
@@ -407,18 +422,19 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         };
       }
       const statusRoll = rand();
-      // First booking minted is forced to "Refunded" so the table has one
-      // representative entry for that status without disturbing the
-      // distribution of the rest.
       // Forced samples so every status has a deterministic representative.
       //   counter === 1  → Refunded booking (table sample)
+      //   counter === 2  → To Refund booking (cancelled, awaiting payout)
       //   counter === 17 → 4 passengers, mixed ticket statuses:
-      //                    pax 0 Paid · pax 1 Paid · pax 2 Cancelled · pax 3 Refunded
+      //                    pax 0 Issued · pax 1 Issued · pax 2 Cancelled · pax 3 Refunded
       // Ticket-only overrides leave the booking status to the normal roll
-      // so the row still reads as a healthy booking.
+      // so the row still reads as a healthy booking. Submitted = paid but
+      // awaiting operator approval.
       const status: BookingStatus = counter === 1
         ? "Refunded"
-        : statusRoll < 0.65 ? "Confirmed" : statusRoll < 0.9 ? "Pending" : "Cancelled";
+        : counter === 2
+          ? "To Refund"
+          : statusRoll < 0.65 ? "Confirmed" : statusRoll < 0.9 ? "Submitted" : "Cancelled";
       const forceTicketMix17 = counter === 17;
       const first = FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
       const last = LAST_NAMES[Math.floor(rand() * LAST_NAMES.length)];
@@ -469,8 +485,9 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           : `${tFirst.toLowerCase()}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`;
         const ticketStatus: TicketStatus = (() => {
           if (status === "Cancelled") return "Cancelled";
+          if (status === "To Refund") return "To Refund";
           if (status === "Refunded")  return "Refunded";
-          if (status === "Pending")   return "Pending";
+          if (status === "Submitted") return "Submitted";
           if (forceTicketMix17) {
             if (p === 2) return "Cancelled";
             if (p === 3) return "Refunded";
@@ -479,7 +496,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           return "Issued";
         })();
         // The ticket number is the public identifier (TKT-####-X), but it's
-        // only assigned once a ticket is Paid. Pending/unpaid tickets carry
+        // only assigned once a ticket is Issued. Submitted/unpaid tickets carry
         // none — the UI shows a dash until payment is collected.
         const ticketNumber = ticketStatus === "Issued"
           ? `${ref}-${String.fromCharCode(65 + p)}`
@@ -533,10 +550,12 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       // both customer top-ups and operator settlements through the same
       // ledger, so every booking lands here.
       const paymentMethod: Booking["paymentMethod"] = "Tripket Wallet";
+      // To Refund = customer paid, payout not yet run → payment stays Issued
+      // until the refund actually settles.
       const paymentStatus: Booking["paymentStatus"] =
         status === "Cancelled" || status === "Refunded"
           ? "Refunded"
-          : status === "Pending" ? "Pending" : "Issued";
+          : status === "Submitted" ? "Submitted" : "Issued";
 
       bookings.push({
         ref,
@@ -562,34 +581,170 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       counter++;
     }
   });
+
+  // ── Extra Submitted samples ──
+  // Five hand-seeded Submitted bookings (paid, awaiting approval) on top of the
+  // voyage-derived rows so the approval queue always has a representative spread
+  // (solo pax, small groups, a family, and a vehicle booking) regardless of how
+  // the random roll fell. Each is built off a real voyage (cycled) so it carries
+  // a valid route, vessel, and departure; all their tickets are Submitted with
+  // no ticket number.
+  const seedable = voyages.filter((v) => v.originCode && v.destinationCode && !isNaN(new Date(v.date).getTime()));
+  if (seedable.length > 0) {
+    // paxPlan defines each sample's size + fare-class mix + whether it carries
+    // a vehicle, so the five reads as a believable variety rather than clones.
+    const SAMPLE_PLANS: { pax: number; classes: FareClass[]; vehicle: boolean }[] = [
+      { pax: 1, classes: ["Economy"], vehicle: false },
+      { pax: 2, classes: ["Tourist", "Economy"], vehicle: false },
+      { pax: 3, classes: ["Economy", "Economy", "Business"], vehicle: false },
+      { pax: 4, classes: ["Tourist", "Tourist", "Economy", "Economy"], vehicle: false },
+      { pax: 2, classes: ["Business", "Economy"], vehicle: true },
+    ];
+    SAMPLE_PLANS.forEach((plan, s) => {
+      const v = seedable[s % seedable.length];
+      const ref = `TKT-${String(counter).padStart(4, "0")}`;
+      const rand = rng(hashStr(`pending-sample-${ref}`));
+      const baseFare = v.cheapestFare || 1200;
+
+      const dep = new Date(v.date);
+      dep.setHours(v.hour, v.minute, 0, 0);
+      // Pending bookings are recent — booked 1-3 days before departure.
+      const bookingDate = new Date(dep);
+      bookingDate.setDate(bookingDate.getDate() - (1 + Math.floor(rand() * 3)));
+      bookingDate.setHours(0, 0, 0, 0);
+
+      const first = FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
+      const last = LAST_NAMES[Math.floor(rand() * LAST_NAMES.length)];
+      const contactMobile = `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14);
+      const contactEmail = `${first}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`;
+
+      let vehicle: Vehicle | undefined;
+      if (plan.vehicle) {
+        const make = VEHICLE_MAKES[Math.floor(rand() * VEHICLE_MAKES.length)];
+        const models = VEHICLE_MODELS_BY_MAKE[make] ?? ["Standard"];
+        const model = models[Math.floor(rand() * models.length)];
+        const labelPrefix = VEHICLE_LABEL_PREFIXES[Math.floor(rand() * VEHICLE_LABEL_PREFIXES.length)];
+        vehicle = {
+          class: VEHICLE_LABELS[Math.floor(rand() * VEHICLE_LABELS.length)],
+          plateNumber: `${String.fromCharCode(65 + Math.floor(rand() * 26))}${String.fromCharCode(65 + Math.floor(rand() * 26))}${String.fromCharCode(65 + Math.floor(rand() * 26))} ${String(1000 + Math.floor(rand() * 8999))}`,
+          includedSeats: 2,
+          year: 2015 + Math.floor(rand() * 11),
+          make,
+          model,
+          label: `${labelPrefix} ${model}`,
+          photoUrl: pickMockImage("vehiclePhoto", rand),
+          orUrl: pickMockImage("or", rand),
+          crUrl: pickMockImage("cr", rand),
+        };
+      }
+
+      const tickets: Ticket[] = plan.classes.map((fareClass, p) => {
+        const isLead = p === 0;
+        const tFirst = isLead ? first : FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
+        const sex: PassengerSex = rand() < 0.5 ? "Female" : "Male";
+        const age = 1 + Math.floor(rand() * 72);
+        const paxType: PaxType = (() => {
+          if (age <= 2) return "infant";
+          if (age >= 60) return "senior";
+          const roll = rand();
+          if (age >= 6 && age <= 24 && roll < 0.2) return "student";
+          if (roll >= 0.95) return "pwd";
+          return "regular";
+        })();
+        const idType = ID_TYPES[Math.floor(rand() * ID_TYPES.length)];
+        return {
+          id: `${ref}-${String.fromCharCode(65 + p)}`,
+          name: `${tFirst} ${last}`,
+          fareClass,
+          paxType,
+          // Pending tickets have no assigned ticket number yet.
+          ticketNumber: undefined,
+          age,
+          sex,
+          nationality: "Filipino",
+          documentType: idType.label,
+          documentRef: idType.format(rand),
+          idFrontUrl: pickMockImage("idFront", rand),
+          idBackUrl: pickMockImage("idBack", rand),
+          fare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
+          grossFare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
+          phone: isLead ? contactMobile : `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14),
+          email: isLead ? contactEmail : `${tFirst.toLowerCase()}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`,
+          status: "Submitted" as TicketStatus,
+        };
+      });
+
+      // Comp the cheapest seats covered by the vehicle fee, mirroring the
+      // main loop so vehicle sample totals stay honest.
+      if (vehicle) {
+        const indexed = tickets.map((t, i) => ({ t, i }));
+        indexed.sort((a, b) => {
+          const af = FARE_CLASS_MULTIPLIER[a.t.fareClass];
+          const bf = FARE_CLASS_MULTIPLIER[b.t.fareClass];
+          return af !== bf ? af - bf : a.i - b.i;
+        });
+        const compCount = Math.min(vehicle.includedSeats, tickets.length);
+        for (let c = 0; c < compCount; c++) { indexed[c].t.comped = true; indexed[c].t.fare = 0; }
+      }
+
+      bookings.push({
+        ref,
+        ticketholder: `${first} ${last}`,
+        pax: plan.pax,
+        vehicleClass: vehicle?.class,
+        vehicle,
+        routeOriginCode: v.originCode!,
+        routeDestinationCode: v.destinationCode!,
+        routeOriginCity: v.originCity ?? v.originCode!,
+        routeDestinationCity: v.destinationCity ?? v.destinationCode!,
+        vesselName: v.vesselName ?? "Unknown vessel",
+        departureDate: dep,
+        amount: tickets.reduce((sum, t) => sum + t.fare, 0) + (vehicle ? 500 + Math.floor(rand() * 2000) : 0),
+        status: "Submitted",
+        bookingDate,
+        contactMobile,
+        contactEmail,
+        paymentMethod: "Tripket Wallet",
+        paymentStatus: "Submitted",
+        tickets,
+      });
+      counter++;
+    });
+  }
+
   // Newest bookings first.
   return bookings.sort((a, b) => b.bookingDate.getTime() - a.bookingDate.getTime());
 }
 // Unified status palette — uppercase labels, no dots, restrained tones.
-// Approved = opaque emerald (settled / good); Pending = brand-orange
-// (needs attention); Cancelled = struck slate.
+// Approved = opaque emerald (settled / good); Submitted = brand-orange
+// (needs approval); To Refund = amber (payout pending); Cancelled = struck
+// slate; Refunded = sky.
 export const statusTone: Record<BookingStatus, string> = {
-  Confirmed: "bg-emerald-100 text-emerald-800",
-  Pending:   "bg-brand-50 text-brand-700",
-  Cancelled: "bg-slate-100 text-slate-500",
-  Refunded:  "bg-sky-50 text-sky-700",
+  Confirmed:   "bg-emerald-100 text-emerald-800",
+  Submitted:   "bg-brand-50 text-brand-700",
+  Cancelled:   "bg-slate-100 text-slate-500",
+  "To Refund": "bg-amber-100 text-amber-800",
+  Refunded:    "bg-sky-50 text-sky-700",
 };
 
 // Display label per status — keeps the internal "Confirmed" value (so all
 // existing logic still works) while surfacing "Approved" to the operator.
 export const statusLabel: Record<BookingStatus, string> = {
-  Confirmed: "Approved",
-  Pending:   "Pending",
-  Cancelled: "Cancelled",
-  Refunded:  "Refunded",
+  Confirmed:   "Approved",
+  Submitted:   "Submitted",
+  Cancelled:   "Cancelled",
+  "To Refund": "To Refund",
+  Refunded:    "Refunded",
 };
 
-// Per-ticket palette — Pending mirrors the booking pending tone (brand
-// orange), Paid is the healthy default (emerald), Cancelled is quietly
-// muted slate, Refunded matches the booking-level refund tone.
+// Per-ticket palette — Submitted mirrors the booking submitted tone (brand
+// orange), Issued is the healthy default (emerald), Cancelled is quietly
+// muted slate, To Refund is amber (payout pending), Refunded matches the
+// booking-level refund tone.
 export const ticketStatusTone: Record<TicketStatus, string> = {
-  Pending:   "bg-brand-50 text-brand-700",
-  Issued:    "bg-emerald-100 text-emerald-800",
-  Cancelled: "bg-slate-100 text-slate-500",
-  Refunded:  "bg-sky-50 text-sky-700",
+  Submitted:   "bg-brand-50 text-brand-700",
+  Issued:      "bg-emerald-100 text-emerald-800",
+  Cancelled:   "bg-slate-100 text-slate-500",
+  "To Refund": "bg-amber-100 text-amber-800",
+  Refunded:    "bg-sky-50 text-sky-700",
 };

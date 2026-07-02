@@ -4,7 +4,7 @@ import Modal from "@/components/Modal";
 import Select from "@/components/Select";
 import { lines } from "@/lib/shipping-lines";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
-import type { User, UserRole, UserStatus } from "@/lib/users-data";
+import { userStatusLabel, type User, type UserRole, type UserStatus } from "@/lib/users-data";
 
 /**
  * UserFormModal — shared create/edit dialog for platform users.
@@ -33,6 +33,7 @@ export default function UserFormModal({
   open,
   editUser,
   lockedLineId,
+  defaultRole = "Operator",
   onClose,
   onSubmit,
 }: {
@@ -42,13 +43,16 @@ export default function UserFormModal({
   /** When set, the shipping line is fixed to this id (Team tab) — the line
       picker is shown read-only. */
   lockedLineId?: string;
+  /** Role a freshly-created user starts on. Lets the Users page default to
+      Admin and the Operators page default to Operator. */
+  defaultRole?: UserRole;
   onClose: () => void;
   onSubmit: (draft: Draft) => void;
 }) {
   const isEdit = !!editUser;
   const defaultLine = lockedLineId ?? lines[0]?.id ?? "";
   const [draft, setDraft] = useState<Draft>({
-    name: "", email: "", role: "Operator", lineId: defaultLine, status: "Active",
+    name: "", email: "", role: defaultRole, lineId: defaultLine, status: "Active",
   });
 
   useEffect(() => {
@@ -56,9 +60,9 @@ export default function UserFormModal({
     setDraft(
       editUser
         ? { name: editUser.name, email: editUser.email, role: editUser.role, lineId: editUser.lineId, status: editUser.status }
-        : { name: "", email: "", role: "Operator", lineId: defaultLine, status: "Active" }
+        : { name: "", email: "", role: defaultRole, lineId: defaultLine, status: "Active" }
     );
-  }, [open, editUser, defaultLine]);
+  }, [open, editUser, defaultLine, defaultRole]);
 
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
@@ -99,7 +103,7 @@ export default function UserFormModal({
               type="text"
               value={draft.name}
               onChange={(e) => set("name", e.target.value)}
-              placeholder="e.g. Ada Reyes"
+              placeholder="e.g. Juan Dela Cruz"
               autoFocus
               className={inputCls}
             />
@@ -138,7 +142,7 @@ export default function UserFormModal({
                         onClick={() => set("status", s)}
                         className={"flex-1 rounded-md px-2 py-1.5 text-[12px] font-medium transition-colors focus-visible:outline-none " + (on ? `bg-white ${tone} shadow-[0_1px_2px_rgba(15,23,42,0.08)]` : "text-slate-500 hover:text-slate-700")}
                       >
-                        {s}
+                        {userStatusLabel[s]}
                       </button>
                     );
                   })}

@@ -8,11 +8,11 @@ import { setLineStatus } from "@/lib/line-status";
 import { loadAccount, saveAccount } from "@/lib/settings-data";
 import CreateLineDialog from "./CreateLineDialog";
 
-/** Small "Deactivated" chip shown next to a deactivated line. */
+/** Small "Disabled" chip shown next to a disabled line. */
 function SuspendedChip() {
   return (
     <span className="shrink-0 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-600 ring-1 ring-rose-200">
-      Deactivated
+      Disabled
     </span>
   );
 }

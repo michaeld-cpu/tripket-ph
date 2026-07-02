@@ -738,7 +738,7 @@ function VoyagesTab({ bookings }: { bookings: Booking[] }) {
 // ─────────── Tickets ───────────
 function TicketsTab({ bookings }: { bookings: Booking[] }) {
   const totals = useMemo(() => {
-    let issued = 0, paid = 0, cancelled = 0, refunded = 0, pending = 0, comped = 0;
+    let issued = 0, paid = 0, cancelled = 0, refunded = 0, submitted = 0, toRefund = 0, comped = 0;
     const classMix: Record<"Economy" | "Tourist" | "Business", number> = { Economy: 0, Tourist: 0, Business: 0 };
     bookings.forEach((b) => b.tickets.forEach((t) => {
       issued += 1;
@@ -747,9 +747,10 @@ function TicketsTab({ bookings }: { bookings: Booking[] }) {
       if (t.status === "Issued") paid += 1;
       else if (t.status === "Cancelled") cancelled += 1;
       else if (t.status === "Refunded") refunded += 1;
-      else if (t.status === "Pending") pending += 1;
+      else if (t.status === "To Refund") toRefund += 1;
+      else if (t.status === "Submitted") submitted += 1;
     }));
-    return { issued, paid, cancelled, refunded, pending, comped, classMix };
+    return { issued, paid, cancelled, refunded, submitted, toRefund, comped, classMix };
   }, [bookings]);
 
   return (
@@ -1307,8 +1308,8 @@ function buildDailyTrend(bookings: Booking[], range: DateRange) {
 }
 
 function bucketBookingStatus(bookings: Booking[]): { key: BookingStatus; count: number }[] {
-  const order: BookingStatus[] = ["Confirmed", "Pending", "Cancelled", "Refunded"];
-  const counts: Record<BookingStatus, number> = { Confirmed: 0, Pending: 0, Cancelled: 0, Refunded: 0 };
+  const order: BookingStatus[] = ["Confirmed", "Submitted", "Cancelled", "To Refund", "Refunded"];
+  const counts: Record<BookingStatus, number> = { Confirmed: 0, Submitted: 0, Cancelled: 0, "To Refund": 0, Refunded: 0 };
   bookings.forEach((b) => { counts[b.status] += 1; });
   return order.map((k) => ({ key: k, count: counts[k] }));
 }
@@ -1604,10 +1605,15 @@ function synthesizeBackfillBookings(real: Booking[]): Booking[] {
       const pax = 1 + Math.floor(rand() * 4);
       const fare = 800 + Math.floor(rand() * 2200);
       const amount = pax * fare + (rand() < 0.3 ? 1500 : 0);
-      // Status mix: 70% Confirmed, 18% Pending, 8% Cancelled, 4% Refunded.
+      // Status mix: 68% Confirmed, 18% Submitted, 6% Cancelled, 4% To Refund,
+      // 4% Refunded. Submitted = paid, awaiting approval.
       const roll = rand();
       const status: BookingStatus =
-        roll < 0.7 ? "Confirmed" : roll < 0.88 ? "Pending" : roll < 0.96 ? "Cancelled" : "Refunded";
+        roll < 0.68 ? "Confirmed"
+        : roll < 0.86 ? "Submitted"
+        : roll < 0.92 ? "Cancelled"
+        : roll < 0.96 ? "To Refund"
+        : "Refunded";
       const bookingDate = new Date(baseDate);
       bookingDate.setHours(hour, Math.floor(rand() * 60), 0, 0);
       const departureDate = new Date(bookingDate);
@@ -1628,7 +1634,7 @@ function synthesizeBackfillBookings(real: Booking[]): Booking[] {
         contactMobile: "+63 900 000 0000",
         contactEmail: "synthetic@example.com",
         paymentMethod: "Tripket Wallet",
-        paymentStatus: status === "Cancelled" || status === "Refunded" ? "Refunded" : status === "Pending" ? "Pending" : "Issued",
+        paymentStatus: status === "Cancelled" || status === "Refunded" ? "Refunded" : status === "Submitted" ? "Submitted" : "Issued",
         tickets: [],
       });
     }
@@ -1637,8 +1643,8 @@ function synthesizeBackfillBookings(real: Booking[]): Booking[] {
 }
 
 function bucketTicketStatus(bookings: Booking[]): { key: TicketStatus; count: number }[] {
-  const order: TicketStatus[] = ["Pending", "Issued", "Cancelled", "Refunded"];
-  const counts: Record<TicketStatus, number> = { Pending: 0, Issued: 0, Cancelled: 0, Refunded: 0 };
+  const order: TicketStatus[] = ["Submitted", "Issued", "Cancelled", "To Refund", "Refunded"];
+  const counts: Record<TicketStatus, number> = { Submitted: 0, Issued: 0, Cancelled: 0, "To Refund": 0, Refunded: 0 };
   bookings.forEach((b) => b.tickets.forEach((t) => { counts[t.status] += 1; }));
   return order.map((k) => ({ key: k, count: counts[k] }));
 }

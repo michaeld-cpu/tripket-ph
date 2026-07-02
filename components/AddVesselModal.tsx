@@ -556,19 +556,24 @@ function VehicleClassRow({
     <div className="group">
       <button
         type="button"
+        role="switch"
+        aria-checked={cls.enabled}
         onClick={onToggle}
         className="flex w-full items-center gap-3 py-2.5 text-left transition-colors duration-150 ease-out hover:text-slate-900 active:scale-[0.998]"
       >
         <span
-          className={`grid h-4 w-4 shrink-0 place-items-center rounded border transition-[background-color,border-color] duration-150 ease-out ${
-            cls.enabled ? "border-brand-600 bg-brand-600 text-white" : "border-slate-300 bg-white"
-          }`}
+          aria-hidden
+          className={
+            "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors duration-150 " +
+            (cls.enabled ? "bg-brand-500" : "bg-slate-300")
+          }
         >
-          {cls.enabled && (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
-              <path d="M5 12l5 5 9-11" />
-            </svg>
-          )}
+          <span
+            className={
+              "block h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(15,23,42,0.2)] transition-transform duration-150 " +
+              (cls.enabled ? "translate-x-4" : "translate-x-0")
+            }
+          />
         </span>
         <div className="min-w-0 flex-1">
           <div className={`text-[13px] tracking-tight ${cls.enabled ? "font-medium text-slate-900" : "font-normal text-slate-700"}`}>
@@ -613,7 +618,7 @@ function VehicleClassRow({
             transition={{ duration: 0.18, ease: "easeOut" }}
             className="overflow-hidden"
           >
-            <div className="grid grid-cols-3 gap-3 pb-3 pl-7 pr-1">
+            <div className="grid grid-cols-2 gap-3 pb-3 pl-7 pr-1">
               <div>
                 <label className="block text-[11px] font-medium text-slate-500">Max weight</label>
                 <SuffixInput
@@ -621,15 +626,6 @@ function VehicleClassRow({
                   onChange={(v) => onChange({ maxWeightKg: v ? parseInt(v, 10) : undefined })}
                   placeholder="—"
                   suffix="kg"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-medium text-slate-500">Max length</label>
-                <SuffixInput
-                  value={String(cls.maxLengthM ?? "")}
-                  onChange={(v) => onChange({ maxLengthM: v ? parseFloat(v) : undefined })}
-                  placeholder="—"
-                  suffix="m"
                 />
               </div>
               {/* Base fare — flows downstream as the Voyages Fares default. */}
@@ -656,13 +652,14 @@ function NewClassRow({
 }: { onSave: (label: string, descriptor: string, maxWeightKg?: number, maxLengthM?: number) => void; onCancel: () => void }) {
   const [label, setLabel] = useState("");
   const [weight, setWeight] = useState("");
-  const [length, setLength] = useState("");
   const commit = () =>
-    onSave(label, "", weight ? parseInt(weight, 10) : undefined, length ? parseFloat(length) : undefined);
+    onSave(label, "", weight ? parseInt(weight, 10) : undefined, undefined);
   return (
     <div className="py-2.5">
       <div className="flex items-center gap-3">
-        <span className="h-4 w-4 shrink-0 rounded border border-brand-300 bg-brand-50" />
+        <span aria-hidden className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full bg-brand-500 p-0.5">
+          <span className="block h-4 w-4 translate-x-4 rounded-full bg-white shadow-[0_1px_2px_rgba(15,23,42,0.2)]" />
+        </span>
         <input
           autoFocus
           type="text"
@@ -673,14 +670,10 @@ function NewClassRow({
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } }}
         />
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-3 pl-7 pr-1">
+      <div className="mt-2 grid grid-cols-1 gap-3 pl-7 pr-1">
         <div>
           <label className="block text-[11px] font-medium text-slate-500">Max weight</label>
           <SuffixInput value={weight} onChange={setWeight} placeholder="—" suffix="kg" />
-        </div>
-        <div>
-          <label className="block text-[11px] font-medium text-slate-500">Max length</label>
-          <SuffixInput value={length} onChange={setLength} placeholder="—" suffix="m" />
         </div>
       </div>
       <div className="mt-2 flex items-center justify-end gap-3 pl-7 pr-1">

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import { useToast } from "@/components/ToastContext";
@@ -337,16 +337,6 @@ export default function VoyagesPage() {
       if (!target) return prev;
       return prev.map((v) => (sameSlot(v, target) ? { ...v, status } : v));
     });
-
-  // Removes the whole recurring slot (all its dated occurrences).
-  const removeVoyage = (id: string) => {
-    setVoyages((prev) => {
-      const target = prev.find((v) => v.id === id);
-      if (!target) return prev;
-      return prev.filter((v) => !sameSlot(v, target));
-    });
-    setOpenVoyageId(null);
-  };
 
   // ── Edit a schedule series ──
   // Opening pulls the originating wizard payload (kept in the series store).
@@ -788,8 +778,6 @@ export default function VoyagesPage() {
         open={!!openVoyage}
         onClose={() => setOpenVoyageId(null)}
         onStatusChange={updateVoyageStatus}
-        onRemove={removeVoyage}
-        onEditSchedule={openVoyage?.seriesId ? () => beginEditSchedule(openVoyage.id) : undefined}
       />
 
       {/* Edit-schedule wizard — pre-filled from the series payload; saving
@@ -988,8 +976,9 @@ function VoyageCard({
 }
 
 // ─────────── VoyageDetailDialog ───────────
-// Read-only detail surface for an existing voyage. The only editable field is
-// the lifecycle status, which auto-saves the moment a different chip is picked.
+// Read-only detail surface for an existing voyage. The only lifecycle control
+// is Enable/Disable in the footer — a voyage is either active or disabled;
+// there's no free-form status picker.
 //
 // Anatomy:
 //   ┌──────────────────────────────────────────────────────┐
@@ -1000,133 +989,29 @@ function VoyageCard({
 //   │ Bookings     0 / 420                                 │
 //   │ Fares        ₱1,696 → ₱2,520                         │
 //   ├──────────────────────────────────────────────────────┤
-//   │ Status       [Scheduled] [Departed] [Arrived] [Cncl] │
+//   │ Remove  Edit schedule              [Disable Voyage]  │
 //   └──────────────────────────────────────────────────────┘
-// All chips share the same brand-orange palette — the meaning is in the label,
-// not the color. Cards on the calendar still tint per status (sky / emerald /
-// rose) so the lifecycle reads at a glance there; the dialog itself stays calm.
-const STATUS_CHIPS: { key: VoyageStatus; label: string }[] = [
-  { key: "Scheduled", label: "Scheduled" },
-  { key: "Departed", label: "Departed" },
-  { key: "Arrived", label: "Arrived" },
-  { key: "Cancelled", label: "Cancelled" },
-];
-
-// Pill tones for the voyage status picker — mirror the calendar lifecycle.
-const VOYAGE_STATUS_PILL_TONE: Record<VoyageStatus, string> = {
-  Scheduled: "bg-brand-50 text-brand-700",
-  Departed:  "bg-sky-50 text-sky-700",
-  Arrived:   "bg-emerald-100 text-emerald-800",
-  Cancelled: "bg-slate-100 text-slate-500",
-};
-
-// ─────────── VoyageStatusPicker ───────────
-// ClickUp-style status selector for the voyage detail dialog. Mirrors the
-// booking/ticket pickers: brand-orange primary trigger reads "STATUS · VALUE
-// ▾" with a popover listing every transition. Closes on outside click + Esc.
-function VoyageStatusPicker({
-  current,
-  onChange,
-}: {
-  current: VoyageStatus;
-  onChange: (next: VoyageStatus) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-brand-600"
-      >
-        <span className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-white/80">Status</span>
-        <span className="text-[12.5px] font-semibold uppercase tracking-[0.04em] text-white">{current}</span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-3.5 w-3.5 text-white/80 transition-transform duration-150 ${open ? "rotate-180" : ""}`}>
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute bottom-full right-0 z-30 mb-2 w-56 overflow-hidden rounded-xl bg-white p-1 shadow-[0_18px_44px_-16px_rgba(15,23,42,0.25)] ring-1 ring-slate-200/70"
-        >
-          <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">
-            Update status
-          </div>
-          {STATUS_CHIPS.map((o) => {
-            const isCurrent = o.key === current;
-            return (
-              <button
-                key={o.key}
-                type="button"
-                role="menuitem"
-                disabled={isCurrent}
-                onClick={() => { if (!isCurrent) { onChange(o.key); setOpen(false); } }}
-                className={`grid w-full grid-cols-[minmax(0,1fr)_auto_16px] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors duration-100 ${
-                  isCurrent
-                    ? "cursor-default text-slate-400"
-                    : o.key === "Cancelled"
-                      ? "text-rose-600 hover:bg-rose-50"
-                      : "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900"
-                }`}
-              >
-                <span className="truncate font-medium">Mark {o.label}</span>
-                <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${VOYAGE_STATUS_PILL_TONE[o.key]} ${isCurrent ? "opacity-50" : ""}`}>
-                  {o.label}
-                </span>
-                <span className="flex justify-end">
-                  {isCurrent && (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-400">
-                      <path d="M5 12l5 5 9-11" />
-                    </svg>
-                  )}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
+// Cards on the calendar still tint per status (sky / emerald / rose) so the
+// lifecycle reads at a glance there; the dialog itself stays calm.
 // ─────────── VoyageFooter ───────────
-// Footer for the voyage detail dialog. Owns the entire footer surface so
-// the destructive-confirm flow can transform the row in-place instead of
-// stacking another modal on top. Two states:
-//   • Idle    — Remove (secondary ghost) on the left, Status picker on the right
-//   • Confirm — full-row takeover: icon + question + Cancel / Remove voyage
+// Footer for the voyage detail dialog. Owns the entire footer surface so the
+// confirm flows can transform the row in-place instead of stacking another
+// modal on top. The only lifecycle control is Enable/Disable — a voyage is
+// either active (Scheduled) or disabled (Cancelled); there's no free-form
+// status picker. States:
+//   • Idle           — a single Enable (green) or Disable (rose) button
+//   • Confirm        — full-row takeover: icon + question + Cancel / confirm.
+//                      Rose for disable, emerald for enable.
 // Reads as a focused micro-interaction rather than dialog-over-dialog.
 function VoyageFooter({
   voyage,
-  onRemove,
   onStatusChange,
-  onEditSchedule,
 }: {
   voyage: Voyage;
-  onRemove: (id: string) => void;
   onStatusChange: (id: string, next: VoyageStatus) => void;
-  onEditSchedule?: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const disabled = voyage.status === "Cancelled";
 
   useEffect(() => {
     if (!confirming) return;
@@ -1136,18 +1021,35 @@ function VoyageFooter({
   }, [confirming]);
 
   if (confirming) {
+    // Enable and disable share this confirm surface; the palette + copy flip
+    // on `disabled` (which reflects the current, pre-toggle state).
+    const enabling = disabled;
+    const next: VoyageStatus = enabling ? "Scheduled" : "Cancelled";
+    const tone = enabling
+      ? { border: "border-emerald-100", bg: "bg-emerald-50/40", chipBg: "bg-emerald-100", chipText: "text-emerald-600", cta: "bg-emerald-600 hover:bg-emerald-700" }
+      : { border: "border-rose-100", bg: "bg-rose-50/40", chipBg: "bg-rose-100", chipText: "text-rose-600", cta: "bg-rose-600 hover:bg-rose-700" };
     return (
-      <div className="flex items-center gap-3 border-t border-rose-100 bg-rose-50/40 px-5 py-3">
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-rose-100 text-rose-600">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-            <path d="M12 9v4M12 17h.01" />
-            <circle cx="12" cy="12" r="9" />
-          </svg>
+      <div className={`flex items-center gap-3 border-t ${tone.border} ${tone.bg} px-5 py-3`}>
+        <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${tone.chipBg} ${tone.chipText}`}>
+          {enabling ? (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M5.6 5.6l12.8 12.8" />
+            </svg>
+          )}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-semibold tracking-tight text-slate-900">Remove this voyage?</div>
+          <div className="text-[13px] font-semibold tracking-tight text-slate-900">
+            {enabling ? "Confirm Enable Voyage?" : "Confirm Disable Voyage?"}
+          </div>
           <div className="mt-0.5 text-[11.5px] leading-snug text-slate-500">
-            It will disappear from the template. Bookings stay intact.
+            {enabling
+              ? "Are you sure you want to enable this voyage? It will be bookable again."
+              : "Are you sure you want to disable this voyage? This action can be reversed later."}
           </div>
         </div>
         <button
@@ -1160,47 +1062,42 @@ function VoyageFooter({
         </button>
         <button
           type="button"
-          onClick={() => { setConfirming(false); onRemove(voyage.id); }}
-          className="rounded-lg bg-rose-600 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-rose-700"
+          onClick={() => { setConfirming(false); onStatusChange(voyage.id, next); }}
+          className={`rounded-lg px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors ${tone.cta}`}
           style={{ boxShadow: "none" }}
         >
-          Remove voyage
+          {enabling ? "Enable Voyage" : "Disable Voyage"}
         </button>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center justify-between gap-3 px-5 py-4">
-      <div className="flex items-center gap-2">
+    <div className="flex items-center justify-end gap-3 px-5 py-4">
+      {disabled ? (
         <button
           type="button"
           onClick={() => setConfirming(true)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-rose-600 transition-colors duration-150 hover:bg-rose-50"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-emerald-700 transition-colors duration-150 hover:bg-emerald-50"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+          Enable Voyage
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-rose-600 transition-colors duration-150 hover:bg-rose-50"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-            <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6" />
+            <circle cx="12" cy="12" r="9" />
+            <path d="M5.6 5.6l12.8 12.8" />
           </svg>
-          Remove
+          Disable Voyage
         </button>
-        {onEditSchedule && (
-          <button
-            type="button"
-            onClick={onEditSchedule}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-            </svg>
-            Edit schedule
-          </button>
-        )}
-      </div>
-      <VoyageStatusPicker
-        current={voyage.status}
-        onChange={(next) => onStatusChange(voyage.id, next)}
-      />
+      )}
     </div>
   );
 }
@@ -1210,16 +1107,11 @@ function VoyageDetailDialog({
   open,
   onClose,
   onStatusChange,
-  onRemove,
-  onEditSchedule,
 }: {
   voyage: Voyage | null;
   open: boolean;
   onClose: () => void;
   onStatusChange: (id: string, status: VoyageStatus) => void;
-  onRemove: (id: string) => void;
-  /** Present only when the voyage belongs to an editable schedule series. */
-  onEditSchedule?: () => void;
 }) {
   // The dialog mirrors whichever line is currently active in the top-bar
   // switcher — voyages always read from the live context, never the stored
@@ -1386,9 +1278,7 @@ function VoyageDetailDialog({
 
         <VoyageFooter
           voyage={voyage}
-          onRemove={onRemove}
           onStatusChange={onStatusChange}
-          onEditSchedule={onEditSchedule}
         />
       </div>
     </Modal>

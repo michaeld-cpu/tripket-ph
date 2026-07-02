@@ -2,21 +2,22 @@
 import { useEffect, useState } from "react";
 import Modal from "./Modal";
 
-type Mode = "disable" | "activate";
+type Mode = "disable" | "enable";
 
 type Props = {
   open: boolean;
   /** Display label for the route (e.g. "Cebu City → Dumaguete City"). */
   label: string;
-  /** "disable" (Active → Inactive) or "activate" (Inactive → Active). */
+  /** "disable" (Active → Inactive) or "enable" (Inactive → Active). */
   mode: Mode;
   onClose: () => void;
   onConfirm: () => void;
 };
 
 /**
- * Confirm switching a route's operational status. Mirrors VesselStatusDialog —
- * disabling is the danger action, activating is positive; both single-click.
+ * Confirm switching a route's operational status. Mirrors the vessel dialog —
+ * disabling is the danger action, enabling is positive; both single-click.
+ * Verb pairing is Enable/Disable, uniform across the app.
  */
 export default function RouteStatusDialog({ open, label, mode, onClose, onConfirm }: Props) {
   const [submitting, setSubmitting] = useState(false);
@@ -61,12 +62,12 @@ export default function RouteStatusDialog({ open, label, mode, onClose, onConfir
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">
-              {isDisable ? "Disable this route?" : "Activate this route?"}
+              {isDisable ? "Disable this route?" : "Enable this route?"}
             </h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
               <span className="font-medium text-slate-900">{label || "—"}</span>{" "}
               {isDisable
-                ? "will be set to Inactive — it stops being available for new schedules. Nothing is deleted; you can activate it again at any time."
+                ? "will be set to Inactive — it stops being available for new schedules. Nothing is deleted; you can enable it again at any time."
                 : "will be set to Active and available again for scheduling."}
             </p>
           </div>
@@ -94,8 +95,8 @@ export default function RouteStatusDialog({ open, label, mode, onClose, onConfir
           }
         >
           {submitting
-            ? (isDisable ? "Disabling…" : "Activating…")
-            : (isDisable ? "Disable route" : "Activate route")}
+            ? (isDisable ? "Disabling…" : "Enabling…")
+            : (isDisable ? "Disable route" : "Enable route")}
         </button>
       </div>
     </Modal>

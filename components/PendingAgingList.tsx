@@ -18,14 +18,15 @@ type Pending = {
   voyageId: string;
   departure: string;
   amount: number;
-  status: "Pending" | "Confirmed" | "Cancelled";
+  // Submitted = paid, awaiting operator approval (was "Pending").
+  status: "Submitted" | "Confirmed" | "Cancelled";
   bookingDate: string;
   ageMinutes: number;
 };
 
 // Unified status palette — matches the bookings table sitewide.
 const statusTone: Record<Pending["status"], string> = {
-  Pending:   "bg-brand-50 text-brand-700",
+  Submitted: "bg-brand-50 text-brand-700",
   Confirmed: "bg-emerald-100 text-emerald-800",
   Cancelled: "bg-slate-100 text-slate-500",
 };

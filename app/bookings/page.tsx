@@ -129,7 +129,7 @@ export default function BookingsPage() {
   }, [openRef]);
 
   // Live admin actions are attributed to the signed-in operator.
-  const ACTOR = "Ada Reyes";
+  const ACTOR = "Someone";
   const logTo = (b: Booking, entry: ReturnType<typeof makeActivity>): Booking => ({
     ...b,
     activity: [entry, ...(b.activity ?? deriveActivity(b))],
@@ -160,7 +160,7 @@ export default function BookingsPage() {
             const entries: ReturnType<typeof makeActivity>[] = [];
             const tickets = x.tickets.map((t) => {
               const d = decisions[t.id];
-              if (t.status !== "Pending" || !d) return t;
+              if (t.status !== "Submitted" || !d) return t;
               if (d.status === "Issued") {
                 entries.push(makeActivity("ticket_paid", "Ticket marked paid", ACTOR, `Ticket no. ${d.number} · ${t.name}`));
                 return { ...t, status: "Issued" as const, ticketNumber: d.number };
@@ -183,10 +183,27 @@ export default function BookingsPage() {
     );
     showToast(`Booking ${ref} updated`);
   };
-  const handleRefund = (ref: string) => {
+  // Flag a booking as eligible for a refund (payout runs separately). Booking
+  // moves to "To Refund"; payment stays as-is until the refund actually settles.
+  const handleToRefund = (ref: string) => {
     updateBookings((prev) => prev.map((x) => x.ref === ref
-      ? logTo({ ...x, paymentStatus: "Refunded" }, makeActivity("refunded", "Payment refunded", ACTOR, `₱${x.amount.toLocaleString()} returned`))
+      ? logTo({ ...x, status: "To Refund" }, makeActivity("to_refund", "Marked for refund", ACTOR, `₱${x.amount.toLocaleString()} eligible for return`))
       : x));
+    showToast(`Booking ${ref} marked To Refund`);
+  };
+  // Refunding a booking cascades to its tickets — every non-cancelled ticket
+  // tied to the booking is refunded too (a cancelled/void seat isn't). Keeps
+  // the passenger tickets consistent with the booking's terminal state.
+  const handleRefund = (ref: string) => {
+    updateBookings((prev) => prev.map((x) => {
+      if (x.ref !== ref) return x;
+      const tickets = x.tickets.map((t) =>
+        t.status === "Cancelled" ? t : { ...t, status: "Refunded" as const });
+      return logTo(
+        { ...x, status: "Refunded", paymentStatus: "Refunded", tickets },
+        makeActivity("refunded", "Payment refunded", ACTOR, `₱${x.amount.toLocaleString()} returned`),
+      );
+    }));
     showToast(`Booking ${ref} refunded`);
   };
 
@@ -254,7 +271,7 @@ export default function BookingsPage() {
     if (!ref) return;
     const match = bookings.find((b) => b.ref === ref);
     if (!match) return;
-    if (params.get("action") === "approve" && match.status === "Pending") {
+    if (params.get("action") === "approve" && match.status === "Submitted") {
       setApproveTarget(match);
     } else {
       setOpenRef(ref);
@@ -472,10 +489,11 @@ export default function BookingsPage() {
                               </svg>
                             ),
                           },
-                          // Approve — only meaningful on Pending bookings.
+                          // Approve — only meaningful on Submitted bookings
+                          // (paid, awaiting approval).
                           {
                             label: "Approve",
-                            disabled: b.status !== "Pending",
+                            disabled: b.status !== "Submitted",
                             onClick: () => handleApprove(b.ref),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -483,10 +501,24 @@ export default function BookingsPage() {
                               </svg>
                             ),
                           },
-                          // Refund — disabled once the booking is in a terminal state.
+                          // Mark To Refund — flag as eligible for a refund. Must
+                          // happen before an actual Refund. Locked once already
+                          // flagged or refunded.
+                          {
+                            label: "Mark To Refund",
+                            disabled: b.status === "To Refund" || b.status === "Refunded",
+                            onClick: () => handleToRefund(b.ref),
+                            icon: (
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                <path d="M3 12a9 9 0 1 0 3-6.7" />
+                                <path d="M3 4v5h5" />
+                              </svg>
+                            ),
+                          },
+                          // Refund — only after the booking has been marked To Refund.
                           {
                             label: "Refund",
-                            disabled: b.status === "Cancelled" || b.status === "Refunded",
+                            disabled: b.status !== "To Refund",
                             onClick: () => handleRefund(b.ref),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -495,11 +527,11 @@ export default function BookingsPage() {
                               </svg>
                             ),
                           },
-                          // Cancel — terminal states have nothing left to cancel.
+                          // Cancel — available until the booking is already refunded.
                           {
                             label: "Cancel booking",
                             danger: true,
-                            disabled: b.status === "Cancelled" || b.status === "Refunded",
+                            disabled: b.status === "Refunded",
                             onClick: () => handleCancel(b.ref),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -534,6 +566,7 @@ export default function BookingsPage() {
         onClose={() => setOpenRef(null)}
         onCancel={(ref) => { handleCancel(ref); }}
         onApprove={(ref) => { handleApprove(ref); }}
+        onToRefund={(ref) => { handleToRefund(ref); }}
         onRefund={(ref) => { handleRefund(ref); }}
         copiedTicket={copiedTicket}
         onCopyTicket={handleCopyTicket}
@@ -563,8 +596,9 @@ export default function BookingsPage() {
             options: [
               { value: "all", label: "All status" },
               { value: "Confirmed", label: "Approved" },
-              { value: "Pending", label: "Pending" },
+              { value: "Submitted", label: "Submitted" },
               { value: "Cancelled", label: "Cancelled" },
+              { value: "To Refund", label: "To Refund" },
               { value: "Refunded", label: "Refunded" },
             ] },
           { kind: "dateRange", key: "date", label: "Booking date", value: dateRange, onChange: setDateRange, defaultValue: defaultDateRange },
@@ -589,7 +623,7 @@ function ApproveBookingDialog({
   onConfirm: (decisions: Record<string, { status: TicketDecision; number?: string }>) => void;
 }) {
   const pending = useMemo(
-    () => (booking ? booking.tickets.filter((t) => t.status === "Pending") : []),
+    () => (booking ? booking.tickets.filter((t) => t.status === "Submitted") : []),
     [booking]
   );
   // Per-ticket target status. Defaults to Paid; admin can flip any to
@@ -746,6 +780,7 @@ function BookingDetailDialog({
   onClose,
   onCancel,
   onApprove,
+  onToRefund,
   onRefund,
   copiedTicket,
   onCopyTicket,
@@ -757,6 +792,7 @@ function BookingDetailDialog({
   onClose: () => void;
   onCancel: (ref: string) => void;
   onApprove: (ref: string) => void;
+  onToRefund: (ref: string) => void;
   onRefund: (ref: string) => void;
   copiedTicket: string | null;
   onCopyTicket: (id: string) => void;
@@ -935,14 +971,15 @@ function BookingDetailDialog({
             </div>
 
             {/* Footer — actions scoped to the booking's current status:
-                  Pending   → Approve (primary) + ⋯ menu (Cancel / Refund)
-                  Approved → Cancel (ghost rose)
+                  Submitted → Approve (primary) + ⋯ menu (Cancel / Refund)
+                  Approved  → Cancel (ghost rose)
                   Cancelled → no destructive actions */}
             <DialogFooter
               booking={booking}
               onClose={onClose}
               onCancel={onCancel}
               onApprove={onApprove}
+              onToRefund={onToRefund}
               onRefund={onRefund}
             />
           </div>
@@ -960,8 +997,9 @@ function BookingDetailDialog({
 
 // ─────────── DialogFooter ───────────
 // Status-aware footer for the booking detail dialog.
-//   - Pending bookings need explicit approval → Approve (primary) + ⋯ menu
-//     with Cancel + Refund so the destructive actions don't crowd the row.
+//   - Submitted bookings need explicit approval → Approve (primary) + ⋯ menu
+//     with To Refund + Refund + Cancel so the destructive actions don't crowd
+//     the row.
 //   - Approved bookings only expose Cancel (ghost rose), since approval
 //     already happened.
 //   - Cancelled bookings show no destructive actions (terminal state).
@@ -971,22 +1009,26 @@ function DialogFooter({
   onClose,
   onCancel,
   onApprove,
+  onToRefund,
   onRefund,
 }: {
   booking: Booking;
   onClose: () => void;
   onCancel: (ref: string) => void;
   onApprove: (ref: string) => void;
+  onToRefund: (ref: string) => void;
   onRefund: (ref: string) => void;
 }) {
-  // Single status picker collapses Approve/Cancel/Refund into a ClickUp-style
-  // dropdown (matching the tickets dialog). Each selection fires the matching
-  // mutation and closes the dialog so the user gets feedback in the table.
+  // Single status picker collapses Approve/To Refund/Refund/Cancel into a
+  // ClickUp-style dropdown (matching the tickets dialog). Each selection fires
+  // the matching mutation and closes the dialog so the user gets feedback in
+  // the table.
   const onChangeStatus = (next: BookingStatus) => {
     if (next === "Confirmed") onApprove(booking.ref);
+    else if (next === "To Refund") onToRefund(booking.ref);
     else if (next === "Cancelled") onCancel(booking.ref);
     else if (next === "Refunded") onRefund(booking.ref);
-    // Pending is the initial state; transitioning back isn't a normal flow.
+    // Submitted is the intake state; transitioning back isn't a normal flow.
     onClose();
   };
 
@@ -1036,19 +1078,24 @@ function BookingStatusPicker({
     };
   }, [open]);
 
-  const isTerminal = current === "Cancelled" || current === "Refunded";
   const canPick = (s: BookingStatus): boolean => {
     if (s === current) return false;
-    if (isTerminal) return false;
-    // Pending → cannot move back to Pending from Confirmed.
-    if (s === "Pending") return false;
+    // Refunded is fully terminal — nothing left to do.
+    if (current === "Refunded") return false;
+    // Refund must be preceded by "To Refund" — it's only pickable from there.
+    if (s === "Refunded") return current === "To Refund";
+    // A booking already flagged To Refund can only proceed to the actual refund.
+    if (current === "To Refund") return false;
+    // Submitted is an intake state — you can't move a booking back to it.
+    if (s === "Submitted") return false;
     return true;
   };
 
   const options: { value: BookingStatus; label: string }[] = [
-    { value: "Confirmed", label: "Approve" },
-    { value: "Refunded",  label: "Refund" },
-    { value: "Cancelled", label: "Cancel booking" },
+    { value: "Confirmed",   label: "Approve" },
+    { value: "To Refund",   label: "Mark To Refund" },
+    { value: "Refunded",    label: "Refund" },
+    { value: "Cancelled",   label: "Cancel booking" },
   ];
 
   return (
@@ -1524,7 +1571,7 @@ function PaymentInformation({ booking }: { booking: Booking }) {
   const statusTone =
     booking.paymentStatus === "Issued"
       ? "bg-emerald-100 text-emerald-800"
-      : booking.paymentStatus === "Pending"
+      : booking.paymentStatus === "Submitted"
       ? "bg-brand-50 text-brand-700"
       : "bg-slate-100 text-slate-500";
 

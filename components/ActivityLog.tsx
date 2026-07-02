@@ -19,6 +19,7 @@ const KIND_STYLE: Record<ActivityKind, Tone> = {
   approved:    { node: "bg-emerald-500", ring: "ring-emerald-100", icon: <path d="M5 12l5 5 9-11" /> },
   paid:        { node: "bg-emerald-500", ring: "ring-emerald-100", icon: <path d="M5 12l5 5 9-11" /> },
   ticket_paid: { node: "bg-emerald-500", ring: "ring-emerald-100", icon: <path d="M5 12l5 5 9-11" /> },
+  to_refund:   { node: "bg-amber-500",   ring: "ring-amber-100",   icon: <><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></> },
   refunded:    { node: "bg-sky-500",     ring: "ring-sky-100",     icon: <><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></> },
   cancelled:   { node: "bg-rose-500",    ring: "ring-rose-100",    icon: <path d="M6 6l12 12M18 6 6 18" /> },
   edited:      { node: "bg-brand-500",   ring: "ring-brand-100",   icon: <><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></> },

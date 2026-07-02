@@ -4,24 +4,15 @@ import { motion } from "motion/react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
-import Select from "@/components/Select";
 import SaveBar from "@/components/SaveBar";
-import NumberInput from "@/components/NumberInput";
 import {
-  PASSENGER_REQUIREMENTS,
-  VEHICLE_DETAIL_REQUIREMENTS,
-  VEHICLE_DOCUMENT_REQUIREMENTS,
   loadSettings,
   saveSettings,
   defaultSettings,
   loadAccount,
   saveAccount,
-  POLICY_OPTIONS,
   type LineSettings,
   type LineCatalog,
-  type Requirement,
-  type RequirementKey,
-  type BookingPolicy,
   type AccountProfile,
   type VehicleClass,
   type PassengerType,
@@ -78,15 +69,10 @@ export default function SettingsPage() {
 
 // Section descriptors drive both the left navigator and the anchor ids.
 const CONFIG_SECTIONS = [
-  { id: "vehicle-classes", label: "Vehicle classes" },
   { id: "passenger-types", label: "Passenger types" },
+  { id: "vehicle-classes", label: "Vehicle classes" },
   { id: "add-ons",         label: "Add-ons" },
-  { id: "passenger-reqs", label: "Passenger requirements" },
-  { id: "vehicle-reqs",   label: "Vehicle requirements" },
-  { id: "booking-policy", label: "Booking policy" },
-  { id: "booking-window", label: "Booking window" },
-  { id: "cancellation",   label: "Cancellation & refunds" },
-  { id: "passenger-rules", label: "Passenger rules" },
+  { id: "accommodations",  label: "Accommodations" },
 ];
 
 // ─────────── Configurations tab (merged requirements + policy) ───────────
@@ -118,10 +104,6 @@ function BookingTab({ lineId }: { lineId: string }) {
     return allLabeled;
   }, [draft.catalog]);
 
-  const toggleReq = (key: RequirementKey) =>
-    setDraft((s) => ({ ...s, requirements: { ...s.requirements, [key]: !s.requirements[key] } }));
-  const setPolicy = <K extends keyof BookingPolicy>(k: K, v: BookingPolicy[K]) =>
-    setDraft((s) => ({ ...s, policy: { ...s.policy, [k]: v } }));
   const setCatalog = <K extends keyof LineCatalog>(k: K, v: LineCatalog[K]) =>
     setDraft((s) => ({ ...s, catalog: { ...s.catalog, [k]: v } }));
 
@@ -173,23 +155,23 @@ function BookingTab({ lineId }: { lineId: string }) {
           transition={{ duration: 0.2, ease: "easeOut" }}
           className="space-y-5"
         >
-          {activeSection === "vehicle-classes" && (
-          <section id="vehicle-classes">
-            <Card title="Vehicle classes" subtitle="Define the vehicle catalog for this shipping line. Vessels toggle which classes they accept; edits here flow live into every vessel that uses them.">
-              <VehicleClassesEditor
-                value={draft.catalog.vehicleClasses}
-                onChange={(v) => setCatalog("vehicleClasses", v)}
-              />
-            </Card>
-          </section>
-          )}
-
           {activeSection === "passenger-types" && (
           <section id="passenger-types">
             <Card title="Passenger types" subtitle="Fare categories with their default discount and required document. These appear when pricing every departure.">
               <PassengerTypesEditor
                 value={draft.catalog.passengerTypes}
                 onChange={(v) => setCatalog("passengerTypes", v)}
+              />
+            </Card>
+          </section>
+          )}
+
+          {activeSection === "vehicle-classes" && (
+          <section id="vehicle-classes">
+            <Card title="Vehicle classes" subtitle="Define the vehicle catalog for this shipping line. Vessels toggle which classes they accept; edits here flow live into every vessel that uses them.">
+              <VehicleClassesEditor
+                value={draft.catalog.vehicleClasses}
+                onChange={(v) => setCatalog("vehicleClasses", v)}
               />
             </Card>
           </section>
@@ -206,86 +188,26 @@ function BookingTab({ lineId }: { lineId: string }) {
           </section>
           )}
 
-          {activeSection === "passenger-reqs" && (
-          <section id="passenger-reqs">
-            <Card title="Passenger requirements" subtitle="Fields collected from passengers during booking. Full name and age are always required.">
-              <RequirementGrid items={PASSENGER_REQUIREMENTS} state={draft.requirements} onToggle={toggleReq} />
-            </Card>
-          </section>
-          )}
-
-          {activeSection === "vehicle-reqs" && (
-          <section id="vehicle-reqs">
-            <Card title="Vehicle requirements" subtitle="Fields and documents required when a passenger boards with a vehicle (RoRo).">
-              <Eyebrow>Required details</Eyebrow>
-              <RequirementGrid items={VEHICLE_DETAIL_REQUIREMENTS} state={draft.requirements} onToggle={toggleReq} />
-              <div className="mt-5">
-                <Eyebrow>Required documents from driver</Eyebrow>
-                <RequirementGrid items={VEHICLE_DOCUMENT_REQUIREMENTS} state={draft.requirements} onToggle={toggleReq} />
+          {activeSection === "accommodations" && (
+          <section id="accommodations">
+            <Card title="Accommodations" subtitle="Seating tiers (Economy / Tourist / Business) this shipping line offers. Vessels pick from these and set their own seat counts and fares.">
+              {/* Placeholder — accommodations aren't part of the line catalog
+                  yet. The section exists so the page reflects the full config
+                  set; the editor lands once the data model supports it. */}
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 px-4 py-10 text-center">
+                <div className="mx-auto mb-2 grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-slate-400">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                    <rect x="3" y="10" width="18" height="8" rx="1" />
+                    <path d="M6 10V7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3" />
+                    <path d="M3 18v2M21 18v2" />
+                  </svg>
+                </div>
+                <div className="text-[13px] font-semibold tracking-tight text-slate-700">No accommodation tiers yet</div>
+                <p className="mx-auto mt-1 max-w-sm text-[12px] leading-relaxed text-slate-500">
+                  Accommodation tiers are configured per vessel for now. Line-level defaults will live here soon.
+                </p>
               </div>
             </Card>
-          </section>
-          )}
-
-          {activeSection === "booking-policy" && (
-          <section id="booking-policy">
-            <Card title="Booking policy" subtitle="Rules that govern how bookings are accepted, paid for, and cancelled on this line.">
-              <PolicySection title="Cutoff & cancellation">
-                <PolicyNumber label="Booking cutoff" hint="Booking closes this long before departure" value={draft.policy.bookingCutoffHours} onChange={(v) => setPolicy("bookingCutoffHours", v)} suffix="hours" />
-                <PolicyNumber label="Free cancellation" hint="Full-refund window before departure" value={draft.policy.freeCancelHours} onChange={(v) => setPolicy("freeCancelHours", v)} suffix="hours" />
-                <PolicyNumber label="Refund within window" value={draft.policy.refundPct} onChange={(v) => setPolicy("refundPct", v)} suffix="%" />
-                <PolicyToggle label="No-show forfeits fare" hint="No-shows are not refunded" value={draft.policy.noShowForfeit} onChange={(v) => setPolicy("noShowForfeit", v)} />
-              </PolicySection>
-              <PolicySection title="Capacity & overbooking">
-                <PolicyNumber label="Overbooking allowance" value={draft.policy.overbookingPct} onChange={(v) => setPolicy("overbookingPct", v)} suffix="%" />
-                <PolicyToggle label="Waitlist" hint="Let passengers join a waitlist when full" value={draft.policy.waitlistEnabled} onChange={(v) => setPolicy("waitlistEnabled", v)} />
-                <PolicyNumber label="Seat hold" hint="Hold an unpaid seat this long" value={draft.policy.seatHoldMinutes} onChange={(v) => setPolicy("seatHoldMinutes", v)} suffix="min" />
-              </PolicySection>
-              <PolicySection title="Payment & fees">
-                <PolicyToggle label="Tripket Wallet" hint="Accept wallet payments" value={draft.policy.acceptWallet} onChange={(v) => setPolicy("acceptWallet", v)} />
-                <PolicyToggle label="Card" hint="Accept card payments" value={draft.policy.acceptCard} onChange={(v) => setPolicy("acceptCard", v)} />
-                <PolicyNumber label="Booking fee" hint="Flat convenience fee per booking" value={draft.policy.bookingFee} onChange={(v) => setPolicy("bookingFee", v)} prefix="₱" />
-                <PolicyToggle label="Partial payment" hint="Allow downpayment then balance" value={draft.policy.allowPartialPayment} onChange={(v) => setPolicy("allowPartialPayment", v)} />
-              </PolicySection>
-              <PolicySection title="Vehicle & baggage">
-                <PolicyNumber label="Comped seats per vehicle" hint="Free seats bundled with a vehicle fare" value={draft.policy.compedSeatsPerVehicle} onChange={(v) => setPolicy("compedSeatsPerVehicle", v)} suffix="seats" />
-                <PolicyNumber label="Free baggage allowance" value={draft.policy.baggageAllowanceKg} onChange={(v) => setPolicy("baggageAllowanceKg", v)} suffix="kg" />
-                <PolicyToggle label="Oversized needs approval" hint="Overweight/oversized vehicles require operator approval" value={draft.policy.oversizedNeedsApproval} onChange={(v) => setPolicy("oversizedNeedsApproval", v)} />
-              </PolicySection>
-              <PolicySection title="Boarding" last>
-                <PolicyNumber label="Boarding notice" hint="Passengers must board this long before departure" value={draft.policy.boardingNoticeMinutes} onChange={(v) => setPolicy("boardingNoticeMinutes", v)} suffix="min" />
-              </PolicySection>
-            </Card>
-          </section>
-          )}
-
-          {activeSection === "booking-window" && (
-          <section id="booking-window">
-            <PresetCard title="Booking window" subtitle="Control when bookings open and close relative to the departure time.">
-              <PolicySelect label="Booking opens" value={draft.policy.bookingOpens} options={POLICY_OPTIONS.bookingOpens} onChange={(v) => setPolicy("bookingOpens", v)} />
-              <PolicySelect label="Booking closes" value={draft.policy.bookingCloses} options={POLICY_OPTIONS.bookingCloses} onChange={(v) => setPolicy("bookingCloses", v)} />
-              <PolicySelect label="Overbooking allowance" value={draft.policy.overbookingMode} options={POLICY_OPTIONS.overbookingMode} onChange={(v) => setPolicy("overbookingMode", v)} full />
-            </PresetCard>
-          </section>
-          )}
-
-          {activeSection === "cancellation" && (
-          <section id="cancellation">
-            <PresetCard title="Cancellation & refunds" subtitle="Define the default refund rules passengers see when booking.">
-              <PolicySelect label="Cancellation policy" value={draft.policy.cancellationPolicy} options={POLICY_OPTIONS.cancellationPolicy} onChange={(v) => setPolicy("cancellationPolicy", v)} full />
-              <PolicySelect label="Reschedule allowed" value={draft.policy.rescheduleAllowed} options={POLICY_OPTIONS.rescheduleAllowed} onChange={(v) => setPolicy("rescheduleAllowed", v)} />
-              <PolicySelect label="Rescheduling fee" value={draft.policy.reschedulingFee} options={POLICY_OPTIONS.reschedulingFee} onChange={(v) => setPolicy("reschedulingFee", v)} />
-            </PresetCard>
-          </section>
-          )}
-
-          {activeSection === "passenger-rules" && (
-          <section id="passenger-rules">
-            <PresetCard title="Passenger rules" subtitle="Age and group restrictions applied at checkout.">
-              <PolicySelect label="Minimum age (unaccompanied)" value={draft.policy.minUnaccompaniedAge} options={POLICY_OPTIONS.minUnaccompaniedAge} onChange={(v) => setPolicy("minUnaccompaniedAge", v)} />
-              <PolicySelect label="Infant age threshold" value={draft.policy.infantAgeThreshold} options={POLICY_OPTIONS.infantAgeThreshold} onChange={(v) => setPolicy("infantAgeThreshold", v)} />
-              <PolicySelect label="ID verification" value={draft.policy.idVerification} options={POLICY_OPTIONS.idVerification} onChange={(v) => setPolicy("idVerification", v)} full />
-            </PresetCard>
           </section>
           )}
         </motion.div>
@@ -313,157 +235,6 @@ function Card({ title, subtitle, children }: { title: string; subtitle: string; 
       <p className="mt-0.5 text-[12.5px] text-slate-500">{subtitle}</p>
       <div className="mt-4">{children}</div>
     </section>
-  );
-}
-
-// Preset-style policy card — grid of custom dropdowns. No per-card save:
-// edits flow into the page draft and surface in the sticky bottom bar.
-function PresetCard({
-  title, subtitle, children,
-}: {
-  title: string; subtitle: string; children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-2xl bg-white p-6 shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
-      <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">{title}</h2>
-      <p className="mt-0.5 text-[12.5px] text-slate-500">{subtitle}</p>
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>
-    </section>
-  );
-}
-
-// Uses the app's custom Select popover (not a native <select>) for a
-// consistent dropdown across the product.
-function PolicySelect({
-  label, value, options, onChange, full,
-}: {
-  label: string; value: string; options: readonly string[]; onChange: (v: string) => void; full?: boolean;
-}) {
-  return (
-    <div className={full ? "sm:col-span-2" : ""}>
-      <span className="mb-1.5 block text-[12px] text-slate-500">{label}</span>
-      <Select
-        value={value}
-        onChange={onChange}
-        ariaLabel={label}
-        className="w-full"
-        options={options.map((o) => ({ value: o, label: o }))}
-      />
-    </div>
-  );
-}
-
-function Eyebrow({ children }: { children: React.ReactNode }) {
-  return <div className="mb-2 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-slate-400">{children}</div>;
-}
-
-function RequirementGrid({
-  items, state, onToggle,
-}: {
-  items: Requirement[];
-  state: Record<RequirementKey, boolean>;
-  onToggle: (key: RequirementKey) => void;
-}) {
-  return (
-    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-      {items.map((r) => {
-        const on = state[r.key];
-        return (
-          <button
-            key={r.key}
-            type="button"
-            disabled={r.locked}
-            onClick={() => !r.locked && onToggle(r.key)}
-            className={
-              "flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300 " +
-              (on ? "border-brand-200 bg-brand-50/40" : "border-slate-200 bg-white hover:bg-slate-50") +
-              (r.locked ? " cursor-default" : "")
-            }
-          >
-            <div className="min-w-0">
-              <div className="text-[13px] font-medium tracking-tight text-slate-900">{r.label}</div>
-              <div className={"text-[11px] " + (on && !r.locked ? "text-brand-600" : "text-slate-400")}>{r.hint}</div>
-            </div>
-            {r.locked ? (
-              <span className="shrink-0 whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-                Always required
-              </span>
-            ) : (
-              <Switch on={on} />
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function Switch({ on, dim }: { on: boolean; dim?: boolean }) {
-  return (
-    <span
-      className={
-        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors duration-150 " +
-        (on ? (dim ? "bg-brand-300" : "bg-brand-500") : "bg-slate-200")
-      }
-    >
-      <span className={"block h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(15,23,42,0.2)] transition-transform duration-150 " + (on ? "translate-x-4" : "translate-x-0")} />
-    </span>
-  );
-}
-
-function PolicySection({ title, last, children }: { title: string; last?: boolean; children: React.ReactNode }) {
-  return (
-    <div className={last ? "" : "mb-5 border-b border-slate-100 pb-5"}>
-      <Eyebrow>{title}</Eyebrow>
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">{children}</div>
-    </div>
-  );
-}
-
-function PolicyRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5">
-      <div className="min-w-0">
-        <div className="text-[13px] font-medium tracking-tight text-slate-900">{label}</div>
-        {hint && <div className="text-[11px] text-slate-400">{hint}</div>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function PolicyNumber({
-  label, hint, value, onChange, suffix, prefix,
-}: {
-  label: string; hint?: string; value: number; onChange: (v: number) => void; suffix?: string; prefix?: string;
-}) {
-  return (
-    <PolicyRow label={label} hint={hint}>
-      <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100">
-        {prefix && <span className="text-[12px] text-slate-400">{prefix}</span>}
-        <NumberInput
-          min={0}
-          value={value}
-          onChange={(e) => onChange(Math.max(0, Number(e.target.value) || 0))}
-          className="w-12 bg-transparent text-right text-[13px] font-semibold tabular-nums text-slate-900 focus:outline-none"
-        />
-        {suffix && <span className="text-[11px] text-slate-400">{suffix}</span>}
-      </div>
-    </PolicyRow>
-  );
-}
-
-function PolicyToggle({
-  label, hint, value, onChange,
-}: {
-  label: string; hint?: string; value: boolean; onChange: (v: boolean) => void;
-}) {
-  return (
-    <PolicyRow label={label} hint={hint}>
-      <button type="button" onClick={() => onChange(!value)} role="switch" aria-checked={value} aria-label={label} className="shrink-0 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-300 rounded-full">
-        <Switch on={value} />
-      </button>
-    </PolicyRow>
   );
 }
 
@@ -828,8 +599,8 @@ function AccountTab({ line }: { line: Line }) {
   const { user } = useCurrentUser();
   const isAdmin = user?.role === "admin";
   const [status, setStatus] = useState<LineStatus>("active");
-  // Suspend opens a type-to-confirm dialog (same pattern as DeleteVesselDialog);
-  // re-activate is immediate.
+  // Disable opens a type-to-confirm dialog (same pattern as the vessel dialog);
+  // re-enable is immediate.
   const [confirmOpen, setConfirmOpen] = useState(false);
   useEffect(() => { setStatus(getLineStatus(line.id)); setConfirmOpen(false); }, [line.id]);
 
@@ -883,19 +654,19 @@ function AccountTab({ line }: { line: Line }) {
       </Card>
 
       {/* Danger zone — admin-only. Operators are scoped to a single line and
-          can't be allowed to suspend (and lock themselves out of) it. */}
+          can't be allowed to disable (and lock themselves out of) it. */}
       {isAdmin && (
         <section className="rounded-2xl bg-white p-6 ring-1 ring-rose-200/70">
           <h2 className="text-[15px] font-semibold tracking-tight text-rose-700">Danger zone</h2>
           {status === "active" ? (
             <p className="mt-0.5 text-[12.5px] text-slate-500">
-              Deactivating stops new bookings and hides future schedules for this line.
-              Existing bookings are honored. You can activate it again at any time.
+              Disabling stops new bookings and hides future schedules for this line.
+              Existing bookings are honored. You can enable it again at any time.
             </p>
           ) : (
             <p className="mt-0.5 text-[12.5px] text-rose-600">
-              This line is deactivated — it is not accepting new bookings and its future
-              schedules are hidden. Activate to restore it.
+              This line is disabled — it is not accepting new bookings and its future
+              schedules are hidden. Enable to restore it.
             </p>
           )}
           <button
@@ -907,7 +678,7 @@ function AccountTab({ line }: { line: Line }) {
                 : "mt-4 inline-flex items-center rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-emerald-700 transition-colors duration-150 hover:bg-emerald-50 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-300"
             }
           >
-            {status === "active" ? "Deactivate shipping line" : "Activate shipping line"}
+            {status === "active" ? "Disable shipping line" : "Enable shipping line"}
           </button>
 
           <SuspendLineDialog

@@ -806,7 +806,7 @@ export default function VesselDetailPage() {
       <VesselStatusDialog
         open={deleteOpen}
         vessel={vessel}
-        mode={vessel?.status === "Active" ? "disable" : "activate"}
+        mode={vessel?.status === "Active" ? "disable" : "enable"}
         onClose={() => setDeleteOpen(false)}
         onConfirm={(v) => {
           const next: Vessel["status"] = v.status === "Active" ? "Inactive" : "Active";

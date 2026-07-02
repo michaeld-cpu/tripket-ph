@@ -101,10 +101,11 @@ function fmtDepartureTime(d: Date): string {
 // approved-vs-confirmed wording. Tickets statuses are simpler so just pass
 // the value through.
 const ticketStatusLabel: Record<TicketStatus, string> = {
-  Pending:   "Pending",
-  Issued:    "Issued",
-  Cancelled: "Cancelled",
-  Refunded:  "Refunded",
+  Submitted:   "Submitted",
+  Issued:      "Issued",
+  Cancelled:   "Cancelled",
+  "To Refund": "To Refund",
+  Refunded:    "Refunded",
 };
 
 function SortIcon() {
@@ -453,11 +454,11 @@ export default function TicketsPage() {
                                 </svg>
                               ),
                             },
-                            // Mark Pending — for tickets awaiting payment/approval.
+                            // Mark Submitted — for tickets that are paid but awaiting approval.
                             {
-                              label: "Mark Pending",
-                              disabled: r.status === "Cancelled" || r.status === "Refunded" || r.status === "Pending",
-                              onClick: () => { mutateTicket(r.id, { status: "Pending" }); showToast(`Ticket ${r.id} marked Pending`); },
+                              label: "Mark Submitted",
+                              disabled: r.status === "Cancelled" || r.status === "Refunded" || r.status === "Submitted",
+                              onClick: () => { mutateTicket(r.id, { status: "Submitted" }); showToast(`Ticket ${r.id} marked Submitted`); },
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                   <circle cx="12" cy="12" r="9" />
@@ -476,9 +477,24 @@ export default function TicketsPage() {
                                 </svg>
                               ),
                             },
+                            // Mark To Refund — flag the ticket as eligible for a refund.
+                            // Must happen before an actual Refund. Locked once already
+                            // flagged or refunded.
+                            {
+                              label: "Mark To Refund",
+                              disabled: r.status === "To Refund" || r.status === "Refunded",
+                              onClick: () => { mutateTicket(r.id, { status: "To Refund" }); showToast(`Ticket ${r.id} marked To Refund`); },
+                              icon: (
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                  <path d="M3 12a9 9 0 1 0 3-6.7" />
+                                  <path d="M3 4v5h5" />
+                                </svg>
+                              ),
+                            },
+                            // Refund — only after the ticket has been marked To Refund.
                             {
                               label: "Refund",
-                              disabled: r.status === "Cancelled" || r.status === "Refunded",
+                              disabled: r.status !== "To Refund",
                               onClick: () => { mutateTicket(r.id, { status: "Refunded" }); showToast(`Ticket ${r.id} refunded`); },
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -487,11 +503,11 @@ export default function TicketsPage() {
                                 </svg>
                               ),
                             },
-                            // Cancel — terminal action.
+                            // Cancel — available until the ticket is already refunded.
                             {
                               label: "Cancel ticket",
                               danger: true,
-                              disabled: r.status === "Cancelled" || r.status === "Refunded",
+                              disabled: r.status === "Refunded",
                               onClick: () => { mutateTicket(r.id, { status: "Cancelled" }); showToast(`Ticket ${r.id} cancelled`); },
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -558,9 +574,10 @@ export default function TicketsPage() {
           { kind: "select", key: "status", label: "Status", value: statusFilter, onChange: (v) => setStatusFilter(v as "all" | TicketStatus), defaultValue: "all",
             options: [
               { value: "all", label: "All status" },
-              { value: "Pending", label: "Pending" },
+              { value: "Submitted", label: "Submitted" },
               { value: "Issued", label: "Issued" },
               { value: "Cancelled", label: "Cancelled" },
+              { value: "To Refund", label: "To Refund" },
               { value: "Refunded", label: "Refunded" },
             ] },
           { kind: "select", key: "class", label: "Fare class", value: classFilter, onChange: (v) => setClassFilter(v as "all" | FareClass), defaultValue: "all",
@@ -722,7 +739,7 @@ function TicketDetailDialog({
                       cancelled/void/refunded entries don't read like they're
                       still scheduled. fmtEtd flips wording to "Departed …
                       ago" once departure is in the past. */}
-                  {(ticket.status === "Issued" || ticket.status === "Pending") && (
+                  {(ticket.status === "Issued" || ticket.status === "Submitted") && (
                     <p className="mt-3 text-center text-[11px] font-medium tracking-tight text-slate-500">
                       ( {fmtEtd(ticket.departureDate)} )
                     </p>
@@ -851,13 +868,15 @@ function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
   const payTone =
     ticket.status === "Issued" ? "bg-emerald-100 text-emerald-800"
     : ticket.status === "Refunded" ? "bg-sky-50 text-sky-700"
+    : ticket.status === "To Refund" ? "bg-amber-100 text-amber-800"
     : ticket.status === "Cancelled" ? "bg-slate-100 text-slate-500"
     : "bg-brand-50 text-brand-700";
   const payLabel =
     ticket.status === "Issued" ? "Issued"
     : ticket.status === "Refunded" ? "Refunded"
+    : ticket.status === "To Refund" ? "To Refund"
     : ticket.status === "Cancelled" ? "Unpaid"
-    : "Pending";
+    : "Submitted";
 
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
@@ -952,19 +971,23 @@ function StatusPicker({
     };
   }, [open]);
 
-  // Terminal states block every transition.
-  const isTerminal = current === "Cancelled" || current === "Refunded";
   const canPick = (s: TicketStatus): boolean => {
     if (s === current) return false;
-    if (isTerminal) return false;
+    // Refunded is fully terminal — nothing left to do.
+    if (current === "Refunded") return false;
+    // Refund must be preceded by "To Refund" — it's only pickable from there.
+    if (s === "Refunded") return current === "To Refund";
+    // A ticket already flagged To Refund can only proceed to the actual refund.
+    if (current === "To Refund") return false;
     return true;
   };
 
   const options: { value: TicketStatus; label: string }[] = [
-    { value: "Pending",   label: "Mark Pending" },
+    { value: "Submitted",   label: "Mark Submitted" },
     { value: "Issued",      label: "Mark Issued" },
-    { value: "Refunded",  label: "Refund" },
-    { value: "Cancelled", label: "Cancel ticket" },
+    { value: "To Refund",   label: "Mark To Refund" },
+    { value: "Refunded",    label: "Refund" },
+    { value: "Cancelled",   label: "Cancel ticket" },
   ];
 
   return (

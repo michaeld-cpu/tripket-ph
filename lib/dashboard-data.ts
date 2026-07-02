@@ -27,7 +27,8 @@ export type PendingBooking = {
   voyageId: string;
   departure: string;
   amount: number;
-  status: "Pending" | "Confirmed" | "Cancelled";
+  // Submitted = paid, awaiting operator approval (was "Pending").
+  status: "Submitted" | "Confirmed" | "Cancelled";
   bookingDate: string;
   ageMinutes: number;
 };
@@ -197,12 +198,12 @@ const dashboards: Record<string, LineDashboard> = {
       { label: "Apr", pax: 1340, veh: 540 },
     ],
     pending: [
-      { ref: "TKT-0001", passenger: "Maria Santos",   pax: 2, routeFromCode: "MNL", routeFromCity: "Manila",    routeToCode: "PPS", routeToCity: "Puerto Princesa", vessel: "MV Palawan Breeze", vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9003", departure: "05/19 · 19:00", amount: 4200, status: "Pending", bookingDate: "2026-05-07", ageMinutes: 124 },
-      { ref: "TKT-0002", passenger: "Juan Dela Cruz", pax: 1, routeFromCode: "MNL", routeFromCity: "Manila",    routeToCode: "ILO", routeToCity: "Iloilo",         vessel: "MV Visayan Star",     vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9005", departure: "05/18 · 16:00", amount: 1800, status: "Pending", bookingDate: "2026-05-07", ageMinutes: 96 },
-      { ref: "TKT-0003", passenger: "Andrea Lim",     pax: 3, routeFromCode: "MNL", routeFromCity: "Manila",    routeToCode: "CEB", routeToCity: "Cebu City",       vessel: "MV St. Pope John Paul", vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9007", departure: "05/20 · 21:00", amount: 5400, status: "Pending", bookingDate: "2026-05-07", ageMinutes: 78 },
-      { ref: "TKT-0004", passenger: "Rico Tan",       pax: 1, routeFromCode: "MNL", routeFromCity: "Manila",    routeToCode: "CDO", routeToCity: "Cagayan de Oro",  vessel: "MV Maligaya",          vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9009", departure: "05/19 · 13:00", amount: 3200, status: "Pending", bookingDate: "2026-05-08", ageMinutes: 52 },
-      { ref: "TKT-0005", passenger: "Patricia Reyes", pax: 4, routeFromCode: "BAT", routeFromCity: "Batangas",  routeToCode: "CAL", routeToCity: "Calapan",         vessel: "MV Visayan Star",     vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9004", departure: "05/18 · 16:00", amount: 3200, status: "Pending", bookingDate: "2026-05-08", ageMinutes: 31 },
-      { ref: "TKT-0006", passenger: "Joanna Cruz",    pax: 1, routeFromCode: "MNL", routeFromCity: "Manila",    routeToCode: "PPS", routeToCity: "Puerto Princesa", vessel: "MV Palawan Breeze", vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9005", departure: "05/19 · 19:00", amount: 2100, status: "Pending", bookingDate: "2026-05-08", ageMinutes: 18 },
+      { ref: "TKT-0001", passenger: "Maria Santos",   pax: 2, routeFromCode: "MNL", routeFromCity: "Manila",    routeToCode: "PPS", routeToCity: "Puerto Princesa", vessel: "MV Palawan Breeze", vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9003", departure: "05/19 · 19:00", amount: 4200, status: "Submitted", bookingDate: "2026-05-07", ageMinutes: 124 },
+      { ref: "TKT-0002", passenger: "Juan Dela Cruz", pax: 1, routeFromCode: "MNL", routeFromCity: "Manila",    routeToCode: "ILO", routeToCity: "Iloilo",         vessel: "MV Visayan Star",     vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9005", departure: "05/18 · 16:00", amount: 1800, status: "Submitted", bookingDate: "2026-05-07", ageMinutes: 96 },
+      { ref: "TKT-0003", passenger: "Andrea Lim",     pax: 3, routeFromCode: "MNL", routeFromCity: "Manila",    routeToCode: "CEB", routeToCity: "Cebu City",       vessel: "MV St. Pope John Paul", vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9007", departure: "05/20 · 21:00", amount: 5400, status: "Submitted", bookingDate: "2026-05-07", ageMinutes: 78 },
+      { ref: "TKT-0004", passenger: "Rico Tan",       pax: 1, routeFromCode: "MNL", routeFromCity: "Manila",    routeToCode: "CDO", routeToCity: "Cagayan de Oro",  vessel: "MV Maligaya",          vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9009", departure: "05/19 · 13:00", amount: 3200, status: "Submitted", bookingDate: "2026-05-08", ageMinutes: 52 },
+      { ref: "TKT-0005", passenger: "Patricia Reyes", pax: 4, routeFromCode: "BAT", routeFromCity: "Batangas",  routeToCode: "CAL", routeToCity: "Calapan",         vessel: "MV Visayan Star",     vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9004", departure: "05/18 · 16:00", amount: 3200, status: "Submitted", bookingDate: "2026-05-08", ageMinutes: 31 },
+      { ref: "TKT-0006", passenger: "Joanna Cruz",    pax: 1, routeFromCode: "MNL", routeFromCity: "Manila",    routeToCode: "PPS", routeToCity: "Puerto Princesa", vessel: "MV Palawan Breeze", vesselType: "RoRo", operator: "2GO Travel", voyageId: "VY-9005", departure: "05/19 · 19:00", amount: 2100, status: "Submitted", bookingDate: "2026-05-08", ageMinutes: 18 },
     ],
     departures: [
       { id: "VY-9003", vessel: "MV Palawan Breeze",      type: "RoRo", operator: "2GO Travel", routeFrom: "MNL", routeTo: "PPS", depart: "7:00 PM",  arrive: "5:00 PM", arriveOffsetDays: 1, durationLabel: "22h",     ticketsConfirmed: 310, ticketsPending: 24 },

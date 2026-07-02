@@ -209,7 +209,7 @@ export default function VesselsPage() {
       <VesselStatusDialog
         open={statusVessel !== null}
         vessel={statusVessel}
-        mode={statusVessel?.status === "Active" ? "disable" : "activate"}
+        mode={statusVessel?.status === "Active" ? "disable" : "enable"}
         onClose={() => setStatusVessel(null)}
         onConfirm={(v) => {
           const next: Vessel["status"] = v.status === "Active" ? "Inactive" : "Active";
@@ -464,7 +464,7 @@ export default function VesselsPage() {
                                   ),
                                 }
                               : {
-                                  label: "Activate vessel",
+                                  label: "Enable vessel",
                                   onClick: () => setStatusVessel(v),
                                   icon: (
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">

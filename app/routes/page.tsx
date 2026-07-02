@@ -656,7 +656,7 @@ export default function RoutesPage() {
       <RouteStatusDialog
         open={!!statusRoute}
         label={statusRoute ? `${statusRoute.origin.name ?? statusRoute.origin.city} → ${statusRoute.destination.name ?? statusRoute.destination.city}` : ""}
-        mode={statusRoute?.isEnabled ? "disable" : "activate"}
+        mode={statusRoute?.isEnabled ? "disable" : "enable"}
         onClose={() => setStatusRoute(null)}
         onConfirm={() => { if (statusRoute) toggleRouteStatus(statusRoute.id); }}
       />

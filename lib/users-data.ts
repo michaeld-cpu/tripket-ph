@@ -32,6 +32,13 @@ export const userStatusTone: Record<UserStatus, string> = {
   Suspended: "bg-slate-100 text-slate-500",
 };
 
+// Display label — surfaces the Enable/Disable vocabulary used site-wide while
+// keeping the internal "Suspended" value (so persisted data isn't migrated).
+export const userStatusLabel: Record<UserStatus, string> = {
+  Active:    "Active",
+  Suspended: "Disabled",
+};
+
 // Deterministic mock directory — a spread of roles/statuses across the lines.
 const FIRST = ["Ada", "Marco", "Liza", "Ramon", "Carla", "Diego", "Mae", "Paolo", "Trisha", "Ben", "Nina", "Gio", "Rhea", "Jun", "Ella", "Karl", "Mika", "Tonio"];
 const LAST = ["Reyes", "Santos", "Cruz", "Dela Cruz", "Mendoza", "Villanueva", "Aquino", "Navarro", "Castillo", "Ramos", "Bautista", "Flores"];
