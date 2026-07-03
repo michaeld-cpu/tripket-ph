@@ -326,7 +326,7 @@ function VehicleClassesEditor({
         <span className="whitespace-nowrap">Label</span>
         <span className="whitespace-nowrap">Descriptor</span>
         <span className="whitespace-nowrap text-right">Max (kg / m)</span>
-        <span className="whitespace-nowrap text-right">Quantity</span>
+        <span className="whitespace-nowrap text-right">Slots</span>
         <span className="whitespace-nowrap text-right">Default fare</span>
         <span className="whitespace-nowrap text-right" title="Extra companion seats bundled into the vehicle fare (driver always rides free)">Companions</span>
         <span />
@@ -375,10 +375,10 @@ function VehicleClassesEditor({
                     update(c.key, { capacity: e.target.value === "" ? undefined : n });
                   }}
                   placeholder="—"
-                  aria-label="Quantity the vessel can store"
+                  aria-label="Vehicle slots this class takes on the vessel deck"
                   className="w-full bg-transparent text-right font-mono text-[12.5px] tabular-nums text-slate-900 placeholder:text-slate-300 focus:outline-none"
                 />
-                <span className="text-[10.5px] font-medium text-slate-400">qty</span>
+                <span className="text-[10.5px] font-medium text-slate-400">slots</span>
               </div>
               <div className="flex items-center rounded-md border border-slate-200 bg-white px-2 py-1.5">
                 <span className="text-[11px] font-medium text-slate-400">₱</span>

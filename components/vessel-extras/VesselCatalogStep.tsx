@@ -221,7 +221,7 @@ export default function VesselCatalogStep(props: Props) {
 
       {!isPassengerOnly && (
         <section>
-          <SectionHeader title="Vehicle classes" hint="Toggle which classes this vessel can carry; set each fare and the quantity it can store. Values prefill from Settings → Configurations and can be overridden here." count={`${enabledClasses} of ${catalog.vehicleClasses.length}`} />
+          <SectionHeader title="Vehicle classes" hint="Toggle which classes this vessel can carry; set each fare and how many slots the vessel deck can hold for that class. Values prefill from Settings → Configurations and can be overridden here." count={`${enabledClasses} of ${catalog.vehicleClasses.length}`} />
           {catalog.vehicleClasses.length === 0 ? emptyHint : (
             <div className="divide-y divide-slate-100 border-y border-slate-100">
               {catalog.vehicleClasses.map((c) => {
@@ -261,7 +261,7 @@ export default function VesselCatalogStep(props: Props) {
                             placeholder="0"
                             className="w-full bg-transparent px-2 py-1.5 text-right text-[12px] tabular-nums text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:cursor-not-allowed"
                           />
-                          <span className="pr-2 text-[10px] text-slate-400">qty</span>
+                          <span className="pr-2 text-[10px] text-slate-400">slots</span>
                         </div>
                       </div>
                     }
