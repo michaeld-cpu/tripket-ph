@@ -724,6 +724,135 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
     });
   }
 
+  // ── Under Review, already paid samples ──
+  // A booking is "Under Review" (status Submitted) once it's successfully
+  // submitted AND paid — the payment has settled (paymentStatus "Issued") and
+  // each ticket already carries its ticket number, but an operator hasn't
+  // approved it yet. These sit alongside the not-yet-settled Submitted samples
+  // above so the approval queue shows both funding states. Built off real
+  // voyages (cycled) with a distinct rng seed so they're deterministic.
+  if (seedable.length > 0) {
+    const PAID_REVIEW_PLANS: { pax: number; classes: FareClass[]; vehicle: boolean }[] = [
+      { pax: 1, classes: ["Economy"], vehicle: false },
+      { pax: 2, classes: ["Business", "Tourist"], vehicle: false },
+      { pax: 3, classes: ["Economy", "Economy", "Tourist"], vehicle: false },
+      { pax: 2, classes: ["Tourist", "Economy"], vehicle: true },
+    ];
+    PAID_REVIEW_PLANS.forEach((plan, s) => {
+      const v = seedable[s % seedable.length];
+      const ref = `TKT-${String(counter).padStart(4, "0")}`;
+      const rand = rng(hashStr(`paid-review-sample-${ref}`));
+      const baseFare = v.cheapestFare || 1200;
+
+      const dep = new Date(v.date);
+      dep.setHours(v.hour, v.minute, 0, 0);
+      // Recently booked, like the other Under Review samples.
+      const bookingDate = new Date(dep);
+      bookingDate.setDate(bookingDate.getDate() - (1 + Math.floor(rand() * 3)));
+      bookingDate.setHours(0, 0, 0, 0);
+
+      const first = FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
+      const last = LAST_NAMES[Math.floor(rand() * LAST_NAMES.length)];
+      const contactMobile = `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14);
+      const contactEmail = `${first}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`;
+
+      let vehicle: Vehicle | undefined;
+      if (plan.vehicle) {
+        const make = VEHICLE_MAKES[Math.floor(rand() * VEHICLE_MAKES.length)];
+        const models = VEHICLE_MODELS_BY_MAKE[make] ?? ["Standard"];
+        const model = models[Math.floor(rand() * models.length)];
+        const labelPrefix = VEHICLE_LABEL_PREFIXES[Math.floor(rand() * VEHICLE_LABEL_PREFIXES.length)];
+        vehicle = {
+          class: VEHICLE_LABELS[Math.floor(rand() * VEHICLE_LABELS.length)],
+          plateNumber: `${String.fromCharCode(65 + Math.floor(rand() * 26))}${String.fromCharCode(65 + Math.floor(rand() * 26))}${String.fromCharCode(65 + Math.floor(rand() * 26))} ${String(1000 + Math.floor(rand() * 8999))}`,
+          includedSeats: 2,
+          year: 2015 + Math.floor(rand() * 11),
+          make,
+          model,
+          label: `${labelPrefix} ${model}`,
+          photoUrl: pickMockImage("vehiclePhoto", rand),
+          orUrl: pickMockImage("or", rand),
+          crUrl: pickMockImage("cr", rand),
+        };
+      }
+
+      const tickets: Ticket[] = plan.classes.map((fareClass, p) => {
+        const isLead = p === 0;
+        const tFirst = isLead ? first : FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
+        const sex: PassengerSex = rand() < 0.5 ? "Female" : "Male";
+        const age = 1 + Math.floor(rand() * 72);
+        const paxType: PaxType = (() => {
+          if (age <= 2) return "infant";
+          if (age >= 60) return "senior";
+          const roll = rand();
+          if (age >= 6 && age <= 24 && roll < 0.2) return "student";
+          if (roll >= 0.95) return "pwd";
+          return "regular";
+        })();
+        const idType = ID_TYPES[Math.floor(rand() * ID_TYPES.length)];
+        return {
+          id: `${ref}-${String.fromCharCode(65 + p)}`,
+          name: `${tFirst} ${last}`,
+          fareClass,
+          paxType,
+          // Paid but awaiting approval — the ticket number is already assigned
+          // even though the booking is still Under Review (status Submitted).
+          ticketNumber: `${ref}-${String.fromCharCode(65 + p)}`,
+          age,
+          sex,
+          nationality: "Filipino",
+          documentType: idType.label,
+          documentRef: idType.format(rand),
+          idFrontUrl: pickMockImage("idFront", rand),
+          idBackUrl: pickMockImage("idBack", rand),
+          fare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
+          grossFare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
+          phone: isLead ? contactMobile : `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14),
+          email: isLead ? contactEmail : `${tFirst.toLowerCase()}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`,
+          status: "Submitted" as TicketStatus,
+        };
+      });
+
+      // Comp the cheapest seats covered by the vehicle fee, mirroring the
+      // main loop so vehicle sample totals stay honest.
+      if (vehicle) {
+        const indexed = tickets.map((t, i) => ({ t, i }));
+        indexed.sort((a, b) => {
+          const af = FARE_CLASS_MULTIPLIER[a.t.fareClass];
+          const bf = FARE_CLASS_MULTIPLIER[b.t.fareClass];
+          return af !== bf ? af - bf : a.i - b.i;
+        });
+        const compCount = Math.min(vehicle.includedSeats, tickets.length);
+        for (let c = 0; c < compCount; c++) { indexed[c].t.comped = true; indexed[c].t.fare = 0; }
+      }
+
+      bookings.push({
+        ref,
+        ticketholder: `${first} ${last}`,
+        pax: plan.pax,
+        vehicleClass: vehicle?.class,
+        vehicle,
+        routeOriginCode: v.originCode!,
+        routeDestinationCode: v.destinationCode!,
+        routeOriginCity: v.originCity ?? v.originCode!,
+        routeDestinationCity: v.destinationCity ?? v.destinationCode!,
+        vesselName: v.vesselName ?? "Unknown vessel",
+        departureDate: dep,
+        amount: tickets.reduce((sum, t) => sum + t.fare, 0) + (vehicle ? 500 + Math.floor(rand() * 2000) : 0),
+        // Under Review — submitted and paid, awaiting operator approval.
+        status: "Submitted",
+        bookingDate,
+        contactMobile,
+        contactEmail,
+        paymentMethod: "Tripket Wallet",
+        // Payment has settled, unlike the not-yet-paid Submitted samples above.
+        paymentStatus: "Issued",
+        tickets,
+      });
+      counter++;
+    });
+  }
+
   // Newest bookings first.
   return bookings.sort((a, b) => b.bookingDate.getTime() - a.bookingDate.getTime());
 }
