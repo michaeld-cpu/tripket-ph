@@ -19,6 +19,7 @@ import {
   statusLabel,
   statusTone,
   ticketStatusTone,
+  ticketStatusLabel,
   type Booking,
   type BookingStatus,
   type FareClass,
@@ -439,7 +440,7 @@ export default function BookingsPage() {
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
-                      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[b.status]}`}>
+                      <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[b.status]}`}>
                         {statusLabel[b.status]}
                       </span>
                     </td>
@@ -840,7 +841,7 @@ function BookingDetailDialog({
                       </svg>
                     </button>
                   )}
-                  <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[booking.status]}`}>
+                  <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[booking.status]}`}>
                     {statusLabel[booking.status]}
                   </span>
                 </div>
@@ -1138,7 +1139,7 @@ function BookingStatusPicker({
                     }`}
                   >
                     <span className="truncate font-medium">{o.label}</span>
-                    <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${statusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
+                    <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${statusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
                       {statusLabel[o.value]}
                     </span>
                   </button>
@@ -1197,8 +1198,8 @@ function PassengerTable({
                 <span className="text-[12px] font-medium tracking-tight text-slate-700">{t.sex}</span>
                 <span className="font-mono text-[12px] tabular-nums text-slate-700">{t.age}</span>
                 <span className="text-[12px] font-medium tracking-tight text-slate-700">{t.fareClass}</span>
-                <span className={`inline-flex w-fit items-center rounded-md px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[t.status]}`}>
-                  {t.status}
+                <span className={`inline-flex w-fit items-center whitespace-nowrap rounded-md px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[t.status]}`}>
+                  {ticketStatusLabel[t.status]}
                 </span>
                 <span className={`grid h-6 w-6 place-items-center justify-self-end text-slate-400 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">

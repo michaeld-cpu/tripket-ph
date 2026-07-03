@@ -18,6 +18,7 @@ import {
   deriveBookings,
   statusLabel,
   ticketStatusTone,
+  ticketStatusLabel,
   type Booking,
   type FareClass,
   type Ticket,
@@ -96,17 +97,6 @@ function fmtEtd(d: Date): string {
 function fmtDepartureTime(d: Date): string {
   return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
-
-// Ticket-level display label — keeps statuses in sync with bookings's
-// approved-vs-confirmed wording. Submitted surfaces as "Under Review" and
-// "To Refund" as "For Refund" to match the operator-facing vocabulary.
-const ticketStatusLabel: Record<TicketStatus, string> = {
-  Submitted:   "Under Review",
-  Issued:      "Issued",
-  Cancelled:   "Cancelled",
-  "To Refund": "For Refund",
-  Refunded:    "Refunded",
-};
 
 function SortIcon() {
   return (
@@ -381,7 +371,7 @@ export default function TicketsPage() {
                         )}
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 align-middle">
-                        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[r.status]}`}>
+                        <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[r.status]}`}>
                           {ticketStatusLabel[r.status]}
                         </span>
                       </td>
@@ -677,7 +667,7 @@ function TicketDetailDialog({
                   ) : (
                     <span className="font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-400" title="Assigned when the ticket is marked paid">No ticket number yet</span>
                   )}
-                  <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[ticket.status]}`}>
+                  <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[ticket.status]}`}>
                     {ticket.status}
                   </span>
                 </div>
@@ -876,7 +866,7 @@ function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
       <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
         <h3 className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Payment Information</h3>
-        <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${payTone}`}>
+        <span className={`inline-flex items-center whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${payTone}`}>
           {payLabel}
         </span>
       </div>
@@ -1042,7 +1032,7 @@ function StatusPicker({
                     }`}
                   >
                     <span className="truncate font-medium">{o.label}</span>
-                    <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
+                    <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
                       {ticketStatusLabel[o.value]}
                     </span>
                   </button>

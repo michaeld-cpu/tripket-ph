@@ -901,3 +901,13 @@ export const ticketStatusTone: Record<TicketStatus, string> = {
   "To Refund": "bg-amber-100 text-amber-800",
   Refunded:    "bg-sky-50 text-sky-700",
 };
+
+// Per-ticket display label — mirrors the booking-level wording. Submitted
+// surfaces as "Under Review" and "To Refund" as "For Refund".
+export const ticketStatusLabel: Record<TicketStatus, string> = {
+  Submitted:   "Under Review",
+  Issued:      "Issued",
+  Cancelled:   "Cancelled",
+  "To Refund": "For Refund",
+  Refunded:    "Refunded",
+};
