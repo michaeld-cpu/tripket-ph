@@ -98,13 +98,13 @@ function fmtDepartureTime(d: Date): string {
 }
 
 // Ticket-level display label — keeps statuses in sync with bookings's
-// approved-vs-confirmed wording. Tickets statuses are simpler so just pass
-// the value through.
+// approved-vs-confirmed wording. Submitted surfaces as "Under Review" and
+// "To Refund" as "For Refund" to match the operator-facing vocabulary.
 const ticketStatusLabel: Record<TicketStatus, string> = {
-  Submitted:   "Submitted",
+  Submitted:   "Under Review",
   Issued:      "Issued",
   Cancelled:   "Cancelled",
-  "To Refund": "To Refund",
+  "To Refund": "For Refund",
   Refunded:    "Refunded",
 };
 
@@ -454,11 +454,11 @@ export default function TicketsPage() {
                                 </svg>
                               ),
                             },
-                            // Mark Submitted — for tickets that are paid but awaiting approval.
+                            // Mark Under Review — for tickets that are paid but awaiting approval.
                             {
-                              label: "Mark Submitted",
+                              label: "Mark Under Review",
                               disabled: r.status === "Cancelled" || r.status === "Refunded" || r.status === "Submitted",
-                              onClick: () => { mutateTicket(r.id, { status: "Submitted" }); showToast(`Ticket ${r.id} marked Submitted`); },
+                              onClick: () => { mutateTicket(r.id, { status: "Submitted" }); showToast(`Ticket ${r.id} marked Under Review`); },
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                   <circle cx="12" cy="12" r="9" />
@@ -477,13 +477,13 @@ export default function TicketsPage() {
                                 </svg>
                               ),
                             },
-                            // Mark To Refund — flag the ticket as eligible for a refund.
+                            // Mark For Refund — flag the ticket as eligible for a refund.
                             // Must happen before an actual Refund. Locked once already
                             // flagged or refunded.
                             {
-                              label: "Mark To Refund",
+                              label: "Mark For Refund",
                               disabled: r.status === "To Refund" || r.status === "Refunded",
-                              onClick: () => { mutateTicket(r.id, { status: "To Refund" }); showToast(`Ticket ${r.id} marked To Refund`); },
+                              onClick: () => { mutateTicket(r.id, { status: "To Refund" }); showToast(`Ticket ${r.id} marked For Refund`); },
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                   <path d="M3 12a9 9 0 1 0 3-6.7" />
@@ -503,12 +503,14 @@ export default function TicketsPage() {
                                 </svg>
                               ),
                             },
-                            // Cancel — available until the ticket is already refunded.
+                            // Cancel — flags the ticket For Refund (internal "To
+                            // Refund") so the money is queued for return. Locked
+                            // once already For Refund or refunded.
                             {
                               label: "Cancel ticket",
                               danger: true,
-                              disabled: r.status === "Refunded",
-                              onClick: () => { mutateTicket(r.id, { status: "Cancelled" }); showToast(`Ticket ${r.id} cancelled`); },
+                              disabled: r.status === "To Refund" || r.status === "Refunded",
+                              onClick: () => { mutateTicket(r.id, { status: "To Refund" }); showToast(`Ticket ${r.id} cancelled — marked For Refund`); },
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                   <circle cx="12" cy="12" r="9" />
@@ -574,10 +576,10 @@ export default function TicketsPage() {
           { kind: "select", key: "status", label: "Status", value: statusFilter, onChange: (v) => setStatusFilter(v as "all" | TicketStatus), defaultValue: "all",
             options: [
               { value: "all", label: "All status" },
-              { value: "Submitted", label: "Submitted" },
+              { value: "Submitted", label: "Under Review" },
               { value: "Issued", label: "Issued" },
               { value: "Cancelled", label: "Cancelled" },
-              { value: "To Refund", label: "To Refund" },
+              { value: "To Refund", label: "For Refund" },
               { value: "Refunded", label: "Refunded" },
             ] },
           { kind: "select", key: "class", label: "Fare class", value: classFilter, onChange: (v) => setClassFilter(v as "all" | FareClass), defaultValue: "all",
@@ -874,9 +876,9 @@ function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
   const payLabel =
     ticket.status === "Issued" ? "Issued"
     : ticket.status === "Refunded" ? "Refunded"
-    : ticket.status === "To Refund" ? "To Refund"
+    : ticket.status === "To Refund" ? "For Refund"
     : ticket.status === "Cancelled" ? "Unpaid"
-    : "Submitted";
+    : "Under Review";
 
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
@@ -983,9 +985,9 @@ function StatusPicker({
   };
 
   const options: { value: TicketStatus; label: string }[] = [
-    { value: "Submitted",   label: "Mark Submitted" },
+    { value: "Submitted",   label: "Mark Under Review" },
     { value: "Issued",      label: "Mark Issued" },
-    { value: "To Refund",   label: "Mark To Refund" },
+    { value: "To Refund",   label: "Mark For Refund" },
     { value: "Refunded",    label: "Refund" },
     { value: "Cancelled",   label: "Cancel ticket" },
   ];
@@ -1035,6 +1037,9 @@ function StatusPicker({
                       // Paid requires an admin-entered ticket number — prompt for it
                       // instead of committing the status outright.
                       if (o.value === "Issued") { setAskPaid(true); return; }
+                      // Cancelling queues a refund rather than voiding outright —
+                      // the ticket moves to "To Refund" (surfaced as "For Refund").
+                      if (o.value === "Cancelled") { onChange({ status: "To Refund" }); return; }
                       onChange({ status: o.value });
                     }}
                     className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors duration-100 ${
@@ -1047,7 +1052,7 @@ function StatusPicker({
                   >
                     <span className="truncate font-medium">{o.label}</span>
                     <span className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
-                      {o.value}
+                      {ticketStatusLabel[o.value]}
                     </span>
                   </button>
                 );

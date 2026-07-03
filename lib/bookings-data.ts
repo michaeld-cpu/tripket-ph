@@ -731,9 +731,9 @@ export const statusTone: Record<BookingStatus, string> = {
 // existing logic still works) while surfacing "Approved" to the operator.
 export const statusLabel: Record<BookingStatus, string> = {
   Confirmed:   "Approved",
-  Submitted:   "Submitted",
+  Submitted:   "Under Review",
   Cancelled:   "Cancelled",
-  "To Refund": "To Refund",
+  "To Refund": "For Refund",
   Refunded:    "Refunded",
 };
 

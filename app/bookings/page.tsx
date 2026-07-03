@@ -135,11 +135,22 @@ export default function BookingsPage() {
     activity: [entry, ...(b.activity ?? deriveActivity(b))],
   });
 
+  // Cancelling a booking flags it — and every non-terminal ticket under it —
+  // as "For Refund" (internal "To Refund") so the money is queued for return.
+  // Already-refunded tickets stay put; the payout runs separately from here.
   const handleCancel = (ref: string) => {
-    updateBookings((prev) => prev.map((x) => x.ref === ref
-      ? logTo({ ...x, status: "Cancelled", paymentStatus: "Refunded" }, makeActivity("cancelled", "Booking cancelled", ACTOR))
-      : x));
-    showToast(`Booking ${ref} cancelled`);
+    updateBookings((prev) => prev.map((x) => {
+      if (x.ref !== ref) return x;
+      const tickets = x.tickets.map((t) =>
+        t.status === "Cancelled" || t.status === "Refunded"
+          ? t
+          : { ...t, status: "To Refund" as const });
+      return logTo(
+        { ...x, status: "To Refund", tickets },
+        makeActivity("to_refund", "Booking cancelled — marked for refund", ACTOR, `₱${x.amount.toLocaleString()} eligible for return`),
+      );
+    }));
+    showToast(`Booking ${ref} cancelled — marked For Refund`);
   };
   // Approve opens the batch dialog so the admin can assign each pending
   // ticket its own ticket number before confirming.
@@ -189,7 +200,7 @@ export default function BookingsPage() {
     updateBookings((prev) => prev.map((x) => x.ref === ref
       ? logTo({ ...x, status: "To Refund" }, makeActivity("to_refund", "Marked for refund", ACTOR, `₱${x.amount.toLocaleString()} eligible for return`))
       : x));
-    showToast(`Booking ${ref} marked To Refund`);
+    showToast(`Booking ${ref} marked For Refund`);
   };
   // Refunding a booking cascades to its tickets — every non-cancelled ticket
   // tied to the booking is refunded too (a cancelled/void seat isn't). Keeps
@@ -501,11 +512,11 @@ export default function BookingsPage() {
                               </svg>
                             ),
                           },
-                          // Mark To Refund — flag as eligible for a refund. Must
+                          // Mark For Refund — flag as eligible for a refund. Must
                           // happen before an actual Refund. Locked once already
                           // flagged or refunded.
                           {
-                            label: "Mark To Refund",
+                            label: "Mark For Refund",
                             disabled: b.status === "To Refund" || b.status === "Refunded",
                             onClick: () => handleToRefund(b.ref),
                             icon: (
@@ -527,11 +538,12 @@ export default function BookingsPage() {
                               </svg>
                             ),
                           },
-                          // Cancel — available until the booking is already refunded.
+                          // Cancel — flags the booking (and its tickets) For Refund.
+                          // Locked once already For Refund or refunded.
                           {
                             label: "Cancel booking",
                             danger: true,
-                            disabled: b.status === "Refunded",
+                            disabled: b.status === "To Refund" || b.status === "Refunded",
                             onClick: () => handleCancel(b.ref),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -596,9 +608,9 @@ export default function BookingsPage() {
             options: [
               { value: "all", label: "All status" },
               { value: "Confirmed", label: "Approved" },
-              { value: "Submitted", label: "Submitted" },
+              { value: "Submitted", label: "Under Review" },
               { value: "Cancelled", label: "Cancelled" },
-              { value: "To Refund", label: "To Refund" },
+              { value: "To Refund", label: "For Refund" },
               { value: "Refunded", label: "Refunded" },
             ] },
           { kind: "dateRange", key: "date", label: "Booking date", value: dateRange, onChange: setDateRange, defaultValue: defaultDateRange },
@@ -1093,7 +1105,7 @@ function BookingStatusPicker({
 
   const options: { value: BookingStatus; label: string }[] = [
     { value: "Confirmed",   label: "Approve" },
-    { value: "To Refund",   label: "Mark To Refund" },
+    { value: "To Refund",   label: "Mark For Refund" },
     { value: "Refunded",    label: "Refund" },
     { value: "Cancelled",   label: "Cancel booking" },
   ];
@@ -1583,7 +1595,7 @@ function PaymentInformation({ booking }: { booking: Booking }) {
           Payment Information
         </h3>
         <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone}`}>
-          {booking.paymentStatus}
+          {booking.paymentStatus === "Submitted" ? "Under Review" : booking.paymentStatus}
         </span>
       </div>
 
