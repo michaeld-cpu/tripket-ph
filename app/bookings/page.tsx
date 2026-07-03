@@ -159,13 +159,18 @@ export default function BookingsPage() {
     const b = bookings?.find((x) => x.ref === ref) ?? null;
     if (b) setApproveTarget(b);
   };
-  // Commit a batch decision: each pending ticket is set to Paid (with a ticket
-  // number), Cancelled, or Refunded. The booking is Confirmed if any ticket is
-  // Paid; otherwise Cancelled (none settled).
+  // Commit an approval: record the booking reference, issue every pending
+  // ticket with its number/note, and (when present) stamp the vehicle ticket
+  // number. The booking becomes Confirmed and payment settles.
   const commitApproval = (
     ref: string,
-    decisions: Record<string, { status: "Issued"; number?: string; note?: string }>
+    result: {
+      bookingRefNo: string;
+      vehicleTicketNo?: string;
+      tickets: Record<string, { status: "Issued"; number?: string; note?: string }>;
+    }
   ) => {
+    const { bookingRefNo, vehicleTicketNo, tickets: decisions } = result;
     updateBookings((prev) =>
       prev.map((x) => {
             if (x.ref !== ref) return x;
@@ -177,10 +182,15 @@ export default function BookingsPage() {
               if (d.note) entries.push(makeActivity("note", "Note added", ACTOR, `${t.name} · ${d.note}`));
               return { ...t, status: "Issued" as const, ticketNumber: d.number, note: d.note };
             });
+            const vehicle = x.vehicle && vehicleTicketNo
+              ? { ...x.vehicle, ticketNumber: vehicleTicketNo }
+              : x.vehicle;
             // Approving an under-review booking confirms it and settles payment.
-            entries.push(makeActivity("approved", "Booking approved", ACTOR));
+            entries.push(makeActivity("approved", "Booking approved", ACTOR, `Booking ref. ${bookingRefNo}`));
             return {
               ...x,
+              bookingRefNo,
+              vehicle,
               tickets,
               status: "Confirmed",
               paymentStatus: "Issued",
@@ -571,9 +581,9 @@ export default function BookingsPage() {
       <ApproveBookingDialog
         booking={approveTarget}
         onClose={() => setApproveTarget(null)}
-        onConfirm={(decisions) => {
+        onConfirm={(result) => {
           if (!approveTarget) return;
-          commitApproval(approveTarget.ref, decisions);
+          commitApproval(approveTarget.ref, result);
           setApproveTarget(null);
           setOpenRef(null);
         }}
@@ -613,7 +623,11 @@ function ApproveBookingDialog({
 }: {
   booking: Booking | null;
   onClose: () => void;
-  onConfirm: (decisions: Record<string, { status: "Issued"; number?: string; note?: string }>) => void;
+  onConfirm: (result: {
+    bookingRefNo: string;
+    vehicleTicketNo?: string;
+    tickets: Record<string, { status: "Issued"; number?: string; note?: string }>;
+  }) => void;
 }) {
   // The booking is Under Review (Submitted); its tickets awaiting approval are
   // any that aren't already terminal (cancelled/refunded). Approving issues
@@ -623,30 +637,45 @@ function ApproveBookingDialog({
     () => (booking ? booking.tickets.filter((t) => t.status !== "Cancelled" && t.status !== "Refunded") : []),
     [booking]
   );
+  const hasVehicle = !!booking?.vehicle;
   // Approving issues every pending ticket — there's no per-ticket status
-  // choice here (tickets are already paid). Each just needs a ticket number
-  // and an optional note.
+  // choice here (tickets are already paid). One booking reference number for
+  // the whole booking, one number per passenger ticket, plus a vehicle ticket
+  // number when the booking carries a vehicle. Notes stay per-passenger.
+  const [bookingRefNo, setBookingRefNo] = useState("");
+  const [vehicleTicketNo, setVehicleTicketNo] = useState("");
   const [numbers, setNumbers] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!booking) return;
-    // Pre-fill any ticket number / note already captured on the ticket.
+    // Pre-fill anything already captured.
+    setBookingRefNo(booking.bookingRefNo ?? "");
+    setVehicleTicketNo(booking.vehicle?.ticketNumber ?? "");
     setNumbers(Object.fromEntries(pending.map((t) => [t.id, t.ticketNumber ?? ""])));
     setNotes(Object.fromEntries(pending.map((t) => [t.id, t.note ?? ""])));
   }, [booking]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Every pending ticket needs a number entered before approval can commit.
-  const ready = pending.length > 0 && pending.every((t) => (numbers[t.id] ?? "").trim().length > 0);
+  // Approval needs: the booking reference, every passenger ticket number, and
+  // the vehicle ticket number when the booking has a vehicle.
+  const ready =
+    bookingRefNo.trim().length > 0 &&
+    pending.length > 0 &&
+    pending.every((t) => (numbers[t.id] ?? "").trim().length > 0) &&
+    (!hasVehicle || vehicleTicketNo.trim().length > 0);
   const alreadyPaid = booking ? booking.tickets.length - pending.length : 0;
 
   const commit = () => {
     if (!ready) return;
-    const payload: Record<string, { status: "Issued"; number?: string; note?: string }> = {};
+    const tickets: Record<string, { status: "Issued"; number?: string; note?: string }> = {};
     pending.forEach((t) => {
       const note = (notes[t.id] ?? "").trim();
-      payload[t.id] = { status: "Issued", number: numbers[t.id].trim(), note: note || undefined };
+      tickets[t.id] = { status: "Issued", number: numbers[t.id].trim(), note: note || undefined };
     });
-    onConfirm(payload);
+    onConfirm({
+      bookingRefNo: bookingRefNo.trim(),
+      vehicleTicketNo: hasVehicle ? vehicleTicketNo.trim() : undefined,
+      tickets,
+    });
   };
 
   const ctaLabel = pending.length > 0 ? `Confirm · ${pending.length} issued` : "Confirm";
@@ -675,7 +704,43 @@ function ApproveBookingDialog({
           {pending.length === 0 ? (
             <p className="py-6 text-center text-[13px] text-slate-500">All tickets in this booking are already settled.</p>
           ) : (
-            <ul className="space-y-2.5">
+            <>
+              {/* Single booking reference for the whole booking. */}
+              <div className="mb-4">
+                <label className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Booking reference #</label>
+                <input
+                  type="text"
+                  value={bookingRefNo}
+                  onChange={(e) => setBookingRefNo(e.target.value)}
+                  placeholder="e.g. BREF001"
+                  aria-label="Booking reference number"
+                  className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                />
+              </div>
+
+              {/* Vehicle ticket number — sits right after the booking reference,
+                  before the passenger tickets. Only when there's a vehicle. */}
+              {hasVehicle && (
+                <div className="mb-4">
+                  <label className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
+                    Vehicle ticket #
+                    <span className="ml-1.5 font-normal normal-case tracking-normal text-slate-400">
+                      {booking?.vehicle?.label ?? booking?.vehicle?.class}
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    value={vehicleTicketNo}
+                    onChange={(e) => setVehicleTicketNo(e.target.value)}
+                    placeholder="e.g. VTKT001"
+                    aria-label="Vehicle ticket number"
+                    className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                  />
+                </div>
+              )}
+
+              <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Passenger tickets</div>
+              <ul className="space-y-2.5">
               {pending.map((t, i) => (
                 <li key={t.id} className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5">
                   <div className="flex items-center gap-3">
@@ -707,7 +772,8 @@ function ApproveBookingDialog({
                   </div>
                 </li>
               ))}
-            </ul>
+              </ul>
+            </>
           )}
           {alreadyPaid > 0 && (
             <p className="mt-3 text-[11.5px] text-slate-400">
@@ -821,6 +887,11 @@ function BookingDetailDialog({
                 <p className="mt-0.5 text-[12px] text-slate-500">
                   Booked {fmtDate(booking.bookingDate)} · {booking.pax} {booking.pax === 1 ? "passenger" : "passengers"}
                 </p>
+                {booking.bookingRefNo && (
+                  <p className="mt-0.5 text-[12px] text-slate-500">
+                    Booking ref. <span className="font-mono font-semibold tabular-nums text-slate-700">{booking.bookingRefNo}</span>
+                  </p>
+                )}
               </div>
               <button
                 type="button"
@@ -1338,6 +1409,14 @@ function VehicleInformation({ booking }: { booking: Booking }) {
           <div className="mt-1 truncate text-[12.5px] font-semibold tracking-tight text-slate-900">{v.label}</div>
         </div>
       </div>
+
+      {/* Vehicle ticket number — assigned at approval. */}
+      {v.ticketNumber && (
+        <div className="border-b border-slate-100 px-4 py-3">
+          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Vehicle ticket #</div>
+          <div className="mt-1 font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] text-slate-900">{v.ticketNumber}</div>
+        </div>
+      )}
 
       {/* Requirements — ORCR is required, photo is optional. Each row's
           status pill is clickable when an upload is on file; clicking opens

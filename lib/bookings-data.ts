@@ -101,6 +101,9 @@ export type Vehicle = {
   orUrl: string;
   /** Required Certificate of Registration photo. */
   crUrl: string;
+  /** Real-world vehicle ticket number the admin assigns at approval. Absent
+      until the booking is approved. */
+  ticketNumber?: string;
 };
 
 const VEHICLE_MAKES = ["Toyota", "Honda", "Mitsubishi", "Hyundai", "Isuzu", "Nissan", "Suzuki", "Ford", "Yamaha", "Kawasaki"];
@@ -155,6 +158,9 @@ const ID_TYPES: { label: string; format: (rand: () => number) => string }[] = [
 
 export type Booking = {
   ref: string;
+  /** Real-world booking reference the admin assigns at approval (distinct from
+      `ref`, the system identifier). Absent until the booking is approved. */
+  bookingRefNo?: string;
   ticketholder: string;
   pax: number;
   vehicleClass?: string;
@@ -609,13 +615,12 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
     }
   });
 
-  // ── Extra Submitted samples ──
-  // Five hand-seeded Submitted bookings (paid, awaiting approval) on top of the
-  // voyage-derived rows so the approval queue always has a representative spread
-  // (solo pax, small groups, a family, and a vehicle booking) regardless of how
-  // the random roll fell. Each is built off a real voyage (cycled) so it carries
-  // a valid route, vessel, and departure; all their tickets are Submitted with
-  // no ticket number.
+  // ── Extra Under Review samples ──
+  // Hand-seeded Under Review bookings (status Submitted — paid, awaiting
+  // approval) on top of the voyage-derived rows so the approval queue always
+  // has a representative spread (solo pax, small groups, families, and several
+  // vehicle bookings) regardless of how the random roll fell. Each is built off
+  // a real voyage (cycled) so it carries a valid route, vessel, and departure.
   const seedable = voyages.filter((v) => v.originCode && v.destinationCode && !isNaN(new Date(v.date).getTime()));
   if (seedable.length > 0) {
     // paxPlan defines each sample's size + fare-class mix + whether it carries
@@ -626,6 +631,12 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       { pax: 3, classes: ["Economy", "Economy", "Business"], vehicle: false },
       { pax: 4, classes: ["Tourist", "Tourist", "Economy", "Economy"], vehicle: false },
       { pax: 2, classes: ["Business", "Economy"], vehicle: true },
+      // Five more Under Review samples — two carry a vehicle.
+      { pax: 1, classes: ["Business"], vehicle: false },
+      { pax: 2, classes: ["Economy", "Economy"], vehicle: true },
+      { pax: 3, classes: ["Tourist", "Economy", "Economy"], vehicle: false },
+      { pax: 4, classes: ["Business", "Tourist", "Economy", "Economy"], vehicle: true },
+      { pax: 5, classes: ["Tourist", "Tourist", "Economy", "Economy", "Economy"], vehicle: false },
     ];
     SAMPLE_PLANS.forEach((plan, s) => {
       const v = seedable[s % seedable.length];
@@ -635,9 +646,11 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
 
       const dep = new Date(v.date);
       dep.setHours(v.hour, v.minute, 0, 0);
-      // Pending bookings are recent — booked 1-3 days before departure.
-      const bookingDate = new Date(dep);
-      bookingDate.setDate(bookingDate.getDate() - (1 + Math.floor(rand() * 3)));
+      // Booked within the last week so these land inside the bookings table's
+      // default [today-30, today] window, even though the voyage departs in the
+      // future (book-now-for-a-future-sailing).
+      const bookingDate = new Date();
+      bookingDate.setDate(bookingDate.getDate() - Math.floor(rand() * 7));
       bookingDate.setHours(0, 0, 0, 0);
 
       const first = FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
