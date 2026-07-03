@@ -571,7 +571,6 @@ export default function TicketsPage() {
               { value: "all", label: "All status" },
               { value: "Submitted", label: "Under Review" },
               { value: "Issued", label: "Issued" },
-              { value: "Cancelled", label: "Cancelled" },
               { value: "To Refund", label: "For Refund" },
               { value: "Refunded", label: "Refunded" },
             ] },

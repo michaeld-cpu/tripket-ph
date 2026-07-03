@@ -595,7 +595,6 @@ export default function BookingsPage() {
               { value: "all", label: "All status" },
               { value: "Confirmed", label: "Approved" },
               { value: "Submitted", label: "Under Review" },
-              { value: "Cancelled", label: "Cancelled" },
               { value: "To Refund", label: "For Refund" },
               { value: "Refunded", label: "Refunded" },
             ] },
