@@ -216,9 +216,18 @@ const ACTORS = ["Someone", "System"];
 // Re-hydrate bookings after a JSON round-trip — Date fields land as ISO
 // strings in localStorage and need to come back as Date objects so the
 // rest of the app's date math doesn't crash.
+// Drop cancelled bookings and cancelled tickets. Cancelled rows are no longer
+// seeded, but a persisted store from an earlier session can still carry them —
+// this flushes them on load so the tables never surface a Cancelled row.
+export function purgeCancelled(list: Booking[]): Booking[] {
+  return list
+    .filter((b) => b.status !== "Cancelled")
+    .map((b) => ({ ...b, tickets: b.tickets.filter((t) => t.status !== "Cancelled") }));
+}
+
 export function reviveBookings(raw: unknown): Booking[] {
   if (!Array.isArray(raw)) return [];
-  return raw.map((b) => ({
+  const revived = raw.map((b) => ({
     ...(b as Booking),
     departureDate: new Date((b as Booking).departureDate as unknown as string),
     bookingDate: new Date((b as Booking).bookingDate as unknown as string),
@@ -227,6 +236,7 @@ export function reviveBookings(raw: unknown): Booking[] {
       at: new Date(e.at as unknown as string),
     })),
   }));
+  return purgeCancelled(revived);
 }
 
 // Build a believable activity trail for a booking from its dates + status.
@@ -424,17 +434,18 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       const statusRoll = rand();
       // Forced samples so every status has a deterministic representative.
       //   counter === 1  → Refunded booking (table sample)
-      //   counter === 2  → To Refund booking (cancelled, awaiting payout)
+      //   counter === 2  → To Refund booking (awaiting payout)
       //   counter === 17 → 4 passengers, mixed ticket statuses:
-      //                    pax 0 Issued · pax 1 Issued · pax 2 Cancelled · pax 3 Refunded
+      //                    pax 0 Issued · pax 1 Issued · pax 2 To Refund · pax 3 Refunded
       // Ticket-only overrides leave the booking status to the normal roll
       // so the row still reads as a healthy booking. Submitted = paid but
-      // awaiting operator approval.
+      // awaiting operator approval. Cancelled bookings are no longer seeded —
+      // the former top 10% rolls into "To Refund" instead.
       const status: BookingStatus = counter === 1
         ? "Refunded"
         : counter === 2
           ? "To Refund"
-          : statusRoll < 0.65 ? "Confirmed" : statusRoll < 0.9 ? "Submitted" : "Cancelled";
+          : statusRoll < 0.65 ? "Confirmed" : statusRoll < 0.9 ? "Submitted" : "To Refund";
       const forceTicketMix17 = counter === 17;
       const first = FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
       const last = LAST_NAMES[Math.floor(rand() * LAST_NAMES.length)];
@@ -484,12 +495,13 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           ? contactEmail
           : `${tFirst.toLowerCase()}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`;
         const ticketStatus: TicketStatus = (() => {
-          if (status === "Cancelled") return "Cancelled";
           if (status === "To Refund") return "To Refund";
           if (status === "Refunded")  return "Refunded";
           if (status === "Submitted") return "Submitted";
           if (forceTicketMix17) {
-            if (p === 2) return "Cancelled";
+            // Cancelled tickets are no longer seeded — this pax rolls into
+            // "To Refund" so the mixed-status sample stays varied.
+            if (p === 2) return "To Refund";
             if (p === 3) return "Refunded";
             return "Issued";
           }
@@ -553,7 +565,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       // To Refund = customer paid, payout not yet run → payment stays Issued
       // until the refund actually settles.
       const paymentStatus: Booking["paymentStatus"] =
-        status === "Cancelled" || status === "Refunded"
+        status === "Refunded"
           ? "Refunded"
           : status === "Submitted" ? "Submitted" : "Issued";
 
