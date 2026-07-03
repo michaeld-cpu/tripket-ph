@@ -164,7 +164,7 @@ export default function BookingsPage() {
   // Paid; otherwise Cancelled (none settled).
   const commitApproval = (
     ref: string,
-    decisions: Record<string, { status: "Issued" | "Cancelled" | "Refunded"; number?: string }>
+    decisions: Record<string, { status: "Issued"; number?: string; note?: string }>
   ) => {
     updateBookings((prev) =>
       prev.map((x) => {
@@ -172,28 +172,23 @@ export default function BookingsPage() {
             const entries: ReturnType<typeof makeActivity>[] = [];
             const tickets = x.tickets.map((t) => {
               const d = decisions[t.id];
-              if (t.status !== "Submitted" || !d) return t;
-              if (d.status === "Issued") {
-                entries.push(makeActivity("ticket_paid", "Ticket marked paid", ACTOR, `Ticket no. ${d.number} · ${t.name}`));
-                return { ...t, status: "Issued" as const, ticketNumber: d.number };
-              }
-              entries.push(makeActivity(d.status === "Refunded" ? "refunded" : "cancelled", `Ticket ${d.status.toLowerCase()}`, ACTOR, t.name));
-              return { ...t, status: d.status };
+              if (!d) return t;
+              entries.push(makeActivity("ticket_paid", "Ticket issued", ACTOR, `Ticket no. ${d.number} · ${t.name}`));
+              if (d.note) entries.push(makeActivity("note", "Note added", ACTOR, `${t.name} · ${d.note}`));
+              return { ...t, status: "Issued" as const, ticketNumber: d.number, note: d.note };
             });
-            const hasPaid = tickets.some((t) => t.status === "Issued");
-            // Booking-level entry summarising the decision, on top of the
-            // per-ticket entries (newest-first order).
-            entries.push(makeActivity(hasPaid ? "approved" : "cancelled", hasPaid ? "Booking approved" : "Booking cancelled", ACTOR));
+            // Approving an under-review booking confirms it and settles payment.
+            entries.push(makeActivity("approved", "Booking approved", ACTOR));
             return {
               ...x,
               tickets,
-              status: hasPaid ? "Confirmed" : "Cancelled",
-              paymentStatus: hasPaid ? "Issued" : x.paymentStatus,
+              status: "Confirmed",
+              paymentStatus: "Issued",
               activity: [...entries.reverse(), ...(x.activity ?? deriveActivity(x))],
             };
           })
     );
-    showToast(`Booking ${ref} updated`);
+    showToast(`Booking ${ref} approved`);
   };
   // Refunding a booking cascades to its tickets — every non-cancelled ticket
   // tied to the booking is refunded too (a cancelled/void seat isn't). Keeps
@@ -618,44 +613,43 @@ function ApproveBookingDialog({
 }: {
   booking: Booking | null;
   onClose: () => void;
-  onConfirm: (decisions: Record<string, { status: TicketDecision; number?: string }>) => void;
+  onConfirm: (decisions: Record<string, { status: "Issued"; number?: string; note?: string }>) => void;
 }) {
+  // The booking is Under Review (Submitted); its tickets awaiting approval are
+  // any that aren't already terminal (cancelled/refunded). Approving issues
+  // each one. A ticket that's already Issued still needs its number confirmed
+  // here, but pre-fills below.
   const pending = useMemo(
-    () => (booking ? booking.tickets.filter((t) => t.status === "Submitted") : []),
+    () => (booking ? booking.tickets.filter((t) => t.status !== "Cancelled" && t.status !== "Refunded") : []),
     [booking]
   );
-  // Per-ticket target status. Defaults to Paid; admin can flip any to
-  // Cancelled or Refunded.
-  const [decisions, setDecisions] = useState<Record<string, TicketDecision>>({});
+  // Approving issues every pending ticket — there's no per-ticket status
+  // choice here (tickets are already paid). Each just needs a ticket number
+  // and an optional note.
   const [numbers, setNumbers] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!booking) return;
-    setNumbers({});
-    setDecisions(Object.fromEntries(pending.map((t) => [t.id, "Issued" as TicketDecision])));
+    // Pre-fill any ticket number / note already captured on the ticket.
+    setNumbers(Object.fromEntries(pending.map((t) => [t.id, t.ticketNumber ?? ""])));
+    setNotes(Object.fromEntries(pending.map((t) => [t.id, t.note ?? ""])));
   }, [booking]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const statusOf = (id: string): TicketDecision => decisions[id] ?? "Issued";
-  const paidCount = pending.filter((t) => statusOf(t.id) === "Issued").length;
-  // Only Paid tickets need a number entered.
-  const ready = pending.length > 0 && pending.every((t) =>
-    statusOf(t.id) !== "Issued" || (numbers[t.id] ?? "").trim().length > 0
-  );
+  // Every pending ticket needs a number entered before approval can commit.
+  const ready = pending.length > 0 && pending.every((t) => (numbers[t.id] ?? "").trim().length > 0);
   const alreadyPaid = booking ? booking.tickets.length - pending.length : 0;
 
   const commit = () => {
     if (!ready) return;
-    const payload: Record<string, { status: TicketDecision; number?: string }> = {};
+    const payload: Record<string, { status: "Issued"; number?: string; note?: string }> = {};
     pending.forEach((t) => {
-      const s = statusOf(t.id);
-      payload[t.id] = s === "Issued" ? { status: "Issued", number: numbers[t.id].trim() } : { status: s };
+      const note = (notes[t.id] ?? "").trim();
+      payload[t.id] = { status: "Issued", number: numbers[t.id].trim(), note: note || undefined };
     });
     onConfirm(payload);
   };
 
-  const ctaLabel = paidCount > 0
-    ? `Confirm · ${paidCount} issued${pending.length - paidCount > 0 ? ` · ${pending.length - paidCount} other` : ""}`
-    : "Confirm";
-  const noPaid = pending.length > 0 && paidCount === 0;
+  const ctaLabel = pending.length > 0 ? `Confirm · ${pending.length} issued` : "Confirm";
 
   return (
     <Modal open={!!booking} onClose={onClose} maxWidth="max-w-lg">
@@ -668,10 +662,10 @@ function ApproveBookingDialog({
               </svg>
             </span>
             <div className="min-w-0">
-              <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Review booking</h2>
+              <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Approve booking</h2>
               <p className="text-[12px] text-slate-500">
                 <span className="font-mono font-medium tabular-nums text-slate-700">{booking?.ref}</span>
-                {" · "}Set each passenger&apos;s ticket status.
+                {" · "}Enter each passenger&apos;s ticket number to issue.
               </p>
             </div>
           </div>
@@ -682,59 +676,43 @@ function ApproveBookingDialog({
             <p className="py-6 text-center text-[13px] text-slate-500">All tickets in this booking are already settled.</p>
           ) : (
             <ul className="space-y-2.5">
-              {pending.map((t, i) => {
-                const s = statusOf(t.id);
-                const settled = s !== "Issued"; // cancelled/refunded → dim, no number
-                return (
-                  <li key={t.id} className={"rounded-xl border px-3.5 py-2.5 transition-colors " + (settled ? "border-slate-200 bg-slate-50/60" : "border-slate-200 bg-white")}>
-                    <div className="flex items-center gap-3">
-                      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-slate-100 font-mono text-[11px] font-semibold tabular-nums text-slate-500">
-                        {i + 1}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className={"truncate text-[13px] font-semibold tracking-tight " + (settled ? "text-slate-400 line-through" : "text-slate-900")}>{t.name}</div>
-                        <div className="text-[11px] text-slate-400">{t.fareClass}</div>
-                      </div>
-                      {/* Per-ticket status toggle: Paid · Cancelled · Refunded */}
-                      <div className="inline-flex shrink-0 rounded-lg bg-slate-100 p-0.5">
-                        {(["Issued", "Cancelled", "Refunded"] as TicketDecision[]).map((opt) => {
-                          const on = s === opt;
-                          const onTone = opt === "Issued" ? "text-emerald-700" : opt === "Refunded" ? "text-sky-700" : "text-rose-600";
-                          return (
-                            <button
-                              key={opt}
-                              type="button"
-                              onClick={() => setDecisions((p) => ({ ...p, [t.id]: opt }))}
-                              className={"rounded-md px-2 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none " + (on ? `bg-white ${onTone} shadow-[0_1px_2px_rgba(15,23,42,0.08)]` : "text-slate-500 hover:text-slate-700")}
-                            >
-                              {opt}
-                            </button>
-                          );
-                        })}
-                      </div>
+              {pending.map((t, i) => (
+                <li key={t.id} className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5">
+                  <div className="flex items-center gap-3">
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-slate-100 font-mono text-[11px] font-semibold tabular-nums text-slate-500">
+                      {i + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{t.name}</div>
+                      <div className="text-[11px] text-slate-400">{t.fareClass}</div>
                     </div>
-                    {s === "Issued" && (
-                      <input
-                        type="text"
-                        value={numbers[t.id] ?? ""}
-                        onChange={(e) => setNumbers((prev) => ({ ...prev, [t.id]: e.target.value }))}
-                        placeholder="Ticket number"
-                        aria-label={`Ticket number for ${t.name}`}
-                        className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-[12.5px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
-                      />
-                    )}
-                  </li>
-                );
-              })}
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    <input
+                      type="text"
+                      value={numbers[t.id] ?? ""}
+                      onChange={(e) => setNumbers((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                      placeholder="Ticket number"
+                      aria-label={`Ticket number for ${t.name}`}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-[12.5px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                    />
+                    <textarea
+                      value={notes[t.id] ?? ""}
+                      onChange={(e) => setNotes((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                      rows={2}
+                      placeholder="Note (optional)"
+                      aria-label={`Note for ${t.name}`}
+                      className="w-full resize-none rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[12.5px] leading-relaxed text-slate-900 placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                    />
+                  </div>
+                </li>
+              ))}
             </ul>
           )}
           {alreadyPaid > 0 && (
             <p className="mt-3 text-[11.5px] text-slate-400">
               {alreadyPaid} ticket{alreadyPaid === 1 ? "" : "s"} already settled — unaffected.
             </p>
-          )}
-          {noPaid && pending.length > 0 && (
-            <p className="mt-3 text-[11.5px] text-rose-500">No tickets marked paid — the booking will be cancelled.</p>
           )}
         </div>
 
@@ -750,10 +728,7 @@ function ApproveBookingDialog({
             type="button"
             onClick={commit}
             disabled={!ready}
-            className={
-              "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 focus:outline-none focus-visible:ring-1 disabled:cursor-not-allowed disabled:opacity-60 " +
-              (noPaid ? "bg-rose-600 hover:bg-rose-700 focus-visible:ring-rose-400" : "bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-400")
-            }
+            className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-emerald-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {ctaLabel}
           </button>
@@ -762,9 +737,6 @@ function ApproveBookingDialog({
     </Modal>
   );
 }
-
-// Per-ticket target status the admin can set in the review dialog.
-type TicketDecision = "Issued" | "Cancelled" | "Refunded";
 
 // ─────────── Booking detail dialog ───────────
 // Four sections matching the project's visual language:
@@ -1270,6 +1242,13 @@ function PassengerTable({
                         </div>
                         <div className="mt-0.5 truncate text-[12px] text-slate-700">{t.email ?? "—"}</div>
                       </div>
+
+                      {t.note && (
+                        <div className="col-span-2">
+                          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Note</div>
+                          <div className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-700">{t.note}</div>
+                        </div>
+                      )}
 
                       {/* ID photo requirements — front + back. Both are
                           captured at booking; each pill opens a preview. */}

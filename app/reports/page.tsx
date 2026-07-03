@@ -738,7 +738,7 @@ function VoyagesTab({ bookings }: { bookings: Booking[] }) {
 // ─────────── Tickets ───────────
 function TicketsTab({ bookings }: { bookings: Booking[] }) {
   const totals = useMemo(() => {
-    let issued = 0, paid = 0, cancelled = 0, refunded = 0, submitted = 0, toRefund = 0, comped = 0;
+    let issued = 0, paid = 0, cancelled = 0, refunded = 0, toRefund = 0, comped = 0;
     const classMix: Record<"Economy" | "Tourist" | "Business", number> = { Economy: 0, Tourist: 0, Business: 0 };
     bookings.forEach((b) => b.tickets.forEach((t) => {
       issued += 1;
@@ -748,9 +748,8 @@ function TicketsTab({ bookings }: { bookings: Booking[] }) {
       else if (t.status === "Cancelled") cancelled += 1;
       else if (t.status === "Refunded") refunded += 1;
       else if (t.status === "To Refund") toRefund += 1;
-      else if (t.status === "Submitted") submitted += 1;
     }));
-    return { issued, paid, cancelled, refunded, submitted, toRefund, comped, classMix };
+    return { issued, paid, cancelled, refunded, toRefund, comped, classMix };
   }, [bookings]);
 
   return (
@@ -1643,8 +1642,8 @@ function synthesizeBackfillBookings(real: Booking[]): Booking[] {
 }
 
 function bucketTicketStatus(bookings: Booking[]): { key: TicketStatus; count: number }[] {
-  const order: TicketStatus[] = ["Submitted", "Issued", "Cancelled", "To Refund", "Refunded"];
-  const counts: Record<TicketStatus, number> = { Submitted: 0, Issued: 0, Cancelled: 0, "To Refund": 0, Refunded: 0 };
+  const order: TicketStatus[] = ["Issued", "Cancelled", "To Refund", "Refunded"];
+  const counts: Record<TicketStatus, number> = { Issued: 0, Cancelled: 0, "To Refund": 0, Refunded: 0 };
   bookings.forEach((b) => b.tickets.forEach((t) => { counts[t.status] += 1; }));
   return order.map((k) => ({ key: k, count: counts[k] }));
 }

@@ -10,10 +10,10 @@ export type BookingStatus = "Confirmed" | "Submitted" | "Cancelled" | "To Refund
 
 export type FareClass = "Economy" | "Tourist" | "Business";
 export type PassengerSex = "Male" | "Female";
-// Per-ticket lifecycle. Submitted = paid, awaiting approval; Issued = settled;
-// Cancelled = void; To Refund = eligible for refund (money not yet returned);
-// Refunded = money returned.
-export type TicketStatus = "Submitted" | "Issued" | "Cancelled" | "To Refund" | "Refunded";
+// Per-ticket lifecycle. Tickets have no "Under Review" state — that's a
+// booking-only concept. A paid ticket is Issued; Cancelled = void; To Refund =
+// eligible for refund (money not yet returned); Refunded = money returned.
+export type TicketStatus = "Issued" | "Cancelled" | "To Refund" | "Refunded";
 
 // Per-pax ticket carried under one booking. Each ticket has its own ID
 // suffixed off the booking ref (TKT-0001-A, TKT-0001-B, …) so passengers can
@@ -42,6 +42,10 @@ export type Ticket = {
       Distinct from `id` (the system reference). Absent while unpaid — the
       UI shows a dash until it's captured on the Pending → Paid transition. */
   ticketNumber?: string;
+  /** Optional free-text note the admin captures when assigning the ticket
+      number (during approval / mark-issued). Surfaced on the ticket detail
+      and the booking's passenger roster. */
+  note?: string;
   /** Optional per-pax contact. Lead pax usually inherits the booking's
       contact details; companions may or may not have their own captured. */
   phone?: string;
@@ -507,7 +511,8 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         const ticketStatus: TicketStatus = (() => {
           if (status === "To Refund") return "To Refund";
           if (status === "Refunded")  return "Refunded";
-          if (status === "Submitted") return "Submitted";
+          // Under Review (Submitted) is a booking-only state; its tickets are
+          // paid, so they're Issued.
           if (forceTicketMix17) {
             // Cancelled tickets are no longer seeded — this pax rolls into
             // "To Refund" so the mixed-status sample stays varied.
@@ -679,8 +684,9 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           name: `${tFirst} ${last}`,
           fareClass,
           paxType,
-          // Pending tickets have no assigned ticket number yet.
-          ticketNumber: undefined,
+          // Under Review booking, but the tickets themselves are paid → Issued
+          // with a ticket number assigned.
+          ticketNumber: `${ref}-${String.fromCharCode(65 + p)}`,
           age,
           sex,
           nationality: "Filipino",
@@ -692,7 +698,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           grossFare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
           phone: isLead ? contactMobile : `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14),
           email: isLead ? contactEmail : `${tFirst.toLowerCase()}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`,
-          status: "Submitted" as TicketStatus,
+          status: "Issued" as TicketStatus,
         };
       });
 
@@ -821,7 +827,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           grossFare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
           phone: isLead ? contactMobile : `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14),
           email: isLead ? contactEmail : `${tFirst.toLowerCase()}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`,
-          status: "Submitted" as TicketStatus,
+          status: "Issued" as TicketStatus,
         };
       });
 
@@ -890,22 +896,18 @@ export const statusLabel: Record<BookingStatus, string> = {
   Refunded:    "Refunded",
 };
 
-// Per-ticket palette — Submitted mirrors the booking submitted tone (brand
-// orange), Issued is the healthy default (emerald), Cancelled is quietly
-// muted slate, To Refund is amber (payout pending), Refunded matches the
-// booking-level refund tone.
+// Per-ticket palette — Issued is the healthy default (emerald), Cancelled is
+// quietly muted slate, To Refund is amber (payout pending), Refunded matches
+// the booking-level refund tone.
 export const ticketStatusTone: Record<TicketStatus, string> = {
-  Submitted:   "bg-brand-50 text-brand-700",
   Issued:      "bg-emerald-100 text-emerald-800",
   Cancelled:   "bg-slate-100 text-slate-500",
   "To Refund": "bg-amber-100 text-amber-800",
   Refunded:    "bg-sky-50 text-sky-700",
 };
 
-// Per-ticket display label — mirrors the booking-level wording. Submitted
-// surfaces as "Under Review" and "To Refund" as "For Refund".
+// Per-ticket display label — "To Refund" surfaces as "For Refund".
 export const ticketStatusLabel: Record<TicketStatus, string> = {
-  Submitted:   "Under Review",
   Issued:      "Issued",
   Cancelled:   "Cancelled",
   "To Refund": "For Refund",

@@ -451,18 +451,6 @@ export default function TicketsPage() {
                                 </svg>
                               ),
                             },
-                            // Mark Under Review — for tickets that are paid but awaiting approval.
-                            {
-                              label: "Mark Under Review",
-                              disabled: r.status === "Cancelled" || r.status === "Refunded" || r.status === "Submitted",
-                              onClick: () => { mutateTicket(r.id, { status: "Submitted" }); showToast(`Ticket ${r.id} marked Under Review`); },
-                              icon: (
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                  <circle cx="12" cy="12" r="9" />
-                                  <path d="M12 7v5l3 2" />
-                                </svg>
-                              ),
-                            },
                             // Mark Paid — terminal Cancelled/Refunded tickets stay locked.
                             {
                               label: "Mark Issued",
@@ -540,10 +528,11 @@ export default function TicketsPage() {
       <MarkPaidDialog
         open={!!paidTarget}
         existingNumber={paidTarget?.ticketNumber}
+        existingNote={paidTarget?.note}
         onClose={() => setPaidTarget(null)}
-        onConfirm={(ticketNumber) => {
+        onConfirm={(ticketNumber, note) => {
           if (!paidTarget) return;
-          mutateTicket(paidTarget.id, { status: "Issued", ticketNumber });
+          mutateTicket(paidTarget.id, { status: "Issued", ticketNumber, note: note || undefined });
           showToast(`Ticket ${ticketNumber} marked Issued`);
           setPaidTarget(null);
         }}
@@ -559,7 +548,6 @@ export default function TicketsPage() {
           { kind: "select", key: "status", label: "Status", value: statusFilter, onChange: (v) => setStatusFilter(v as "all" | TicketStatus), defaultValue: "all",
             options: [
               { value: "all", label: "All status" },
-              { value: "Submitted", label: "Under Review" },
               { value: "Issued", label: "Issued" },
               { value: "To Refund", label: "For Refund" },
               { value: "Refunded", label: "Refunded" },
@@ -723,7 +711,7 @@ function TicketDetailDialog({
                       cancelled/void/refunded entries don't read like they're
                       still scheduled. fmtEtd flips wording to "Departed …
                       ago" once departure is in the past. */}
-                  {(ticket.status === "Issued" || ticket.status === "Submitted") && (
+                  {ticket.status === "Issued" && (
                     <p className="mt-3 text-center text-[11px] font-medium tracking-tight text-slate-500">
                       ( {fmtEtd(ticket.departureDate)} )
                     </p>
@@ -776,6 +764,14 @@ function TicketDetailDialog({
                 </dl>
               </div>
 
+              {/* Admin note captured when the ticket was issued. */}
+              {ticket.note && (
+                <div className="rounded-xl bg-white p-4 ring-1 ring-slate-200/70">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Note</div>
+                  <p className="mt-1.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-slate-700">{ticket.note}</p>
+                </div>
+              )}
+
               {/* Valid ID photos — same affordance as the booking dialog:
                   thumbnail + status pill, clickable to enlarge. */}
               <div className="rounded-xl bg-white p-4 ring-1 ring-slate-200/70">
@@ -825,6 +821,7 @@ function TicketDetailDialog({
                 <StatusPicker
                   current={ticket.status}
                   existingNumber={ticket.ticketNumber}
+                  existingNote={ticket.note}
                   onChange={(patch) => { onMutate(patch); onClose(); }}
                 />
               </div>
@@ -853,14 +850,12 @@ function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
     ticket.status === "Issued" ? "bg-emerald-100 text-emerald-800"
     : ticket.status === "Refunded" ? "bg-sky-50 text-sky-700"
     : ticket.status === "To Refund" ? "bg-amber-100 text-amber-800"
-    : ticket.status === "Cancelled" ? "bg-slate-100 text-slate-500"
-    : "bg-brand-50 text-brand-700";
+    : "bg-slate-100 text-slate-500";
   const payLabel =
     ticket.status === "Issued" ? "Issued"
     : ticket.status === "Refunded" ? "Refunded"
     : ticket.status === "To Refund" ? "For Refund"
-    : ticket.status === "Cancelled" ? "Unpaid"
-    : "Under Review";
+    : "Unpaid";
 
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
@@ -929,10 +924,12 @@ function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
 function StatusPicker({
   current,
   existingNumber,
+  existingNote,
   onChange,
 }: {
   current: TicketStatus;
   existingNumber?: string;
+  existingNote?: string;
   onChange: (patch: Partial<Ticket>) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -967,7 +964,6 @@ function StatusPicker({
   };
 
   const options: { value: TicketStatus; label: string }[] = [
-    { value: "Submitted",   label: "Mark Under Review" },
     { value: "Issued",      label: "Mark Issued" },
     { value: "Refunded",    label: "Refund" },
     { value: "Cancelled",   label: "Cancel ticket" },
@@ -1045,8 +1041,9 @@ function StatusPicker({
       <MarkPaidDialog
         open={askPaid}
         existingNumber={existingNumber}
+        existingNote={existingNote}
         onClose={() => setAskPaid(false)}
-        onConfirm={(ticketNumber) => { onChange({ status: "Issued", ticketNumber }); setAskPaid(false); }}
+        onConfirm={(ticketNumber, note) => { onChange({ status: "Issued", ticketNumber, note: note || undefined }); setAskPaid(false); }}
       />
     </div>
   );
@@ -1058,16 +1055,21 @@ function StatusPicker({
 function MarkPaidDialog({
   open,
   existingNumber,
+  existingNote,
   onClose,
   onConfirm,
 }: {
   open: boolean;
   existingNumber?: string;
+  existingNote?: string;
   onClose: () => void;
-  onConfirm: (ticketNumber: string) => void;
+  onConfirm: (ticketNumber: string, note: string) => void;
 }) {
   const [num, setNum] = useState("");
-  useEffect(() => { if (open) setNum(existingNumber ?? ""); }, [open, existingNumber]);
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    if (open) { setNum(existingNumber ?? ""); setNote(existingNote ?? ""); }
+  }, [open, existingNumber, existingNote]);
   const trimmed = num.trim();
 
   return (
@@ -1090,10 +1092,22 @@ function MarkPaidDialog({
                 type="text"
                 value={num}
                 onChange={(e) => setNum(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && trimmed) { e.preventDefault(); onConfirm(trimmed); } }}
+                onKeyDown={(e) => { if (e.key === "Enter" && trimmed) { e.preventDefault(); onConfirm(trimmed, note.trim()); } }}
                 autoFocus
                 placeholder="e.g. T1234567"
                 className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+              />
+            </div>
+            <div className="mt-3">
+              <label className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
+                Note <span className="font-normal normal-case tracking-normal text-slate-400">(optional)</span>
+              </label>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={2}
+                placeholder="Add a note for this ticket…"
+                className="mt-1.5 w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] leading-relaxed text-slate-900 placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
               />
             </div>
           </div>
@@ -1109,7 +1123,7 @@ function MarkPaidDialog({
         </button>
         <button
           type="button"
-          onClick={() => trimmed && onConfirm(trimmed)}
+          onClick={() => trimmed && onConfirm(trimmed, note.trim())}
           disabled={!trimmed}
           className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-emerald-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
