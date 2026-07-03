@@ -27,7 +27,7 @@ import {
   deriveTicketActivity,
 } from "@/lib/bookings-data";
 import { loadScopedVoyages } from "@/lib/line-scope";
-import { reviveBookings } from "@/lib/bookings-data";
+import { reviveBookings, mergeSeededBookings } from "@/lib/bookings-data";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 
 // ─────────── Flat ticket row shape ───────────
@@ -176,7 +176,14 @@ export default function TicketsPage() {
       const persisted = loadStore<unknown>("bookings", active.id);
       if (persisted) {
         const revived = reviveBookings(persisted);
-        if (revived.length > 0) { setBookings(revived); return; }
+        if (revived.length > 0) {
+          // Surface any newly-added seed bookings without dropping live edits.
+          const voyages = loadScopedVoyages(active.id, locked);
+          const merged = mergeSeededBookings(revived, deriveBookings(voyages));
+          if (merged.length !== revived.length) saveStore("bookings", active.id, merged);
+          setBookings(merged);
+          return;
+        }
       }
     } catch { /* fall through */ }
     try {
@@ -474,20 +481,6 @@ export default function TicketsPage() {
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                   <path d="M5 12l5 5 9-11" />
-                                </svg>
-                              ),
-                            },
-                            // Mark For Refund — flag the ticket as eligible for a refund.
-                            // Must happen before an actual Refund. Locked once already
-                            // flagged or refunded.
-                            {
-                              label: "Mark For Refund",
-                              disabled: r.status === "To Refund" || r.status === "Refunded",
-                              onClick: () => { mutateTicket(r.id, { status: "To Refund" }); showToast(`Ticket ${r.id} marked For Refund`); },
-                              icon: (
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                  <path d="M3 12a9 9 0 1 0 3-6.7" />
-                                  <path d="M3 4v5h5" />
                                 </svg>
                               ),
                             },
@@ -987,7 +980,6 @@ function StatusPicker({
   const options: { value: TicketStatus; label: string }[] = [
     { value: "Submitted",   label: "Mark Under Review" },
     { value: "Issued",      label: "Mark Issued" },
-    { value: "To Refund",   label: "Mark For Refund" },
     { value: "Refunded",    label: "Refund" },
     { value: "Cancelled",   label: "Cancel ticket" },
   ];

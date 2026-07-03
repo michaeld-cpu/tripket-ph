@@ -25,7 +25,7 @@ import {
   type Ticket,
 } from "@/lib/bookings-data";
 import { loadScopedVoyages } from "@/lib/line-scope";
-import { reviveBookings } from "@/lib/bookings-data";
+import { reviveBookings, mergeSeededBookings } from "@/lib/bookings-data";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 import ActivityLog from "@/components/ActivityLog";
 import Modal from "@/components/Modal";
@@ -194,14 +194,6 @@ export default function BookingsPage() {
     );
     showToast(`Booking ${ref} updated`);
   };
-  // Flag a booking as eligible for a refund (payout runs separately). Booking
-  // moves to "To Refund"; payment stays as-is until the refund actually settles.
-  const handleToRefund = (ref: string) => {
-    updateBookings((prev) => prev.map((x) => x.ref === ref
-      ? logTo({ ...x, status: "To Refund" }, makeActivity("to_refund", "Marked for refund", ACTOR, `₱${x.amount.toLocaleString()} eligible for return`))
-      : x));
-    showToast(`Booking ${ref} marked For Refund`);
-  };
   // Refunding a booking cascades to its tickets — every non-cancelled ticket
   // tied to the booking is refunded too (a cancelled/void seat isn't). Keeps
   // the passenger tickets consistent with the booking's terminal state.
@@ -243,7 +235,16 @@ export default function BookingsPage() {
       const persisted = loadStore<unknown>("bookings", active.id);
       if (persisted) {
         const revived = reviveBookings(persisted);
-        if (revived.length > 0) { setBookings(revived); return; }
+        if (revived.length > 0) {
+          // Merge in any newly-added seed bookings (e.g. new sample refs) so
+          // they surface without discarding the operator's live edits.
+          const voyages = loadScopedVoyages(active.id, locked);
+          const seeded = deriveBookings(voyages).map((b) => ({ ...b, activity: deriveActivity(b) }));
+          const merged = mergeSeededBookings(revived, seeded);
+          if (merged.length !== revived.length) saveStore("bookings", active.id, merged);
+          setBookings(merged);
+          return;
+        }
       }
     } catch { /* fall through to derive from voyages */ }
     try {
@@ -512,20 +513,6 @@ export default function BookingsPage() {
                               </svg>
                             ),
                           },
-                          // Mark For Refund — flag as eligible for a refund. Must
-                          // happen before an actual Refund. Locked once already
-                          // flagged or refunded.
-                          {
-                            label: "Mark For Refund",
-                            disabled: b.status === "To Refund" || b.status === "Refunded",
-                            onClick: () => handleToRefund(b.ref),
-                            icon: (
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                <path d="M3 12a9 9 0 1 0 3-6.7" />
-                                <path d="M3 4v5h5" />
-                              </svg>
-                            ),
-                          },
                           // Refund — only after the booking has been marked To Refund.
                           {
                             label: "Refund",
@@ -578,7 +565,6 @@ export default function BookingsPage() {
         onClose={() => setOpenRef(null)}
         onCancel={(ref) => { handleCancel(ref); }}
         onApprove={(ref) => { handleApprove(ref); }}
-        onToRefund={(ref) => { handleToRefund(ref); }}
         onRefund={(ref) => { handleRefund(ref); }}
         copiedTicket={copiedTicket}
         onCopyTicket={handleCopyTicket}
@@ -792,7 +778,6 @@ function BookingDetailDialog({
   onClose,
   onCancel,
   onApprove,
-  onToRefund,
   onRefund,
   copiedTicket,
   onCopyTicket,
@@ -804,7 +789,6 @@ function BookingDetailDialog({
   onClose: () => void;
   onCancel: (ref: string) => void;
   onApprove: (ref: string) => void;
-  onToRefund: (ref: string) => void;
   onRefund: (ref: string) => void;
   copiedTicket: string | null;
   onCopyTicket: (id: string) => void;
@@ -991,7 +975,6 @@ function BookingDetailDialog({
               onClose={onClose}
               onCancel={onCancel}
               onApprove={onApprove}
-              onToRefund={onToRefund}
               onRefund={onRefund}
             />
           </div>
@@ -1021,23 +1004,21 @@ function DialogFooter({
   onClose,
   onCancel,
   onApprove,
-  onToRefund,
   onRefund,
 }: {
   booking: Booking;
   onClose: () => void;
   onCancel: (ref: string) => void;
   onApprove: (ref: string) => void;
-  onToRefund: (ref: string) => void;
   onRefund: (ref: string) => void;
 }) {
-  // Single status picker collapses Approve/To Refund/Refund/Cancel into a
-  // ClickUp-style dropdown (matching the tickets dialog). Each selection fires
-  // the matching mutation and closes the dialog so the user gets feedback in
-  // the table.
+  // Single status picker collapses Approve/Refund/Cancel into a ClickUp-style
+  // dropdown (matching the tickets dialog). Each selection fires the matching
+  // mutation and closes the dialog so the user gets feedback in the table.
+  // Cancel is the only trigger for the "For Refund" state — there's no separate
+  // "Mark For Refund" action.
   const onChangeStatus = (next: BookingStatus) => {
     if (next === "Confirmed") onApprove(booking.ref);
-    else if (next === "To Refund") onToRefund(booking.ref);
     else if (next === "Cancelled") onCancel(booking.ref);
     else if (next === "Refunded") onRefund(booking.ref);
     // Submitted is the intake state; transitioning back isn't a normal flow.
@@ -1105,7 +1086,6 @@ function BookingStatusPicker({
 
   const options: { value: BookingStatus; label: string }[] = [
     { value: "Confirmed",   label: "Approve" },
-    { value: "To Refund",   label: "Mark For Refund" },
     { value: "Refunded",    label: "Refund" },
     { value: "Cancelled",   label: "Cancel booking" },
   ];

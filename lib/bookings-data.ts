@@ -225,6 +225,16 @@ export function purgeCancelled(list: Booking[]): Booking[] {
     .map((b) => ({ ...b, tickets: b.tickets.filter((t) => t.status !== "Cancelled") }));
 }
 
+// Merge freshly-derived seed bookings into a persisted store. Any seeded
+// booking whose ref isn't already present is appended, so newly-added mock
+// samples surface on next load without wiping the operator's live edits to
+// existing bookings. Existing refs are left untouched (persisted wins).
+export function mergeSeededBookings(persisted: Booking[], seeded: Booking[]): Booking[] {
+  const known = new Set(persisted.map((b) => b.ref));
+  const additions = seeded.filter((b) => !known.has(b.ref));
+  return additions.length === 0 ? persisted : [...persisted, ...additions];
+}
+
 export function reviveBookings(raw: unknown): Booking[] {
   if (!Array.isArray(raw)) return [];
   const revived = raw.map((b) => ({
@@ -746,9 +756,11 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
 
       const dep = new Date(v.date);
       dep.setHours(v.hour, v.minute, 0, 0);
-      // Recently booked, like the other Under Review samples.
-      const bookingDate = new Date(dep);
-      bookingDate.setDate(bookingDate.getDate() - (1 + Math.floor(rand() * 3)));
+      // Booked within the last week so these land inside the bookings table's
+      // default [today-30, today] window, even though the voyage departs in the
+      // future. Booking-now-for-a-future-sailing is the realistic case.
+      const bookingDate = new Date();
+      bookingDate.setDate(bookingDate.getDate() - Math.floor(rand() * 7));
       bookingDate.setHours(0, 0, 0, 0);
 
       const first = FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
