@@ -282,7 +282,6 @@ export default function CreateScheduleModal({
               schedule={schedule}
               routes={routes}
               vessel={vessel}
-              fares={fares}
               fleet={MOCK_FLEET}
               onEdit={setStepIdx}
             />
