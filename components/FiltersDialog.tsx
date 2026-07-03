@@ -113,6 +113,7 @@ export default function FiltersDialog({
                   ariaLabel={f.label}
                   className="w-full"
                   options={f.options}
+                  inline
                 />
               ) : (
                 <DateRangePicker

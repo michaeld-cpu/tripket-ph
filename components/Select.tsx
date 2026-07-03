@@ -14,6 +14,12 @@ type SelectProps<T extends string> = {
   ariaLabel?: string;
   className?: string;
   size?: "sm" | "md";
+  /** Render the option menu inline (absolutely positioned within the trigger's
+   *  wrapper) instead of portaling it to <body>. Use inside a scrollable modal
+   *  so the menu scrolls with the dialog body rather than floating over the
+   *  page behind it. Default false keeps the portal behavior page-level selects
+   *  rely on to escape ancestor `overflow-hidden`. */
+  inline?: boolean;
 };
 
 const ITEM_H = 36;
@@ -26,6 +32,7 @@ export default function Select<T extends string>({
   ariaLabel = "Select",
   className = "",
   size = "md",
+  inline = false,
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<"down" | "up">("down");
@@ -56,6 +63,8 @@ export default function Select<T extends string>({
   }, [open]);
 
   useLayoutEffect(() => {
+    // Inline mode positions the menu with CSS, so no fixed-coord math needed.
+    if (inline) return;
     if (!open || !triggerRef.current) return;
     const compute = () => {
       const rect = triggerRef.current!.getBoundingClientRect();
@@ -79,7 +88,60 @@ export default function Select<T extends string>({
     };
   }, [open, options.length]);
 
+  // Inline menus can open cropped when the trigger sits near the bottom of a
+  // scrollable modal body. On open, pick up/down based on room within the
+  // nearest scroll container, then nudge that container so the menu is fully
+  // visible. Deferred a frame so the menu is laid out first.
+  useEffect(() => {
+    if (!inline || !open || !triggerRef.current) return;
+    const id = requestAnimationFrame(() => {
+      const trigger = triggerRef.current;
+      const menu = menuRef.current;
+      if (!trigger || !menu) return;
+      // Find the nearest scrollable ancestor (the modal body); fall back to
+      // the viewport.
+      let scroller: HTMLElement | null = trigger.parentElement;
+      while (scroller && scroller.scrollHeight <= scroller.clientHeight) {
+        scroller = scroller.parentElement;
+      }
+      const bounds = scroller?.getBoundingClientRect()
+        ?? { top: 0, bottom: window.innerHeight } as DOMRect;
+      const tRect = trigger.getBoundingClientRect();
+      const menuH = menu.offsetHeight;
+      const roomBelow = bounds.bottom - tRect.bottom;
+      const roomAbove = tRect.top - bounds.top;
+      // Flip up only when there isn't room below but there is above.
+      setPlacement(menuH > roomBelow && roomAbove > roomBelow ? "up" : "down");
+      // Then scroll the container so the menu lands in view either way.
+      menu.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [inline, open]);
+
   const padding = size === "sm" ? "px-3 py-1.5" : "px-3 py-2";
+
+  // Shared option rows — rendered in both the inline and portaled menus.
+  const optionList = options.map(opt => {
+    const selected = opt.value === value;
+    return (
+      <button
+        key={opt.value}
+        role="option"
+        aria-selected={selected}
+        onClick={() => { onChange(opt.value); setOpen(false); }}
+        className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors ${
+          selected ? "bg-brand-50 text-brand-700" : "text-gray-700 hover:bg-gray-50"
+        }`}
+      >
+        <span className="truncate">{opt.label}</span>
+        {selected && (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-brand-600">
+            <path d="M5 12l5 5 9-11" />
+          </svg>
+        )}
+      </button>
+    );
+  });
 
   return (
     <div className={`relative inline-block ${className}`} ref={wrapRef}>
@@ -110,7 +172,22 @@ export default function Select<T extends string>({
         </svg>
       </button>
 
-      {open && coords && typeof document !== "undefined" && createPortal(
+      {/* Inline menu — absolutely positioned within the wrapper so it scrolls
+          with the surrounding modal body instead of floating over the page.
+          max-h caps the height and overflow-y-auto adds internal scroll. */}
+      {inline && open && (
+        <div
+          ref={menuRef}
+          role="listbox"
+          className={`absolute left-0 right-0 z-30 max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)] ${
+            placement === "up" ? "bottom-full mb-1" : "top-full mt-1"
+          }`}
+        >
+          {optionList}
+        </div>
+      )}
+
+      {!inline && open && coords && typeof document !== "undefined" && createPortal(
         <div
           ref={menuRef}
           role="listbox"
@@ -119,27 +196,7 @@ export default function Select<T extends string>({
             placement === "up" ? "origin-bottom" : "origin-top"
           }`}
         >
-          {options.map(opt => {
-            const selected = opt.value === value;
-            return (
-              <button
-                key={opt.value}
-                role="option"
-                aria-selected={selected}
-                onClick={() => { onChange(opt.value); setOpen(false); }}
-                className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors ${
-                  selected ? "bg-brand-50 text-brand-700" : "text-gray-700 hover:bg-gray-50"
-                }`}
-              >
-                <span className="truncate">{opt.label}</span>
-                {selected && (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-brand-600">
-                    <path d="M5 12l5 5 9-11" />
-                  </svg>
-                )}
-              </button>
-            );
-          })}
+          {optionList}
         </div>,
         document.body
       )}
