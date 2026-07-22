@@ -5,12 +5,14 @@ import UserDirectory from "@/components/UserDirectory";
 export default function OperatorsPage() {
   return (
     <UserDirectory
-      role="Operator"
+      roles={["Operator"]}
       title="Operators"
       subtitle="Operator accounts"
       tableHeading="Operators"
       createLabel="Create operator"
       noun="operators"
+      showStatusFilter={false}
+      lockLineToActive
     />
   );
 }

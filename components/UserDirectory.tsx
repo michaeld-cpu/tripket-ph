@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
 import PageHeader from "@/components/PageHeader";
 import Select from "@/components/Select";
+import { useShippingLine } from "@/components/ShippingLineContext";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import { TableSkeleton } from "@/components/Skeleton";
@@ -67,24 +68,37 @@ function avatarFor(name: string) {
  * surfaced as a table column.
  */
 export default function UserDirectory({
-  role,
+  roles,
   title,
   subtitle,
   tableHeading,
   createLabel,
   noun,
+  showStatusFilter = true,
+  lockLineToActive = false,
 }: {
-  role: UserRole;
+  /** Role slice(s) this page shows. Single role hides the Role column; multiple
+   *  roles show the column + a Role filter. */
+  roles: UserRole[];
   title: string;
   subtitle: string;
   tableHeading: string;
   createLabel: string;
   /** Plural noun for the Pagination summary, e.g. "users" / "operators". */
   noun: string;
+  /** Whether to show the status filter dropdown. */
+  showStatusFilter?: boolean;
+  /** Lock new users to the active shipping line (line-scoped roles, e.g.
+   *  operators) — the create dialog shows the line read-only instead of a picker. */
+  lockLineToActive?: boolean;
 }) {
+  const { active } = useShippingLine();
+  // Multiple roles → surface the Role column + a Role filter.
+  const showRoleColumn = roles.length > 1;
   const [users, setUsers] = useState<User[] | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | UserStatus>("all");
+  const [roleFilter, setRoleFilter] = useState<"all" | UserRole>("all");
   const [page, setPage] = useState(1);
   // Form dialog: open=create when editUser is null, edit when set.
   const [formOpen, setFormOpen] = useState(false);
@@ -131,19 +145,20 @@ export default function UserDirectory({
     return () => clearTimeout(t);
   }, []);
 
-  useEffect(() => { setPage(1); }, [query, statusFilter]);
+  useEffect(() => { setPage(1); }, [query, statusFilter, roleFilter]);
 
-  // Rows for this page's role only.
-  const scoped = useMemo(() => (users ?? []).filter((u) => u.role === role), [users, role]);
+  // Rows for this page's role slice.
+  const scoped = useMemo(() => (users ?? []).filter((u) => roles.includes(u.role)), [users, roles]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return scoped.filter((u) => {
       if (statusFilter !== "all" && u.status !== statusFilter) return false;
+      if (roleFilter !== "all" && u.role !== roleFilter) return false;
       if (q && !`${u.name} ${u.email}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [scoped, query, statusFilter]);
+  }, [scoped, query, statusFilter, roleFilter]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -191,18 +206,34 @@ export default function UserDirectory({
                 />
               </div>
 
-              <Select
-                size="sm"
-                value={statusFilter}
-                onChange={setStatusFilter}
-                ariaLabel="Filter by status"
-                className="w-32"
-                options={[
-                  { value: "all", label: "All status" },
-                  { value: "Active", label: "Active" },
-                  { value: "Suspended", label: "Disabled" },
-                ]}
-              />
+              {showRoleColumn && (
+                <Select
+                  size="sm"
+                  value={roleFilter}
+                  onChange={setRoleFilter}
+                  ariaLabel="Filter by role"
+                  className="w-32"
+                  options={[
+                    { value: "all", label: "All roles" },
+                    ...roles.map((r) => ({ value: r, label: r })),
+                  ]}
+                />
+              )}
+
+              {showStatusFilter && (
+                <Select
+                  size="sm"
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  ariaLabel="Filter by status"
+                  className="w-32"
+                  options={[
+                    { value: "all", label: "All status" },
+                    { value: "Active", label: "Active" },
+                    { value: "Suspended", label: "Disabled" },
+                  ]}
+                />
+              )}
             </div>
           </div>
 
@@ -214,7 +245,7 @@ export default function UserDirectory({
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">User <SortIcon /></button>
                   </th>
-                  <th className="px-5 py-2.5 font-medium">Role</th>
+                  {showRoleColumn && <th className="px-5 py-2.5 font-medium">Role</th>}
                   <th className="px-5 py-2.5 font-medium">Status</th>
                   <th className="px-5 py-2.5 font-medium">Last active</th>
                   <th className="sticky right-0 z-10 w-10 bg-slate-50 px-5 py-2.5 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)]" />
@@ -223,7 +254,7 @@ export default function UserDirectory({
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={showRoleColumn ? 5 : 4} className="px-5 py-12 text-center text-sm text-slate-400">
                       No {noun} match your filters.
                     </td>
                   </tr>
@@ -252,12 +283,14 @@ export default function UserDirectory({
                         </div>
                       </td>
 
-                      {/* Role */}
-                      <td className="px-5 py-3.5 align-middle">
-                        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${roleTone[u.role]}`}>
-                          {u.role}
-                        </span>
-                      </td>
+                      {/* Role — only when the page shows multiple roles. */}
+                      {showRoleColumn && (
+                        <td className="px-5 py-3.5 align-middle">
+                          <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${roleTone[u.role]}`}>
+                            {u.role}
+                          </span>
+                        </td>
+                      )}
 
                       {/* Status */}
                       <td className="px-5 py-3.5 align-middle">
@@ -320,7 +353,8 @@ export default function UserDirectory({
       <UserFormModal
         open={formOpen}
         editUser={editUser}
-        defaultRole={role}
+        defaultRole={roles[0]}
+        lockedLineId={lockLineToActive && !editUser ? active.id : undefined}
         onClose={() => setFormOpen(false)}
         onSubmit={handleSubmit}
       />

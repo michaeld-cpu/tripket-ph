@@ -69,7 +69,6 @@ function routeToValue(r: Route): RoutesValue {
     // Collapse any stored [low, high] range to its average for the single field.
     durationLowHrs: String((r.durationHrs[0] + r.durationHrs[1]) / 2),
     durationHighHrs: String((r.durationHrs[0] + r.durationHrs[1]) / 2),
-    createReturn: false,
     status: r.isEnabled ? "Active" : "Inactive",
     accommodationFares: r.accommodationFares ?? DEFAULT_ROUTE_ACCOMMODATION_FARES,
     serviceFee: r.serviceFee != null ? String(r.serviceFee) : "",
@@ -598,17 +597,7 @@ export default function RoutesPage() {
             accommodationFares: payload.accommodationFares,
             serviceFee: payload.serviceFee ? Number(payload.serviceFee) : undefined,
           };
-          if (payload.createReturn) {
-            const returnLeg: Route = {
-              ...newRoute,
-              id: `r-${Date.now() + 1}`,
-              origin: destination,
-              destination: origin,
-            };
-            updateRoutes((prev) => [returnLeg, newRoute, ...prev]);
-          } else {
-            updateRoutes((prev) => [newRoute, ...prev]);
-          }
+          updateRoutes((prev) => [newRoute, ...prev]);
         }}
       />
 

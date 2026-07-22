@@ -61,10 +61,7 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
   const { active } = useShippingLine();
   const { showToast } = useToast();
 
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [reachedReview, setReachedReview] = useState(false);
-
-  // Step 1 — Identity + Status
+  // Identity + Status — the only fields captured in this dialog now.
   const [values, setValues] = useState({
     name: "",
     type: "RoRo" as Vessel["type"],
@@ -73,31 +70,23 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
     lineId: active.id,
   });
 
-  // Step 2 — Accommodation + Capacity + Vehicle classes + Passenger types + Add-ons
-  const [accommodations, setAccommodations] = useState<AccommodationClass[]>(defaultAccommodations);
-  const [vehicleSlots, setVehicleSlots] = useState("");
-  const [vehicleClasses, setVehicleClasses] = useState<VehicleClass[]>(defaultVehicleClasses);
-  const [passengerTypes, setPassengerTypes] = useState<PassengerType[]>(defaultPassengerTypes);
-  const [addOns, setAddOns] = useState<AddOn[]>(defaultAddOns);
+  // Accommodation / capacity / vehicle-class / passenger-type / add-on config
+  // is no longer edited here — it defaults and is set later via Edit. Kept as
+  // state so the create payload stays well-formed.
+  const [accommodations] = useState<AccommodationClass[]>(defaultAccommodations);
+  const [vehicleClasses] = useState<VehicleClass[]>(defaultVehicleClasses);
+  const [passengerTypes] = useState<PassengerType[]>(defaultPassengerTypes);
 
   const [submitting, setSubmitting] = useState(false);
 
   const isPassengerOnly = passengerOnlyTypes.includes(values.type);
 
-  // A vessel can offer multiple accommodation tiers. Passenger capacity is the
-  // sum of all enabled tiers' seats.
+  // Passenger capacity is the sum of all enabled accommodation tiers' seats.
   const enabledAccommodations = accommodations.filter((a) => a.enabled);
   const totalPassengers = enabledAccommodations.reduce((sum, a) => sum + (a.capacity || 0), 0);
 
   const resetAll = () => {
-    setStep(1);
-    setReachedReview(false);
     setValues({ name: "", type: "RoRo", imo: "", status: "Active", lineId: active.id });
-    setAccommodations(defaultAccommodations);
-    setVehicleSlots("");
-    setVehicleClasses(defaultVehicleClasses);
-    setPassengerTypes(defaultPassengerTypes);
-    setAddOns(defaultAddOns);
   };
 
   const handleClose = () => {
@@ -108,52 +97,11 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
 
   const step1Valid = values.name.trim().length > 0;
 
-  // Step 2 needs at least one accommodation tier, and every enabled tier must
-  // have seats AND a base fare. (Vehicle deck capacity lives per vehicle class
-  // as its quantity, not here.)
-  const step2Valid =
-    enabledAccommodations.length > 0 &&
-    enabledAccommodations.every((a) => (a.capacity || 0) > 0 && (a.fare || 0) > 0);
-
-  const handleNext = () => {
-    if (step === 1) {
-      if (!step1Valid) return;
-      setStep(2);
-    } else if (step === 2) {
-      if (!step2Valid) return;
-      setStep(3);
-      setTimeout(() => setReachedReview(true), 300);
-    }
-  };
-
-  const handleBack = () => {
-    if (step === 3) {
-      setReachedReview(false);
-      setStep(2);
-    } else if (step === 2) {
-      setStep(1);
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    // Submission is only valid on step 3 after the user has reached and acknowledged the review.
-    // Any submit firing from step 1 or 2 (e.g. an accidental Enter keypress) is ignored — the
-    // user must explicitly click "Register vessel" on the review step to publish.
-    if (step !== 3) return;
-    if (!reachedReview) return;
-    if (!step1Valid) {
-      setStep(1);
-      setReachedReview(false);
-      return;
-    }
-    if (!step2Valid) {
-      setStep(2);
-      setReachedReview(false);
-      return;
-    }
+    if (!step1Valid) return;
 
     setSubmitting(true);
     // Total vehicle deck capacity is the sum of each enabled class's quantity.
@@ -182,17 +130,7 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
 
   return (
     <Modal open={open} onClose={handleClose} maxWidth="max-w-2xl">
-      <form
-        onSubmit={handleSubmit}
-        onKeyDown={(e) => {
-          // Prevent stray Enter keypresses on steps 1 & 2 from submitting the form.
-          // Advancement requires an explicit Next / Review click.
-          if (e.key === "Enter" && step !== 3) {
-            const target = e.target as HTMLElement;
-            if (target.tagName !== "TEXTAREA") e.preventDefault();
-          }
-        }}
-      >
+      <form onSubmit={handleSubmit}>
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
           <div className="flex items-center gap-2.5">
@@ -206,7 +144,7 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
             </span>
             <div>
               <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">Add new vessel</h2>
-              <p className="text-[11.5px] text-slate-500">{STEP_COPY[step]}</p>
+              <p className="text-[11.5px] text-slate-500">{STEP_COPY[1]}</p>
             </div>
           </div>
           <button
@@ -221,81 +159,17 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
           </button>
         </div>
 
-        {/* Step indicator */}
-        <div className="px-6 pt-5">
-          <StepIndicator current={step} />
-        </div>
-
-        {/* Body */}
+        {/* Body — single identity page. */}
         <div className="max-h-[60vh] overflow-y-auto overflow-x-hidden">
-          <AnimatePresence mode="wait" initial={false}>
-            {step === 1 && (
-              <motion.div
-                key="step1"
-                initial={{ opacity: 0, x: -6 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -6 }}
-                transition={{ duration: 0.18, ease: "easeOut" }}
-              >
-                <VesselFormBody
-                  values={values}
-                  onChange={(k, v) => setValues(prev => ({ ...prev, [k]: v }))}
-                  statuses={ADD_STATUSES}
-                />
-              </motion.div>
-            )}
-            {step === 2 && (
-              <motion.div
-                key="step2"
-                initial={{ opacity: 0, x: 6 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -6 }}
-                transition={{ duration: 0.18, ease: "easeOut" }}
-              >
-                <VesselCatalogStep
-                  isPassengerOnly={isPassengerOnly}
-                  accommodations={accommodations}
-                  setAccommodations={setAccommodations}
-                  totalPassengers={totalPassengers}
-                  vehicleSlots={vehicleSlots}
-                  setVehicleSlots={setVehicleSlots}
-                  vehicleClasses={vehicleClasses}
-                  setVehicleClasses={setVehicleClasses}
-                  passengerTypes={passengerTypes}
-                  setPassengerTypes={setPassengerTypes}
-                  addOns={addOns}
-                  setAddOns={setAddOns}
-                />
-              </motion.div>
-            )}
-            {step === 3 && (
-              <motion.div
-                key="step3"
-                initial={{ opacity: 0, x: 6 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 6 }}
-                transition={{ duration: 0.18, ease: "easeOut" }}
-              >
-                <Step3Review
-                  values={values}
-                  isPassengerOnly={isPassengerOnly}
-                  accommodations={accommodations}
-                  vehicleSlots={vehicleSlots}
-                  vehicleClasses={vehicleClasses}
-                  passengerTypes={passengerTypes}
-                  addOns={addOns}
-                  onEditStep={(s) => setStep(s)}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <VesselFormBody
+            values={values}
+            onChange={(k, v) => setValues(prev => ({ ...prev, [k]: v }))}
+            statuses={ADD_STATUSES}
+          />
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-6 py-4">
-          <div className="text-[11px] text-slate-500">
-            Step <span className="font-medium text-slate-700 tabular-nums">{step}</span> of 3
-          </div>
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-4">
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -304,37 +178,12 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
             >
               Cancel
             </button>
-            {step > 1 && (
-              <button
-                type="button"
-                onClick={handleBack}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-[background-color,transform] duration-150 ease-out hover:bg-slate-50 active:scale-[0.97]"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                  <path d="M15 18l-6-6 6-6" />
-                </svg>
-                Back
-              </button>
-            )}
-            {step < 3 ? (
-              <button
-                type="button"
-                onClick={handleNext}
-                disabled={(step === 1 && !step1Valid) || (step === 2 && !step2Valid)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:bg-brand-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100"
-              >
-                {step === 2 ? "Review" : "Next"}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                  <path d="M9 6l6 6-6 6" />
-                </svg>
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={submitting || !step1Valid || !step2Valid || !reachedReview}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:bg-brand-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100"
-              >
-                {submitting && (
+            <button
+              type="submit"
+              disabled={submitting || !step1Valid}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:bg-brand-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100"
+            >
+              {submitting && (
                   <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5 animate-spin">
                     <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.3" strokeWidth="3" />
                     <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
@@ -342,7 +191,6 @@ export default function AddVesselModal({ open, onClose, onCreate }: Props) {
                 )}
                 {submitting ? "Adding" : "Register vessel"}
               </button>
-            )}
           </div>
         </div>
       </form>

@@ -9,7 +9,7 @@ import RoutesStep, { type RoutesValue } from "@/components/schedule-steps/Routes
 import VesselStep, { type VesselValue, MOCK_FLEET } from "@/components/schedule-steps/VesselStep";
 import { defaultVehicleClasses, defaultPassengerTypes, defaultAccommodations } from "@/components/AddVesselModal";
 import { defaultAddOns } from "@/components/vessel-extras/AddOnsSection";
-import { type FaresValue, initialFaresValue } from "@/components/schedule-steps/FaresStep";
+import FaresStep, { type FaresValue, initialFaresValue } from "@/components/schedule-steps/FaresStep";
 import ReviewStep from "@/components/schedule-steps/ReviewStep";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import { loadStore, saveStore } from "@/lib/persisted-store";
@@ -42,7 +42,6 @@ function initialRoutesValue(): RoutesValue {
     distanceNm: "",
     durationLowHrs: "",
     durationHighHrs: "",
-    createReturn: false,
   };
 }
 
@@ -61,12 +60,13 @@ function initialScheduleValue(seed?: { date?: Date; hour?: number }): ScheduleVa
   return { dayTimes: {} };
 }
 
-type StepId = "schedule" | "routes" | "vessel" | "review";
+type StepId = "schedule" | "routes" | "vessel" | "fares" | "review";
 
 const STEPS: { id: StepId; label: string; description: string }[] = [
   { id: "schedule", label: "Schedule", description: "When the trips run." },
   { id: "routes",   label: "Routes",   description: "Which ports the schedule serves." },
   { id: "vessel",   label: "Vessel",   description: "Which ship gets the assignment." },
+  { id: "fares",    label: "Fares",    description: "Pricing per passenger type & vehicle class." },
   { id: "review",   label: "Review",   description: "Confirm and create." },
 ];
 
@@ -170,14 +170,14 @@ export default function CreateScheduleModal({
     vesselNewIdentityValid && (subStepForGate < 2 || vesselNewCapacityValid);
   const vesselValid = vessel.mode === "fleet" ? vesselFleetValid : vesselNewValid;
 
-  // Fares is no longer a wizard step here — pricing is managed on the vessels
-  // page. We keep the `fares` state (defaulted) so the review + payload still
-  // carry a fare shape, but it no longer gates progression.
-  const everyPriorValid = scheduleValid && routesValid && vesselValid;
+  // Fares step needs a base fare set.
+  const faresValid = Number(fares.baseFare) > 0;
+  const everyPriorValid = scheduleValid && routesValid && vesselValid && faresValid;
   const stepValid: Record<StepId, boolean> = {
     schedule: scheduleValid,
     routes:   routesValid,
     vessel:   vesselValid,
+    fares:    faresValid,
     review:   everyPriorValid,
   };
   const continueDisabled = !stepValid[step.id];
@@ -277,11 +277,20 @@ export default function CreateScheduleModal({
             <RoutesStep value={routes} onChange={setRoutes} />
           ) : step.id === "vessel" ? (
             <VesselStep value={vessel} onChange={setVessel} />
+          ) : step.id === "fares" ? (
+            <FaresStep
+              value={fares}
+              onChange={setFares}
+              vessel={vessel}
+              routes={routes}
+              onRoutesChange={setRoutes}
+            />
           ) : (
             <ReviewStep
               schedule={schedule}
               routes={routes}
               vessel={vessel}
+              fares={fares}
               fleet={MOCK_FLEET}
               onEdit={setStepIdx}
             />

@@ -5,7 +5,7 @@
 
 import { lines } from "@/lib/shipping-lines";
 
-export type UserRole = "Admin" | "Operator";
+export type UserRole = "Superadmin" | "Admin" | "Operator";
 export type UserStatus = "Active" | "Suspended";
 
 export type User = {
@@ -23,8 +23,9 @@ export type User = {
 // Admin reads as the elevated role in brand orange; Operator is a quiet
 // neutral chip. Same shape so the pair looks uniform and on-brand.
 export const roleTone: Record<UserRole, string> = {
-  Admin:    "bg-brand-50 text-brand-700 ring-1 ring-brand-100",
-  Operator: "bg-slate-100 text-slate-600 ring-1 ring-slate-200/70",
+  Superadmin: "bg-violet-50 text-violet-700 ring-1 ring-violet-100",
+  Admin:      "bg-brand-50 text-brand-700 ring-1 ring-brand-100",
+  Operator:   "bg-slate-100 text-slate-600 ring-1 ring-slate-200/70",
 };
 
 export const userStatusTone: Record<UserStatus, string> = {
@@ -61,7 +62,9 @@ export function buildUsers(): User[] {
       const first = FIRST[r % FIRST.length];
       const last = LAST[((r >>> 5) % LAST.length + LAST.length) % LAST.length];
       const name = `${first} ${last}`;
-      const role: UserRole = r % 4 === 0 ? "Admin" : "Operator";
+      // ~1/8 Superadmin, ~1/8 Admin, rest Operator — gives the Users tab
+      // (Admin + Superadmin) a believable role mix to filter on.
+      const role: UserRole = r % 8 === 0 ? "Superadmin" : r % 4 === 0 ? "Admin" : "Operator";
       const status: UserStatus = r % 9 === 0 ? "Suspended" : "Active";
       const minutesAgo = (r % 20000); // up to ~14 days
       out.push({

@@ -55,7 +55,6 @@ export type RoutesValue = {
   distanceNm: string;          // kept as string so the input stays controlled-friendly
   durationLowHrs: string;
   durationHighHrs: string;
-  createReturn: boolean;
   /** Operational status. Only surfaced/edited in edit mode; new routes start Active. */
   status?: RouteStatus;
   /** Per-accommodation-tier fares offered on this route (tiers + fare only). */
@@ -131,14 +130,11 @@ function lookupCrossing(a: string, b: string): Crossing | null {
 export default function RoutesStep({
   value,
   onChange,
-  hideReturnToggle = false,
   showStatus = false,
   lockPorts = false,
 }: {
   value: RoutesValue;
   onChange: (next: RoutesValue) => void;
-  /** Hide the "create return route" toggle (e.g. when editing an existing route). */
-  hideReturnToggle?: boolean;
   /** Show the Active/Inactive status segmented control (edit mode). */
   showStatus?: boolean;
   /** Render origin + destination as a read-only details card. Used in edit
@@ -265,16 +261,6 @@ export default function RoutesStep({
           />
         </FieldGroup>
       </div>
-
-      {/* Return-leg toggle — clone of the legacy "Create Return Route" card, refined.
-          Hidden when editing an existing route (the return leg is its own record). */}
-      {!hideReturnToggle && (
-        <ReturnRouteCard
-          on={value.createReturn}
-          disabled={sameOriginDest || !origin || !destination}
-          onToggle={(v) => onChange({ ...value, createReturn: v })}
-        />
-      )}
 
       {/* Status — pill toggle matching the edit-vessel dialog's status field
           (plain pills, label above, rendered as the last card). */}
@@ -648,66 +634,3 @@ function RoutePreview({ origin, destination }: { origin: Port; destination: Port
 
 // "Create return route" toggle card — matches the visual rhythm of the screenshot
 // but inherits the brand palette and ring-treatment used elsewhere in the wizard.
-function ReturnRouteCard({
-  on,
-  disabled,
-  onToggle,
-}: {
-  on: boolean;
-  disabled: boolean;
-  onToggle: (v: boolean) => void;
-}) {
-  return (
-    <div
-      className={
-        "flex items-center gap-3 rounded-xl border bg-white p-3 transition-[border-color,background-color] " +
-        (disabled
-          ? "border-slate-200 opacity-60"
-          : on
-            ? "border-brand-200 bg-brand-50/40"
-            : "border-slate-200 hover:border-slate-300")
-      }
-    >
-      <div
-        className={
-          "grid h-9 w-9 shrink-0 place-items-center rounded-lg " +
-          (on ? "bg-brand-100 text-brand-700" : "bg-slate-100 text-slate-500 ring-1 ring-slate-200")
-        }
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-          <path d="M17 4l4 4-4 4" />
-          <path d="M3 8h18" />
-          <path d="M7 20l-4-4 4-4" />
-          <path d="M21 16H3" />
-        </svg>
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-semibold tracking-tight text-slate-900">Create return route</div>
-        <div className="mt-0.5 text-[11.5px] leading-relaxed text-slate-500">
-          Adds the opposite direction as a separate route record so the inbound leg gets its own
-          schedule, vessel, and fares.
-        </div>
-      </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
-        disabled={disabled}
-        onClick={() => onToggle(!on)}
-        className={
-          "relative inline-flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 transition-colors duration-150 " +
-          (on ? "bg-brand-500" : "bg-slate-300") +
-          (disabled ? " cursor-not-allowed opacity-60" : " cursor-pointer")
-        }
-      >
-        <span
-          aria-hidden
-          className={
-            "block h-5 w-5 rounded-full bg-white shadow-[0_1px_2px_rgba(15,23,42,0.2)] transition-transform duration-150 " +
-            (on ? "translate-x-4" : "translate-x-0")
-          }
-        />
-      </button>
-    </div>
-  );
-}

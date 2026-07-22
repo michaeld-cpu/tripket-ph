@@ -1,17 +1,18 @@
 "use client";
 import UserDirectory from "@/components/UserDirectory";
 
-// Admin accounts — platform-level governance. Operators live on /operators.
-// (Superadmin will join this page once the role exists in the data model.)
+// Platform-level governance accounts — Admins and Superadmins. Operators live
+// on /operators.
 export default function UsersPage() {
   return (
     <UserDirectory
-      role="Admin"
+      roles={["Admin", "Superadmin"]}
       title="Users"
-      subtitle="Admin accounts"
-      tableHeading="Admins"
+      subtitle="Admin & superadmin accounts"
+      tableHeading="Users"
       createLabel="Create admin"
-      noun="admins"
+      noun="users"
+      lockLineToActive
     />
   );
 }

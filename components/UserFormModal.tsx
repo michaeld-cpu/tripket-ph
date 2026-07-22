@@ -23,6 +23,7 @@ type Draft = {
 };
 
 const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
+  { value: "Superadmin", label: "Superadmin" },
   { value: "Admin", label: "Admin" },
   { value: "Operator", label: "Operator" },
 ];

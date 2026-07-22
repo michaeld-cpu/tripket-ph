@@ -27,7 +27,6 @@ function initialValue(): RoutesValue {
     distanceNm: "",
     durationLowHrs: "",
     durationHighHrs: "",
-    createReturn: false,
   };
 }
 
@@ -163,7 +162,7 @@ export default function CreateRouteModal({
                 </>
               ) : (
                 <>
-                  <RoutesStep value={value} onChange={setValue} hideReturnToggle showStatus lockPorts />
+                  <RoutesStep value={value} onChange={setValue} showStatus lockPorts />
                   <ServiceFeeEditor value={value} onChange={setValue} />
                   {editExtra}
                 </>
@@ -249,9 +248,6 @@ function RouteReview({ value, onEdit }: { value: RoutesValue; onEdit: () => void
           <span className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-white">
             New route
           </span>
-          {value.createReturn && (
-            <span className="text-[10.5px] font-medium text-white/85">+ return leg</span>
-          )}
         </div>
         <div className="rounded-xl bg-white px-5 py-5">
           <div className="flex items-center justify-center gap-3">
@@ -317,19 +313,6 @@ function RouteReview({ value, onEdit }: { value: RoutesValue; onEdit: () => void
                 <span className="text-slate-400">—</span>
               )
             }
-          />
-          <Row
-            label="Return leg"
-            value={value.createReturn ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2 py-0.5 text-[10.5px] font-medium text-brand-700 ring-1 ring-brand-100">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
-                  <path d="M17 4l4 4-4 4M3 8h18M7 20l-4-4 4-4M21 16H3" />
-                </svg>
-                Will be created
-              </span>
-            ) : (
-              <span className="text-slate-400">—</span>
-            )}
           />
         </dl>
       </div>
