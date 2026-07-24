@@ -30,9 +30,10 @@ export default function Modal({ open, onClose, children, maxWidth = "max-w-xl", 
 
   return (
     <div className={`fixed inset-0 ${layer === "top" ? "z-[90]" : "z-[80]"} flex items-center justify-center p-4`}>
+      {/* Backdrop is non-dismissing: clicking outside the dialog does not close
+          it. Use the dialog's own Close/Cancel control (or Esc). */}
       <div
         className={`absolute inset-0 animate-backdrop ${layer === "top" ? "bg-black/40" : "bg-black/30"}`}
-        onClick={onClose}
       />
       <div
         role="dialog"

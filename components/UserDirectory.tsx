@@ -263,7 +263,7 @@ export default function UserDirectory({
                   {showShippingLine && <th className="px-5 py-2.5 font-medium">Shipping line</th>}
                   <th className="px-5 py-2.5 font-medium">Status</th>
                   <th className="px-5 py-2.5 font-medium">Last active</th>
-                  <th className="sticky right-0 z-10 w-10 bg-slate-50 px-5 py-2.5 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)]" />
+                  <th className="sticky right-0 z-10 w-10 bg-slate-50/70 px-5 py-2.5 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] backdrop-blur-md" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -334,7 +334,7 @@ export default function UserDirectory({
 
                       {/* Actions */}
                       <td
-                        className="sticky right-0 z-10 bg-white px-5 py-3 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] transition-colors duration-150 group-hover:bg-slate-50"
+                        className="sticky right-0 z-10 bg-white/70 px-5 py-3 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] backdrop-blur-md transition-colors duration-150 group-hover:bg-slate-50/70"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <RowMenu

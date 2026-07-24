@@ -320,7 +320,7 @@ export default function TicketsPage() {
                   </th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Class</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Amount</th>
-                  <th className="sticky right-0 z-10 w-10 bg-slate-50 px-6 py-3 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)]" />
+                  <th className="sticky right-0 z-10 w-10 bg-slate-50/70 px-6 py-3 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] backdrop-blur-md" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -438,7 +438,7 @@ export default function TicketsPage() {
                         )}
                       </td>
                       <td
-                        className="sticky right-0 z-10 whitespace-nowrap bg-white px-6 py-4 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] transition-colors duration-150 group-hover:bg-slate-50 has-[[role=menu]]:z-30"
+                        className="sticky right-0 z-10 whitespace-nowrap bg-white/70 px-6 py-4 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] backdrop-blur-md transition-colors duration-150 group-hover:bg-slate-50/70 has-[[role=menu]]:z-30"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <RowMenu
@@ -617,14 +617,12 @@ function TicketDetailDialog({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-8"
-          onClick={onClose}
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.97, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 8 }}
             transition={{ type: "spring", stiffness: 320, damping: 30, mass: 0.8 }}
-            onClick={(e) => e.stopPropagation()}
             className="flex max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] ring-1 ring-slate-200/70"
           >
           {/* Left column — ticket content (header · scroll body · footer). */}
@@ -1227,7 +1225,6 @@ function DocumentPreviewDialog({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          onClick={onClose}
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 px-4 py-8"
         >
           <motion.div
@@ -1235,7 +1232,6 @@ function DocumentPreviewDialog({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 320, damping: 30, mass: 0.8 }}
-            onClick={(e) => e.stopPropagation()}
             className="relative max-h-[60vh] max-w-[60vw]"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}

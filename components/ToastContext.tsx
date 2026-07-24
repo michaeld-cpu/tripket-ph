@@ -39,7 +39,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     timers.current.clear();
     setToasts([{ id, message, variant }]);
     scheduleDismiss(id);
-  }, [scheduleDismiss]);
+  }, [scheduleDismiss]);  
 
   // Clean up timers on unmount
   useEffect(() => {

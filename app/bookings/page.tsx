@@ -20,6 +20,7 @@ import {
   statusTone,
   ticketStatusTone,
   ticketStatusLabel,
+  PAX_TYPE_LABELS,
   type Booking,
   type BookingStatus,
   type FareClass,
@@ -397,7 +398,7 @@ export default function BookingsPage() {
                   <th className="whitespace-nowrap px-6 py-3 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Booking date <SortIcon /></button>
                   </th>
-                  <th className="sticky right-0 z-10 w-10 bg-slate-50 px-6 py-3 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)]" />
+                  <th className="sticky right-0 z-10 w-10 bg-slate-50/70 px-6 py-3 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] backdrop-blur-md" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -484,7 +485,7 @@ export default function BookingsPage() {
                       // `:has([role=menu])` lifts the cell above its siblings
                       // while the kebab popover is open, so the floating menu
                       // is never clipped by later sticky cells in the table.
-                      className="sticky right-0 z-10 whitespace-nowrap bg-white px-6 py-4 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] transition-colors duration-150 group-hover:bg-slate-50 has-[[role=menu]]:z-30"
+                      className="sticky right-0 z-10 whitespace-nowrap bg-white/70 px-6 py-4 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] backdrop-blur-md transition-colors duration-150 group-hover:bg-slate-50/70 has-[[role=menu]]:z-30"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <RowMenu
@@ -595,7 +596,7 @@ export default function BookingsPage() {
           { kind: "select", key: "status", label: "Status", value: statusFilter, onChange: (v) => setStatusFilter(v as "all" | BookingStatus), defaultValue: "all",
             options: [
               { value: "all", label: "All status" },
-              { value: "Confirmed", label: "Approved" },
+              { value: "Confirmed", label: "Confirmed" },
               { value: "Submitted", label: "Under Review" },
               { value: "To Refund", label: "For Refund" },
               { value: "Refunded", label: "Refunded" },
@@ -839,15 +840,13 @@ function BookingDetailDialog({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-8"
-          onClick={onClose}
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.97, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 8 }}
             transition={{ type: "spring", stiffness: 320, damping: 30, mass: 0.8 }}
-            onClick={(e) => e.stopPropagation()}
-            className="flex max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] ring-1 ring-slate-200/70"
+            className="flex max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] ring-1 ring-slate-200/70"
           >
           {/* Left column — booking content (header · scroll body · footer). */}
           <div className="flex min-w-0 flex-1 flex-col">
@@ -1209,17 +1208,18 @@ function PassengerTable({
   const [preview, setPreview] = useState<{ title: string; url: string } | null>(null);
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
-      <div className="grid grid-cols-[28px_minmax(0,5fr)_44px_38px_64px_80px_20px] items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">
-        <span className="text-center">#</span>
+      <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_44px_38px_72px_64px_80px_20px] items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">
+        <span>Ticket #</span>
         <span>Passenger</span>
         <span>Gender</span>
         <span>Age</span>
+        <span>Type</span>
         <span>Class</span>
         <span>Status</span>
         <span />
       </div>
       <ul className="divide-y divide-slate-100">
-        {tickets.map((t, idx) => {
+        {tickets.map((t) => {
           const expanded = openId === t.id;
           return (
             <li key={t.id}>
@@ -1228,14 +1228,15 @@ function PassengerTable({
                 onClick={() => setOpenId((prev) => (prev === t.id ? null : t.id))}
                 aria-label={expanded ? "Collapse passenger details" : "Expand passenger details"}
                 aria-expanded={expanded}
-                className="grid w-full grid-cols-[28px_minmax(0,5fr)_44px_38px_64px_80px_20px] items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-slate-50/80"
+                className="grid w-full grid-cols-[minmax(0,2fr)_minmax(0,3fr)_44px_38px_72px_64px_80px_20px] items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-slate-50/80"
               >
-                <span className="text-center font-mono text-[11.5px] tabular-nums text-slate-400">{idx + 1}</span>
+                <span className="truncate font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-900">{t.ticketNumber ?? "—"}</span>
                 <div className="min-w-0">
-                  <span className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{t.name}</span>
+                  <span className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{t.name || "—"}</span>
                 </div>
                 <span className="text-[12px] font-medium tracking-tight text-slate-700">{t.sex}</span>
                 <span className="font-mono text-[12px] tabular-nums text-slate-700">{t.age}</span>
+                <span className="text-[12px] font-medium tracking-tight text-slate-700">{PAX_TYPE_LABELS[t.paxType]}</span>
                 <span className="text-[12px] font-medium tracking-tight text-slate-700">{t.fareClass}</span>
                 <span className={`inline-flex w-fit items-center whitespace-nowrap rounded-md px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[t.status]}`}>
                   {ticketStatusLabel[t.status]}
@@ -1357,98 +1358,87 @@ function PassengerTable({
 // strip, divided meta row, then a small list of comped companions.
 function VehicleInformation({ booking }: { booking: Booking }) {
   const v = booking.vehicle;
-  // Preview dialog state — which document the operator clicked to enlarge.
   const [preview, setPreview] = useState<{ title: string; url: string } | null>(null);
+  const [open, setOpen] = useState(false);
   if (!v) return null;
   const compedCount = booking.tickets.filter((t) => t.comped).length;
+
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
-      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
-        <h3 className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Vehicle Information</h3>
-        {v.includedSeats > 0 && (
-          <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-emerald-700">
-            Includes {v.includedSeats} free seat{v.includedSeats === 1 ? "" : "s"}
-          </span>
+      {/* Header row — matches the passenger table's column vocabulary. */}
+      <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_minmax(0,1.5fr)_minmax(0,2fr)_80px_20px] items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">
+        <span>Ticket #</span>
+        <span>Vehicle</span>
+        <span>Plate</span>
+        <span>Type</span>
+        <span>Status</span>
+        <span />
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="grid w-full grid-cols-[minmax(0,2fr)_minmax(0,3fr)_minmax(0,1.5fr)_minmax(0,2fr)_80px_20px] items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-slate-50/80"
+      >
+        <span className="truncate font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-900">{v.ticketNumber ?? "—"}</span>
+        <span className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{v.make} {v.model}</span>
+        <span className="truncate font-mono text-[12px] tabular-nums text-slate-700">{v.plateNumber || "—"}</span>
+        <span className="truncate text-[12px] font-medium tracking-tight text-slate-700">{v.class}</span>
+        <span className={`inline-flex w-fit items-center whitespace-nowrap rounded-md px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${statusTone[booking.status]}`}>
+          {statusLabel[booking.status]}
+        </span>
+        <span className={`grid h-6 w-6 place-items-center justify-self-end text-slate-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="m6 9 6 6 6-6" /></svg>
+        </span>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div key="veh-expand" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18, ease: "easeOut" }} className="overflow-hidden bg-slate-50/60">
+            <div className="grid grid-cols-3 gap-x-6 gap-y-4 border-t border-dashed border-slate-200 px-4 py-4 text-[12px]">
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Type</div>
+                <div className="mt-0.5 text-[12.5px] font-semibold tracking-tight text-slate-900">{v.class}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Plate No.</div>
+                <div className="mt-0.5 font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] text-slate-900">{v.plateNumber || "—"}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Free seat/s</div>
+                <div className="mt-0.5 font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">
+                  {compedCount} <span className="text-slate-400">/ {v.includedSeats}</span>
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Make / Model</div>
+                <div className="mt-0.5 text-[12.5px] font-semibold tracking-tight text-slate-900">{v.make} {v.model}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Year</div>
+                <div className="mt-0.5 font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">{v.year}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Label</div>
+                <div className="mt-0.5 truncate text-[12.5px] font-semibold tracking-tight text-slate-900">{v.label || "—"}</div>
+              </div>
+
+              {/* Requirements — OR / CR / Vehicle Photo. */}
+              <div className="col-span-3">
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Valid ID Photos</div>
+                <ul className="mt-1.5 space-y-1.5 text-[12px]">
+                  <RequirementRow label="Official Receipt (OR)" required uploaded={!!v.orUrl} previewUrl={v.orUrl} onPreview={() => v.orUrl && setPreview({ title: "Official Receipt (OR)", url: v.orUrl })} />
+                  <RequirementRow label="Certificate of Registration (CR)" required uploaded={!!v.crUrl} previewUrl={v.crUrl} onPreview={() => v.crUrl && setPreview({ title: "Certificate of Registration (CR)", url: v.crUrl })} />
+                  <RequirementRow label="Vehicle Photo" required={false} uploaded={!!v.photoUrl} previewUrl={v.photoUrl} onPreview={() => v.photoUrl && setPreview({ title: "Vehicle Photo", url: v.photoUrl })} />
+                </ul>
+              </div>
+            </div>
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
 
-      {/* Identity strip — Type · Plate · Included seats. */}
-      <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
-        <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Type</div>
-          <div className="mt-1 truncate text-[12.5px] font-semibold tracking-tight text-slate-900">{v.class}</div>
-        </div>
-        <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Plate No.</div>
-          <div className="mt-1 truncate font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] text-slate-900">{v.plateNumber}</div>
-        </div>
-        <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Free seats</div>
-          <div className="mt-1 font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">
-            {compedCount} <span className="text-slate-400">/ {v.includedSeats}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Vehicle spec strip — Make/Model · Year · Operator label. */}
-      <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
-        <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Make / Model</div>
-          <div className="mt-1 truncate text-[12.5px] font-semibold tracking-tight text-slate-900">{v.make} {v.model}</div>
-        </div>
-        <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Year</div>
-          <div className="mt-1 font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">{v.year}</div>
-        </div>
-        <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Label</div>
-          <div className="mt-1 truncate text-[12.5px] font-semibold tracking-tight text-slate-900">{v.label}</div>
-        </div>
-      </div>
-
-      {/* Vehicle ticket number — assigned at approval. */}
-      {v.ticketNumber && (
-        <div className="border-b border-slate-100 px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Vehicle ticket #</div>
-          <div className="mt-1 font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] text-slate-900">{v.ticketNumber}</div>
-        </div>
-      )}
-
-      {/* Requirements — ORCR is required, photo is optional. Each row's
-          status pill is clickable when an upload is on file; clicking opens
-          the preview dialog. */}
-      <div className="border-b border-slate-100 px-4 py-3">
-        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Requirements</div>
-        <ul className="mt-2 space-y-1.5 text-[12.5px]">
-          <RequirementRow
-            label="Official Receipt (OR)"
-            required
-            uploaded={!!v.orUrl}
-            previewUrl={v.orUrl}
-            onPreview={() => v.orUrl && setPreview({ title: "Official Receipt (OR)", url: v.orUrl })}
-          />
-          <RequirementRow
-            label="Certificate of Registration (CR)"
-            required
-            uploaded={!!v.crUrl}
-            previewUrl={v.crUrl}
-            onPreview={() => v.crUrl && setPreview({ title: "Certificate of Registration (CR)", url: v.crUrl })}
-          />
-          <RequirementRow
-            label="Vehicle Photo"
-            required={false}
-            uploaded={!!v.photoUrl}
-            previewUrl={v.photoUrl}
-            onPreview={() => v.photoUrl && setPreview({ title: "Vehicle Photo", url: v.photoUrl })}
-          />
-        </ul>
-      </div>
-
-
-      <DocumentPreviewDialog
-        doc={preview}
-        onClose={() => setPreview(null)}
-      />
+      <DocumentPreviewDialog doc={preview} onClose={() => setPreview(null)} />
     </div>
   );
 }
@@ -1547,7 +1537,6 @@ function DocumentPreviewDialog({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          onClick={onClose}
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 px-4 py-8"
         >
           <motion.div
@@ -1555,7 +1544,6 @@ function DocumentPreviewDialog({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 320, damping: 30, mass: 0.8 }}
-            onClick={(e) => e.stopPropagation()}
             className="relative max-h-[60vh] max-w-[60vw]"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}

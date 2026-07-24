@@ -129,18 +129,13 @@ function ComingSoonTab() {
   return (
     <section className="flex min-h-[360px] flex-col items-center justify-center rounded-2xl bg-white text-center ring-1 ring-slate-200/70">
       <span className="grid h-12 w-12 place-items-center rounded-full bg-brand-50 text-brand-500">
-        {/* Goofy face — winking eye + tongue out :P */}
+        {/* Clock — signals work that's on the way. */}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-7 w-7">
           <circle cx="12" cy="12" r="9" />
-          {/* left eye open, right eye winking */}
-          <path d="M8 10h.01" />
-          <path d="M14.5 10c.5-.6 1.5-.6 2 0" />
-          {/* mouth with tongue sticking out */}
-          <path d="M8 14.5c1 1 2.5 1.5 4 1.5" />
-          <path d="M12 16c.7 0 1.4.6 1.4 1.4 0 .8-.7 1.6-1.4 1.6s-1.4-.8-1.4-1.6" />
+          <path d="M12 7v5l3.5 2" />
         </svg>
       </span>
-      <p className="mt-3 text-[13.5px] font-medium text-slate-500">Coming soon hehe bleeeee :P</p>
+      <p className="mt-3 text-[13.5px] font-medium text-slate-500">Coming soon</p>
     </section>
   );
 }

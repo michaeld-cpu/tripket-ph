@@ -408,7 +408,7 @@ export default function RoutesPage() {
                   <th className="px-5 py-2.5 font-medium text-center">Active</th>
                   <th className="px-5 py-2.5 font-medium">Distance</th>
                   <th className="px-5 py-2.5 font-medium">Duration</th>
-                  <th className="sticky right-0 z-10 w-10 bg-slate-50 px-5 py-2.5 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)]" />
+                  <th className="sticky right-0 z-10 w-10 bg-slate-50/70 px-5 py-2.5 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] backdrop-blur-md" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -485,7 +485,7 @@ export default function RoutesPage() {
                       <span className="ml-1 text-[11px] text-slate-400">hrs avg</span>
                     </td>
                     <td
-                      className="sticky right-0 z-10 bg-white px-5 py-3 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] transition-colors duration-150 group-hover:bg-slate-50"
+                      className="sticky right-0 z-10 bg-white/70 px-5 py-3 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] backdrop-blur-md transition-colors duration-150 group-hover:bg-slate-50/70"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <RowMenu
