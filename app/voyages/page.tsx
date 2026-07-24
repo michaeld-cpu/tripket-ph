@@ -331,11 +331,12 @@ export default function VoyagesPage() {
   const sameSlot = (a: Voyage, b: Voyage) => slotKey(a) === slotKey(b);
 
   // Auto-saves status changes across every occurrence of the slot.
-  const updateVoyageStatus = (id: string, status: VoyageStatus) =>
+  // Remove a voyage's whole recurring slot from the calendar.
+  const removeVoyage = (id: string) =>
     setVoyages((prev) => {
       const target = prev.find((v) => v.id === id);
       if (!target) return prev;
-      return prev.map((v) => (sameSlot(v, target) ? { ...v, status } : v));
+      return prev.filter((v) => !sameSlot(v, target));
     });
 
   // ── Edit a schedule series ──
@@ -777,7 +778,7 @@ export default function VoyagesPage() {
         voyage={openVoyage}
         open={!!openVoyage}
         onClose={() => setOpenVoyageId(null)}
-        onStatusChange={updateVoyageStatus}
+        onRemove={(id) => { removeVoyage(id); setOpenVoyageId(null); }}
       />
 
       {/* Edit-schedule wizard — pre-filled from the series payload; saving
@@ -913,6 +914,14 @@ function VoyageCard({
       ? STATUS_CARD_TONE[voyage.status]
       : vesselTone(voyage.vesselName);
   const strike = voyage.status === "Cancelled";
+  // Short, stable display id derived from the (long) voyage id — reads "ID: 7".
+  const shortId = (() => {
+    let h = 2166136261;
+    for (let i = 0; i < voyage.id.length; i++) { h ^= voyage.id.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0) % 100;
+  })();
+  // A live (Scheduled) voyage reads as "Active"; other lifecycle states show as-is.
+  const statusLabel = voyage.status === "Scheduled" ? "Active" : voyage.status;
 
   return (
     <button
@@ -950,16 +959,20 @@ function VoyageCard({
       {/* Solid left accent stripe — colored per status. */}
       <span aria-hidden className={"pointer-events-none absolute inset-y-0 left-0 w-[3px] " + tone.accent} />
 
-      {/* Route — headline. */}
+      {/* ID + status caption. */}
+      <span className="truncate text-[10px] font-medium tracking-tight text-slate-500">
+        ID: {shortId} | {statusLabel}
+      </span>
+      {/* Route — headline, using origin/destination codes. */}
       <span
         className={
           "truncate text-[11.5px] font-bold tracking-tight " +
           `${tone.routeText} ${strike ? "line-through decoration-rose-400/70 " : ""}`
         }
       >
-        {voyage.originCity}
+        {voyage.originCode}
         <span className={"mx-1 " + tone.arrow} aria-hidden>→</span>
-        {voyage.destinationCity}
+        {voyage.destinationCode}
       </span>
       {/* Vessel — supporting caption. The whole card is tinted per vessel so
           stacked cards (same day+time, different vessels) read as distinct. */}
@@ -995,23 +1008,19 @@ function VoyageCard({
 // lifecycle reads at a glance there; the dialog itself stays calm.
 // ─────────── VoyageFooter ───────────
 // Footer for the voyage detail dialog. Owns the entire footer surface so the
-// confirm flows can transform the row in-place instead of stacking another
-// modal on top. The only lifecycle control is Enable/Disable — a voyage is
-// either active (Scheduled) or disabled (Cancelled); there's no free-form
-// status picker. States:
-//   • Idle           — a single Enable (green) or Disable (rose) button
-//   • Confirm        — full-row takeover: icon + question + Cancel / confirm.
-//                      Rose for disable, emerald for enable.
-// Reads as a focused micro-interaction rather than dialog-over-dialog.
+// confirm flow can transform the row in-place instead of stacking another
+// modal on top. The only lifecycle control is Remove — deleting the voyage
+// slot from the calendar. States:
+//   • Idle    — a single Remove (rose) button
+//   • Confirm — full-row takeover: icon + "are you sure" naming the day+time.
 function VoyageFooter({
   voyage,
-  onStatusChange,
+  onRemove,
 }: {
   voyage: Voyage;
-  onStatusChange: (id: string, next: VoyageStatus) => void;
+  onRemove: (id: string) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
-  const disabled = voyage.status === "Cancelled";
 
   useEffect(() => {
     if (!confirming) return;
@@ -1020,36 +1029,25 @@ function VoyageFooter({
     return () => document.removeEventListener("keydown", onKey);
   }, [confirming]);
 
+  // "Monday, 6:00 AM" — the voyage's weekday + departure time.
+  const WEEKDAY_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const weekday = WEEKDAY_LONG[(voyage.date.getDay() + 6) % 7];
+  const period = voyage.hour < 12 ? "AM" : "PM";
+  const h12 = ((voyage.hour + 11) % 12) + 1;
+  const slotLabel = `${weekday}, ${h12}:${String(voyage.minute).padStart(2, "0")} ${period}`;
+
   if (confirming) {
-    // Enable and disable share this confirm surface; the palette + copy flip
-    // on `disabled` (which reflects the current, pre-toggle state).
-    const enabling = disabled;
-    const next: VoyageStatus = enabling ? "Scheduled" : "Cancelled";
-    const tone = enabling
-      ? { border: "border-emerald-100", bg: "bg-emerald-50/40", chipBg: "bg-emerald-100", chipText: "text-emerald-600", cta: "bg-emerald-600 hover:bg-emerald-700" }
-      : { border: "border-rose-100", bg: "bg-rose-50/40", chipBg: "bg-rose-100", chipText: "text-rose-600", cta: "bg-rose-600 hover:bg-rose-700" };
     return (
-      <div className={`flex items-center gap-3 border-t ${tone.border} ${tone.bg} px-5 py-3`}>
-        <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${tone.chipBg} ${tone.chipText}`}>
-          {enabling ? (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-              <path d="M20 6L9 17l-5-5" />
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M5.6 5.6l12.8 12.8" />
-            </svg>
-          )}
+      <div className="flex items-center gap-3 border-t border-rose-100 bg-rose-50/40 px-5 py-3">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-rose-100 text-rose-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+            <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          </svg>
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-semibold tracking-tight text-slate-900">
-            {enabling ? "Confirm Enable Voyage?" : "Confirm Disable Voyage?"}
-          </div>
+          <div className="text-[13px] font-semibold tracking-tight text-slate-900">Remove this voyage?</div>
           <div className="mt-0.5 text-[11.5px] leading-snug text-slate-500">
-            {enabling
-              ? "Are you sure you want to enable this voyage? It will be bookable again."
-              : "Are you sure you want to disable this voyage? This action can be reversed later."}
+            Are you sure you want to remove <span className="font-medium text-slate-700">{slotLabel}</span>? This can&apos;t be undone.
           </div>
         </div>
         <button
@@ -1062,11 +1060,11 @@ function VoyageFooter({
         </button>
         <button
           type="button"
-          onClick={() => { setConfirming(false); onStatusChange(voyage.id, next); }}
-          className={`rounded-lg px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors ${tone.cta}`}
+          onClick={() => { setConfirming(false); onRemove(voyage.id); }}
+          className="rounded-lg bg-rose-600 px-3 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-rose-700"
           style={{ boxShadow: "none" }}
         >
-          {enabling ? "Enable Voyage" : "Disable Voyage"}
+          Remove
         </button>
       </div>
     );
@@ -1074,30 +1072,16 @@ function VoyageFooter({
 
   return (
     <div className="flex items-center justify-end gap-3 px-5 py-4">
-      {disabled ? (
-        <button
-          type="button"
-          onClick={() => setConfirming(true)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-emerald-700 transition-colors duration-150 hover:bg-emerald-50"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-            <path d="M20 6L9 17l-5-5" />
-          </svg>
-          Enable Voyage
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setConfirming(true)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-rose-600 transition-colors duration-150 hover:bg-rose-50"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M5.6 5.6l12.8 12.8" />
-          </svg>
-          Disable Voyage
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-rose-600 transition-colors duration-150 hover:bg-rose-50"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+        </svg>
+        Remove
+      </button>
     </div>
   );
 }
@@ -1106,12 +1090,12 @@ function VoyageDetailDialog({
   voyage,
   open,
   onClose,
-  onStatusChange,
+  onRemove,
 }: {
   voyage: Voyage | null;
   open: boolean;
   onClose: () => void;
-  onStatusChange: (id: string, status: VoyageStatus) => void;
+  onRemove: (id: string) => void;
 }) {
   // The dialog mirrors whichever line is currently active in the top-bar
   // switcher — voyages always read from the live context, never the stored
@@ -1278,7 +1262,7 @@ function VoyageDetailDialog({
 
         <VoyageFooter
           voyage={voyage}
-          onStatusChange={onStatusChange}
+          onRemove={onRemove}
         />
       </div>
     </Modal>

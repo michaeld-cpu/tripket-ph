@@ -20,7 +20,6 @@ const TOAST_LIFETIME = 2400;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  // Track active dismiss timers so we can reset them if the same toast fires again
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   const scheduleDismiss = useCallback((id: number) => {
