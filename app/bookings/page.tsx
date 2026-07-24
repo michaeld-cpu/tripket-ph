@@ -960,9 +960,18 @@ function BookingDetailDialog({
                   </div>
                   <div className="px-4 py-3">
                     <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Vehicle</div>
-                    <div className="mt-1 truncate text-[12.5px] font-semibold tracking-tight text-slate-900">
-                      {booking.vehicleClass ?? <span className="font-normal text-slate-300">—</span>}
-                    </div>
+                    {booking.vehicle ? (
+                      <>
+                        <div className="mt-1 truncate text-[12.5px] font-semibold tracking-tight text-slate-900">
+                          {booking.vehicle.make} {booking.vehicle.model}
+                        </div>
+                        <div className="mt-0.5 truncate text-[11px] text-slate-400">{booking.vehicle.class}</div>
+                      </>
+                    ) : (
+                      <div className="mt-1 truncate text-[12.5px] font-semibold tracking-tight text-slate-900">
+                        <span className="font-normal text-slate-300">—</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
