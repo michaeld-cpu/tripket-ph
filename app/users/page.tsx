@@ -8,7 +8,7 @@ export default function UsersPage() {
     <UserDirectory
       roles={["Admin", "Superadmin"]}
       title="Users"
-      subtitle="Admin & superadmin accounts"
+      subtitle="Admin accounts"
       tableHeading="Users"
       createLabel="Create admin"
       noun="users"
