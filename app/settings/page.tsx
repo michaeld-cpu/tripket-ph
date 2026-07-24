@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
+import RowMenu from "@/components/RowMenu";
 import SaveBar from "@/components/SaveBar";
 import {
   loadSettings,
@@ -23,10 +24,11 @@ import { useCurrentUser } from "@/components/UserContext";
 import { getLineStatus, setLineStatus, type LineStatus } from "@/lib/line-status";
 import SuspendLineDialog from "@/components/SuspendLineDialog";
 
-type TabId = "account" | "booking";
-const TABS: { id: TabId; label: string }[] = [
+type TabId = "account" | "booking" | "system";
+const TABS: { id: TabId; label: string; badge?: string }[] = [
   { id: "account", label: "Account" },
   { id: "booking", label: "Configurations" },
+  { id: "system", label: "System", badge: "GLOBAL" },
 ];
 
 export default function SettingsPage() {
@@ -51,18 +53,118 @@ export default function SettingsPage() {
                 (on ? "text-brand-600" : "text-slate-500 hover:text-slate-800")
               }
             >
-              {t.label}
+              <span className="inline-flex items-center gap-1.5">
+                {t.label}
+                {t.badge && (
+                  <span className="rounded-full border border-brand-200 bg-brand-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-brand-600">
+                    {t.badge}
+                  </span>
+                )}
+              </span>
               {on && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-brand-500" />}
             </button>
           );
         })}
       </div>
 
-      {tab === "booking" ? (
+      {tab === "system" ? (
+        <SystemTab />
+      ) : tab === "booking" ? (
         <BookingTab lineId={active.id} />
       ) : (
         <AccountTab line={active} />
       )}
+    </div>
+  );
+}
+
+// ─────────── System tab (global, read-only-ish settings registry) ───────────
+type SystemScope = "SYSTEM" | "APP" | "ADMIN";
+type SystemSetting = {
+  scope: SystemScope;
+  label: string;
+  description: string;
+  key: string;
+  value: string;
+  editable: boolean;
+};
+
+const SYSTEM_SETTINGS: SystemSetting[] = [
+  { scope: "SYSTEM", label: "Application Name", description: "The name displayed throughout the application.", key: "app.name", value: "Acme CMS", editable: true },
+  { scope: "SYSTEM", label: "Application URL", description: "Base URL of the application.", key: "app.url", value: "https://acme.test", editable: true },
+  { scope: "APP", label: "Maintenance Mode", description: "Enable or disable maintenance mode.", key: "app.maintenance", value: "1", editable: false },
+  { scope: "APP", label: "Default Language", description: "Default locale used by the application.", key: "app.locale", value: "en", editable: false },
+  { scope: "ADMIN", label: "Maximum Login Attempts", description: "Number of failed login attempts before locking a…", key: "auth.max_attempts", value: "5", editable: false },
+  { scope: "ADMIN", label: "Password Policy", description: "Password validation requirements.", key: "auth.password_policy", value: '{"minLength":12,"uppercase":true,"lowercase":true,"numbers":true,"symbols":true}', editable: false },
+  { scope: "SYSTEM", label: "PHP Version", description: "Current PHP runtime version.", key: "system.php_version", value: "8.3.6", editable: true },
+  { scope: "APP", label: "Allowed File Types", description: "Supported upload file extensions.", key: "files.allowed_types", value: '["jpg","png","pdf","docx"]', editable: false },
+  { scope: "ADMIN", label: "Session Timeout", description: "Session expiration time in minutes.", key: "session.timeout", value: "30", editable: false },
+  { scope: "SYSTEM", label: "Debug Mode", description: "Indicates whether debug mode is enabled.", key: "app.debug", value: "0", editable: true },
+];
+
+const scopeTone: Record<SystemScope, string> = {
+  SYSTEM: "bg-slate-100 text-slate-600",
+  APP: "bg-emerald-50 text-emerald-700",
+  ADMIN: "bg-sky-50 text-sky-700",
+};
+
+function SystemTab() {
+  return (
+    <div className="rounded-2xl bg-white p-6 shadow-[0_20px_40px_-24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold tracking-tight text-slate-900">System Settings</h2>
+          <p className="mt-0.5 text-[12.5px] text-slate-500">Manage and configure system-wide settings and administrative preferences.</p>
+        </div>
+        <button type="button" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-brand-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-brand-700 transition-colors hover:bg-brand-50">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M12 5v14M5 12h14" /></svg>
+          Add Setting
+        </button>
+      </div>
+
+      <div className="mt-4 overflow-x-auto" style={{ scrollbarGutter: "stable" }}>
+        <table className="w-full min-w-[900px] text-sm">
+          <thead>
+            <tr className="border-b border-slate-100 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
+              <th className="px-4 py-2.5 font-medium">Scope</th>
+              <th className="px-4 py-2.5 font-medium">Label</th>
+              <th className="px-4 py-2.5 font-medium">Description</th>
+              <th className="px-4 py-2.5 font-medium">Key</th>
+              <th className="px-4 py-2.5 font-medium">Value</th>
+              <th className="px-4 py-2.5 font-medium">Editable</th>
+              <th className="w-10 px-4 py-2.5 font-medium" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {SYSTEM_SETTINGS.map((s) => (
+              <tr key={s.key} className="align-top transition-colors hover:bg-slate-50/60">
+                <td className="px-4 py-3.5">
+                  <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${scopeTone[s.scope]}`}>{s.scope}</span>
+                </td>
+                <td className="px-4 py-3.5 text-[13px] font-semibold tracking-tight text-slate-900">{s.label}</td>
+                <td className="px-4 py-3.5 text-[12.5px] italic text-slate-400">{s.description}</td>
+                <td className="px-4 py-3.5 font-mono text-[12px] text-slate-600">{s.key}</td>
+                <td className="px-4 py-3.5 max-w-[280px] break-all font-mono text-[12px] text-slate-700">{s.value}</td>
+                <td className="px-4 py-3.5">
+                  <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${s.editable ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-600"}`}>
+                    {s.editable ? "Editable" : "Read only"}
+                  </span>
+                </td>
+                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                  <RowMenu
+                    ariaLabel={`Actions for ${s.label}`}
+                    items={[{
+                      label: "View setting",
+                      onClick: () => {},
+                      icon: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" /><circle cx="12" cy="12" r="3" /></svg>),
+                    }]}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

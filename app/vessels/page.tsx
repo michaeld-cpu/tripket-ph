@@ -84,6 +84,13 @@ function fmtDate(d: Date): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+// Short, stable display id derived from the (long) vessel id — reads "ID: 7".
+function shortVesselId(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) % 100;
+}
+
 function vesselInitials(name: string): string {
   // Strip "MV " prefix, take first letter of next 1-2 words
   const cleaned = name.replace(/^MV\.?\s+/i, "").trim();
@@ -301,26 +308,20 @@ export default function VesselsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-y border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
+                  <th className="px-5 py-2.5 font-medium">ID</th>
                   <th className="px-5 py-2.5 font-medium">IMO</th>
                   <th className="px-5 py-2.5 font-medium">Status</th>
                   <th className="px-5 py-2.5 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Vessel <SortIcon /></button>
                   </th>
                   <th className="px-5 py-2.5 font-medium">Type</th>
-                  <th className="px-5 py-2.5 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Passengers <SortIcon /></button>
-                  </th>
-                  <th className="px-5 py-2.5 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Vehicle slots <SortIcon /></button>
-                  </th>
-                  <th className="px-5 py-2.5 font-medium">Voyages</th>
                   <th className="w-10 px-5 py-2.5 font-medium" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={6} className="px-5 py-12 text-center text-sm text-slate-400">
                       No vessels match your filters.
                     </td>
                   </tr>
@@ -341,8 +342,11 @@ export default function VesselsPage() {
                       onClick={() => router.push(`/vessels/${v.id}`)}
                       className="group relative cursor-pointer transition-colors duration-150 ease-out hover:bg-slate-50/60"
                     >
-                      <td className="relative px-5 py-3.5 align-middle" onClick={(e) => e.stopPropagation()}>
+                      <td className="relative px-5 py-3.5 align-middle font-mono text-[13px] tabular-nums text-slate-500">
                         <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
+                        {shortVesselId(v.id)}
+                      </td>
+                      <td className="px-5 py-3.5 align-middle" onClick={(e) => e.stopPropagation()}>
                         <div className="inline-flex items-center gap-1.5">
                           {v.imo ? (
                             <>
@@ -393,49 +397,6 @@ export default function VesselsPage() {
                       </td>
                       <td className="px-5 py-3.5 align-middle">
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${typeTone[v.type]}`}>{v.type}</span>
-                      </td>
-                      <td className="px-5 py-3.5 align-middle tabular-nums">
-                        <span className="font-semibold text-slate-900">{v.passengers.toLocaleString()}</span>
-                        <span className="ml-1 text-[11px] text-slate-400">pax</span>
-                      </td>
-                      <td className="px-5 py-3.5 align-middle tabular-nums">
-                        <span className="font-semibold text-slate-900">{v.vehicleSlots}</span>
-                        <span className="ml-1 text-[11px] text-slate-400">slots</span>
-                      </td>
-                      <td className="px-5 py-3.5 align-middle">
-                        {(() => {
-                          const { last, next } = vesselVoyages(v.id);
-                          const rel = relativeLabel(next.date);
-                          const imminent = daysBetween(next.date, TODAY) <= 1;
-                          return (
-                            <div className="leading-tight">
-                              <div className="flex items-baseline gap-2">
-                                <span className="w-7 shrink-0 text-[9.5px] font-semibold uppercase tracking-[0.1em] text-emerald-600">Next</span>
-                                <span className="font-mono text-[12.5px] font-medium tabular-nums tracking-tight text-slate-900">
-                                  {next.from}
-                                  <span className="px-0.5 text-slate-300">→</span>
-                                  {next.to}
-                                </span>
-                                <Tooltip content={next.date.toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric", year: "numeric" })}>
-                                  <span className={`text-[11px] ${imminent ? "font-medium text-emerald-700" : "text-slate-500"}`}>
-                                    {rel}
-                                  </span>
-                                </Tooltip>
-                              </div>
-                              <div className="mt-0.5 flex items-baseline gap-2 text-[11px] text-slate-400">
-                                <span className="w-7 shrink-0 text-[9.5px] font-medium uppercase tracking-[0.1em] text-slate-300">Last</span>
-                                <span className="font-mono tabular-nums">
-                                  {last.from}
-                                  <span className="px-0.5 text-slate-300">→</span>
-                                  {last.to}
-                                </span>
-                                <Tooltip content={last.date.toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric", year: "numeric" })} side="bottom">
-                                  <span>{fmtDate(last.date)}</span>
-                                </Tooltip>
-                              </div>
-                            </div>
-                          );
-                        })()}
                       </td>
                       <td className="px-5 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
                         <RowMenu

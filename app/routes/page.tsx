@@ -492,7 +492,7 @@ export default function RoutesPage() {
                         ariaLabel={`Actions for ${r.origin.name ?? r.origin.city} → ${r.destination.name ?? r.destination.city}`}
                         items={[
                           {
-                            label: "Set actual departure",
+                            label: "Mark Departed",
                             // Only meaningful while still Scheduled.
                             disabled: r.status !== "Scheduled",
                             onClick: () => setDepartRoute(r),

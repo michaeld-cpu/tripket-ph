@@ -155,19 +155,10 @@ export default function CreateScheduleModal({
   const vesselFleetValid = vessel.mode === "fleet" && vessel.fleetVesselId !== "";
   const isPassengerOnlyVessel =
     vessel.type === "Fast Craft" || vessel.type === "Passenger Ship";
-  const enabledAccoms = vessel.accommodations.filter((a) => a.enabled);
-  // Sub-step 1 (Identity) only needs a name + type.
-  const vesselNewIdentityValid =
-    vessel.mode === "new" && vessel.name.trim() !== "" && !!vessel.type;
-  // Sub-step 2 (Capacity & fares) needs ≥1 tier, each with seats + fare.
-  // Vehicle deck capacity is derived from each class's quantity, not a field.
-  const vesselNewCapacityValid =
-    enabledAccoms.length > 0 &&
-    enabledAccoms.every((a) => (a.capacity || 0) > 0 && (a.fare || 0) > 0);
-  // Gate the embedded sub-wizard per sub-step so Continue can't skip ahead.
-  const subStepForGate: 1 | 2 | 3 = vessel.newSubStep ?? 1;
+  // Registering a new vessel captures identity only (name + type); capacity
+  // and fares are configured later from the Vessels page.
   const vesselNewValid =
-    vesselNewIdentityValid && (subStepForGate < 2 || vesselNewCapacityValid);
+    vessel.mode === "new" && vessel.name.trim() !== "" && !!vessel.type;
   const vesselValid = vessel.mode === "fleet" ? vesselFleetValid : vesselNewValid;
 
   // Fares step needs a base fare set.
@@ -182,13 +173,7 @@ export default function CreateScheduleModal({
   };
   const continueDisabled = !stepValid[step.id];
 
-  const inNewVesselFlow = step.id === "vessel" && vessel.mode === "new";
-  const subStep: 1 | 2 | 3 = vessel.newSubStep ?? 1;
   const goNext = () => {
-    if (inNewVesselFlow && subStep < 3) {
-      setVessel({ ...vessel, newSubStep: (subStep + 1) as 1 | 2 | 3 });
-      return;
-    }
     if (isLast) {
       if (vessel.mode === "new") {
         const lineId = vessel.lineId || active.id;
@@ -225,10 +210,6 @@ export default function CreateScheduleModal({
     setStepIdx((i) => Math.min(STEPS.length - 1, i + 1));
   };
   const goBack = () => {
-    if (inNewVesselFlow && subStep > 1) {
-      setVessel({ ...vessel, newSubStep: (subStep - 1) as 1 | 2 | 3 });
-      return;
-    }
     setStepIdx((i) => Math.max(0, i - 1));
   };
 

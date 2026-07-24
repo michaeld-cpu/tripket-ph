@@ -388,7 +388,6 @@ export default function BookingsPage() {
                   <th className="whitespace-nowrap px-6 py-3 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Pax <SortIcon /></button>
                   </th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">Vehicle</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Departure <SortIcon /></button>
                   </th>
@@ -468,13 +467,6 @@ export default function BookingsPage() {
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
                       <span className="font-mono text-[13px] font-semibold tabular-nums text-slate-900">{b.pax}</span>
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 align-middle">
-                      {b.vehicleClass ? (
-                        <span className="text-[12.5px] font-medium tracking-tight text-slate-700">{b.vehicleClass}</span>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle whitespace-nowrap text-[13px] font-semibold tracking-tight text-slate-900">
                       {fmtDepartureDate(b.departureDate)}

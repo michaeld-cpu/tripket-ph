@@ -263,7 +263,7 @@ export default function TicketsPage() {
 
   return (
     <div>
-      <PageHeader title="Tickets" subtitle={active.name} showDateFilter={false} />
+      <PageHeader title="Passenger Tickets" subtitle={active.name} showDateFilter={false} />
 
       {!bookings ? (
         <TableSkeleton rows={8} />

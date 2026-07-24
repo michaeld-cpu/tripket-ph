@@ -14,6 +14,11 @@ type SelectProps<T extends string> = {
   ariaLabel?: string;
   className?: string;
   size?: "sm" | "md";
+  /** When true, the trigger is read-only (can't open). */
+  disabled?: boolean;
+  /** Text shown (italic, muted) when `value` matches no option — an
+   *  unselected/empty state, e.g. "Select Accommodation Fare". */
+  placeholder?: string;
   /** Render the option menu inline (absolutely positioned within the trigger's
    *  wrapper) instead of portaling it to <body>. Use inside a scrollable modal
    *  so the menu scrolls with the dialog body rather than floating over the
@@ -32,6 +37,8 @@ export default function Select<T extends string>({
   ariaLabel = "Select",
   className = "",
   size = "md",
+  disabled = false,
+  placeholder,
   inline = false,
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
@@ -151,14 +158,21 @@ export default function Select<T extends string>({
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen(o => !o)}
-        className={`flex w-full items-center justify-between gap-2 rounded-lg border bg-white text-left text-sm transition-colors ${padding} ${
-          open
-            ? "border-gray-300 ring-2 ring-brand-100"
-            : "border-gray-200 hover:border-gray-300 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-100"
+        disabled={disabled}
+        onClick={() => { if (!disabled) setOpen(o => !o); }}
+        className={`flex w-full items-center justify-between gap-2 rounded-lg border text-left text-sm transition-colors ${padding} ${
+          disabled
+            ? "cursor-not-allowed border-gray-200 bg-slate-50 opacity-70"
+            : open
+              ? "border-gray-300 bg-white ring-2 ring-brand-100"
+              : "border-gray-200 bg-white hover:border-gray-300 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-100"
         }`}
       >
-        <span className="truncate text-gray-900">{current?.label ?? ariaLabel}</span>
+        {current ? (
+          <span className="truncate text-gray-900">{current.label}</span>
+        ) : (
+          <span className="truncate italic text-gray-400">{placeholder ?? ariaLabel}</span>
+        )}
         <svg
           viewBox="0 0 24 24"
           fill="none"

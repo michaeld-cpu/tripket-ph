@@ -286,6 +286,9 @@ export default function VoyagesPage() {
             fareLines: loose.fareLines ?? [],
             lineId: loose.lineId ?? "",
             status: loose.status ?? "Scheduled",
+            // Schedule labels were removed from the wizard — drop any stale ones
+            // persisted on older voyages so cards don't show them.
+            scheduleLabel: undefined,
           };
         }));
       }
@@ -1107,11 +1110,11 @@ function VoyageDetailDialog({
   const period = voyage.hour < 12 ? "AM" : "PM";
   const h12 = ((voyage.hour + 11) % 12) + 1;
   const timeLabel = `${h12}:${String(voyage.minute).padStart(2, "0")} ${period}`;
-  const dateLabel = voyage.date.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
+  // Weekday only — the recurring slot is what identifies the voyage once it's
+  // active, so the full calendar date is dropped from the itinerary line and
+  // the weekday is surfaced up in the status band instead.
+  const weekdayLabel = voyage.date.toLocaleDateString("en-US", {
+    weekday: "long",
   });
   const vesselLine = [
     voyage.vesselName,
@@ -1168,20 +1171,19 @@ function VoyageDetailDialog({
           const frameBg = isActiveTone
             ? "radial-gradient(140% 80% at 100% 0%, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 55%), linear-gradient(180deg, #fed7aa 0%, #fdba74 60%, #fb923c 100%)"
             : "radial-gradient(140% 80% at 100% 0%, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 55%), linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)";
-          const dotCls = isActiveTone ? "bg-brand-600" : "bg-slate-400";
           const statusTextCls = isActiveTone ? "text-brand-700" : "text-slate-500";
-          const statusBandLabel = voyage.status === "Departed" ? "In Transit" : voyage.status;
           return (
             <div className="px-5 pb-4">
               <article
                 className="relative overflow-hidden rounded-2xl p-2"
                 style={{ backgroundImage: frameBg }}
               >
-                {/* Status band */}
+                {/* Day band — weekday + departure time (status shown elsewhere). */}
                 <div className="flex items-center justify-center px-3 pt-1.5 pb-2.5">
                   <span className={`inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] ${statusTextCls}`}>
-                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${dotCls}`} />
-                    {statusBandLabel}
+                    {weekdayLabel}
+                    <span className="opacity-40">·</span>
+                    <span className="font-mono tabular-nums">{timeLabel}</span>
                   </span>
                 </div>
 
@@ -1189,9 +1191,10 @@ function VoyageDetailDialog({
                 <div className="rounded-xl bg-white px-5 py-4">
                   <div className="flex items-center justify-center gap-3">
                     <div className="min-w-0 text-center">
-                      <div className="truncate text-[18px] font-bold tracking-tight text-slate-900">
-                        {voyage.originCity}
+                      <div className="truncate font-mono text-[22px] font-bold uppercase tabular-nums tracking-[0.06em] text-slate-900">
+                        {voyage.originCode}
                       </div>
+                      <div className="mt-0.5 truncate text-[11px] text-slate-500">{voyage.originCity}</div>
                     </div>
                     <DashedArrow />
                     <div className="flex flex-col items-center gap-1">
@@ -1202,16 +1205,13 @@ function VoyageDetailDialog({
                     </div>
                     <DashedArrow />
                     <div className="min-w-0 text-center">
-                      <div className="truncate text-[18px] font-bold tracking-tight text-slate-900">
-                        {voyage.destinationCity}
+                      <div className="truncate font-mono text-[22px] font-bold uppercase tabular-nums tracking-[0.06em] text-slate-900">
+                        {voyage.destinationCode}
                       </div>
+                      <div className="mt-0.5 truncate text-[11px] text-slate-500">{voyage.destinationCity}</div>
                     </div>
                   </div>
                   <p className="mt-3 truncate text-center text-[11.5px] text-slate-500">
-                    <span>{dateLabel}</span>
-                    <span className="mx-1.5 text-slate-300">·</span>
-                    <span className="font-mono tabular-nums">{timeLabel}</span>
-                    <span className="mx-1.5 text-slate-300">·</span>
                     <span className="font-mono tabular-nums">ETA {etaLabel}</span>
                   </p>
                 </div>

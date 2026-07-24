@@ -57,8 +57,6 @@ const DAY_PRESETS: { id: string; label: string; days: DayKey[] }[] = [
   { id: "daily",    label: "Daily",     days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] },
 ];
 
-const inputCls =
-  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] tabular-nums text-slate-900 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-100";
 
 function fmtHourLabel(h: number): string {
   const period = h < 12 ? "AM" : "PM";
@@ -207,24 +205,6 @@ export default function ScheduleStep({
             The server will automatically generate voyages for the next 30 days based on the weekdays and times you pick below.
           </span>
         </div>
-      </div>
-
-      {/* Schedule label — optional operator-friendly name (e.g. "Schedule A"). */}
-      <div>
-        <div className="mb-1.5 flex items-baseline justify-between gap-3">
-          <label className="text-[11.5px] font-medium uppercase tracking-[0.08em] text-slate-500">
-            Schedule label <span className="text-slate-400 normal-case tracking-normal">(Optional)</span>
-          </label>
-          <span className="text-[11px] text-slate-400">Shown on each voyage card.</span>
-        </div>
-        <input
-          type="text"
-          value={value.label ?? ""}
-          onChange={(e) => onChange({ ...value, label: e.target.value })}
-          placeholder="e.g. Schedule A"
-          maxLength={32}
-          className={inputCls}
-        />
       </div>
 
       {/* Quick weekday presets */}

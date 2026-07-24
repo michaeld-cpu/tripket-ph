@@ -57,6 +57,22 @@ const TicketsIcon = ({ className }: IconProps) => (
   </svg>
 );
 
+const PassengersIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="9" cy="8" r="3" />
+    <path d="M4 20c0-2.8 2.2-5 5-5s5 2.2 5 5" />
+    <path d="M17 8h4M17 12h4M17 16h3" />
+  </svg>
+);
+
+const VehiclesIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 13l2-5a2 2 0 0 1 1.9-1.3h10.2A2 2 0 0 1 19 8l2 5" />
+    <path d="M3 13h18v4a1 1 0 0 1-1 1h-1a2 2 0 0 1-4 0H9a2 2 0 0 1-4 0H4a1 1 0 0 1-1-1v-4Z" />
+    <path d="M6.5 15.5h.01M17.5 15.5h.01" />
+  </svg>
+);
+
 const AuditIcon = ({ className }: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z" />
@@ -130,6 +146,17 @@ type NavEntry = NavLeaf | NavGroup;
 // Nav is role-aware: the Security group (Users + Audit logs) is platform-level
 // governance and shows only for admins. Operators get the line-scoped set.
 function buildNavEntries(role: "admin" | "operator"): (NavEntry | { kind: "divider" })[] {
+  const ticketsGroup: NavEntry = {
+    kind: "group",
+    basePath: "/tickets",
+    label: "Tickets",
+    Icon: TicketsIcon,
+    children: [
+      { kind: "leaf", href: "/tickets/passengers", label: "Passengers", Icon: PassengersIcon },
+      { kind: "leaf", href: "/tickets/vehicles",   label: "Vehicles",   Icon: VehiclesIcon },
+    ],
+  };
+
   const securityGroup: NavEntry = {
     kind: "group",
     basePath: "/security",
@@ -151,7 +178,7 @@ function buildNavEntries(role: "admin" | "operator"): (NavEntry | { kind: "divid
     { kind: "leaf", href: "/routes",   label: "Routes",    Icon: RouteIcon },
     { kind: "leaf", href: "/vessels",  label: "Vessels",   Icon: FerryIcon },
     { kind: "leaf", href: "/bookings", label: "Bookings",  Icon: TicketIcon },
-    { kind: "leaf", href: "/tickets",  label: "Tickets",   Icon: TicketsIcon },
+    ticketsGroup,
     { kind: "leaf", href: "/reports",  label: "Reports",   Icon: ReportsIcon },
 
     ...(role === "admin" ? [securityGroup] : []),

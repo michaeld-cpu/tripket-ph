@@ -1,12 +1,9 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Step3Review as VesselReviewStep, defaultAccommodations } from "@/components/AddVesselModal";
-import { passengerOnlyTypes } from "@/components/VesselFormBody";
+import { useEffect, useMemo, useState } from "react";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import LinePicker from "@/components/LinePicker";
 import type { VehicleClass, PassengerType, AddOn, AccommodationClass, Vessel } from "@/lib/dashboard-data";
 import { loadStore } from "@/lib/persisted-store";
-import VesselCatalogStep from "@/components/vessel-extras/VesselCatalogStep";
 
 /**
  * Vessel step — third stop of the Create-Schedule wizard.
@@ -124,15 +121,6 @@ export function vesselHasVehicleDeck(t: VesselType): boolean {
   return !PASSENGER_ONLY_VESSEL_TYPES.includes(t);
 }
 
-// Sub-steps inside the wizard's "Register new" mode mirror AddVesselModal's
-// three steps so creating a vessel mid-schedule is identical to creating one
-// from the standalone Vessels page.
-const NEW_SUB_STEPS = [
-  { id: 1 as const, label: "Identity",        caption: "Basic vessel details" },
-  { id: 2 as const, label: "Capacity & fares", caption: "Accommodation, capacity, classes & fares" },
-  { id: 3 as const, label: "Review",          caption: "Confirm vessel registration" },
-];
-
 export default function VesselStep({
   value,
   onChange,
@@ -155,19 +143,9 @@ export default function VesselStep({
   }, [active.id]);
   const picked = useMemo(() => fleet.find((v) => v.id === value.fleetVesselId) ?? null, [fleet, value.fleetVesselId]);
 
-  // Sub-step is driven by the outer wizard's footer (single Back/Continue pair),
-  // so we read/write it from `value` rather than holding local state. Fall back
-  // to 1 if the persisted shape is older and lacks the field.
-  const newSubStep: 1 | 2 | 3 = value.newSubStep ?? 1;
-  const setNewSubStep = (s: 1 | 2 | 3) => onChange({ ...value, newSubStep: s });
-  const isPassengerOnly = passengerOnlyTypes.includes(value.type);
-
-  // Convenience setters for AddVesselModal's sub-component callbacks.
-  const setVehicleClasses = (v: VehicleClass[]) => onChange({ ...value, vehicleClasses: v });
-  const setPassengerTypes = (v: PassengerType[]) => onChange({ ...value, passengerTypes: v });
-  const setAddOns = (v: AddOn[]) => onChange({ ...value, addOns: v });
-  const setAccommodations = (v: AccommodationClass[]) => onChange({ ...value, accommodations: v });
-  // Passenger capacity is the chosen accommodation tier's seats (single-choice).
+  // Passenger capacity from any pre-seeded accommodation tiers — used only by
+  // the draft summary pill (capacity itself is configured later on the Vessels
+  // page, so this is 0 for a freshly registered vessel).
   const totalPassengers = (value.accommodations ?? [])
     .filter((a) => a.enabled)
     .reduce((sum, a) => sum + (a.capacity || 0), 0);
@@ -203,111 +181,20 @@ export default function VesselStep({
           />
         </div>
       ) : (
-        // ── Embedded vessel-creation wizard ──
-        // Sub-steps + content + sub-footer all sit inside the outer wizard's
-        // step 3 body. Identical UX to AddVesselModal, so an operator who's
-        // used the Vessels page recognises it immediately.
-        <div className="space-y-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+        // ── Embedded vessel-creation form ──
+        // Single Identity form (name, type, IMO, status) — no sub-stepper.
+        // Registering a vessel mid-schedule captures just the basics; capacity
+        // and fares are configured later from the Vessels page.
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <ModeToggle
             mode={value.mode}
             onChange={(mode) => onChange({ ...value, mode })}
             fleetCount={fleet.length}
           />
-          {/* Sub-stepper — quietly distinct from the outer stepper (smaller, no border). */}
-          <div className="flex items-center gap-2 px-4 pt-3.5">
-            {NEW_SUB_STEPS.map((s, i) => {
-              const done = newSubStep > s.id;
-              const active = newSubStep === s.id;
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => {
-                    // Only let users jump back to completed sub-steps, not forward.
-                    if (s.id <= newSubStep) setNewSubStep(s.id);
-                  }}
-                  className="group flex flex-1 items-center gap-2 text-left"
-                  aria-current={active ? "step" : undefined}
-                >
-                  <span
-                    className={
-                      "grid h-5 w-5 shrink-0 place-items-center rounded-full text-[10px] font-semibold transition-colors " +
-                      (done
-                        ? "bg-brand-500 text-white"
-                        : active
-                          ? "bg-white text-brand-700 ring-2 ring-brand-500"
-                          : "bg-white text-slate-400 ring-1 ring-slate-200")
-                    }
-                  >
-                    {done ? (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
-                        <path d="M5 12l5 5L20 7" />
-                      </svg>
-                    ) : (
-                      s.id
-                    )}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className={"truncate text-[11.5px] font-semibold tracking-tight " + (active ? "text-slate-900" : done ? "text-slate-600" : "text-slate-400")}>
-                      {s.label}
-                    </div>
-                    <div className="truncate text-[10px] leading-tight text-slate-400">{s.caption}</div>
-                  </div>
-                  {i < NEW_SUB_STEPS.length - 1 && (
-                    <span aria-hidden className="hidden h-px w-3 bg-slate-200 sm:block" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
 
           <div className="border-t border-slate-100" />
 
-          {/* Sub-step body */}
-          {newSubStep === 1 && (
-            <IdentitySubStep value={value} onChange={onChange} />
-          )}
-
-          {newSubStep === 2 && (
-            <div className="-mt-1 max-h-[60vh] overflow-y-auto">
-              <VesselCatalogStep
-                isPassengerOnly={isPassengerOnly}
-                accommodations={value.accommodations}
-                setAccommodations={setAccommodations}
-                totalPassengers={totalPassengers}
-                vehicleSlots={value.vehicleSlots}
-                setVehicleSlots={(next: string) => onChange({ ...value, vehicleSlots: next })}
-                vehicleClasses={value.vehicleClasses}
-                setVehicleClasses={setVehicleClasses}
-                passengerTypes={value.passengerTypes}
-                setPassengerTypes={setPassengerTypes}
-                addOns={value.addOns}
-                setAddOns={setAddOns}
-              />
-            </div>
-          )}
-
-          {newSubStep === 3 && (
-            <div className="-mt-1 max-h-[60vh] overflow-y-auto">
-              <VesselReviewStep
-                values={{
-                  name: value.name,
-                  type: value.type,
-                  imo: value.imoNumber,
-                  vehicleSlots: value.vehicleSlots,
-                  status: value.status,
-                }}
-                isPassengerOnly={isPassengerOnly}
-                accommodations={value.accommodations}
-                vehicleSlots={value.vehicleSlots}
-                vehicleClasses={value.vehicleClasses}
-                passengerTypes={value.passengerTypes}
-                addOns={value.addOns}
-                onEditStep={(s) => setNewSubStep(s)}
-              />
-            </div>
-          )}
-
+          <IdentitySubStep value={value} onChange={onChange} />
         </div>
       )}
 
@@ -585,20 +472,9 @@ function FleetPicker({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="truncate text-[13.5px] font-semibold tracking-tight text-slate-900">{v.name}</div>
-                  {/* Single-line meta — short type label + capacity stats. The
-                      previous chip wrapper around the full type label forced
-                      line breaks when the card was narrow; this version stays
-                      one line and truncates gracefully. */}
+                  {/* Single-line meta — short type label only. */}
                   <div className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] text-slate-500">
                     <span className="font-medium text-slate-600">{vesselTypeShort(v.type)}</span>
-                    <span className="text-slate-300">·</span>
-                    <span className="tabular-nums">{v.passengerCapacity} pax</span>
-                    {v.vehicleSlots > 0 && (
-                      <>
-                        <span className="text-slate-300">·</span>
-                        <span className="tabular-nums">{v.vehicleSlots} slots</span>
-                      </>
-                    )}
                   </div>
                 </div>
                 <span
@@ -635,8 +511,6 @@ function VesselSummaryPill({ vessel, draft = false }: { vessel: FleetVessel; dra
         <span className="font-semibold text-slate-900">{vessel.name}</span>
         <span className="text-slate-500">
           {" · "}{vesselTypeLabel(vessel.type)}
-          {vessel.passengerCapacity > 0 && <> · <span className="font-mono tabular-nums">{vessel.passengerCapacity}</span> pax</>}
-          {vessel.vehicleSlots > 0 && <> · <span className="font-mono tabular-nums">{vessel.vehicleSlots}</span> slots</>}
         </span>
       </span>
       {draft && (

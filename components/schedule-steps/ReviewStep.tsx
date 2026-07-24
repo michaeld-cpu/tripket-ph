@@ -5,9 +5,7 @@ import type { RoutesValue, Port } from "@/components/schedule-steps/RoutesStep";
 import { PORTS, findPort } from "@/components/schedule-steps/RoutesStep";
 import type { VesselValue, FleetVessel } from "@/components/schedule-steps/VesselStep";
 import type { FaresValue } from "@/components/schedule-steps/FaresStep";
-import { useShippingLine } from "@/components/ShippingLineContext";
 import { useCustomPorts } from "@/lib/custom-ports";
-import VoyageCard from "@/components/VoyageCard";
 
 /**
  * Review step — final stop of the Create-Schedule wizard.
@@ -48,7 +46,6 @@ export default function ReviewStep({
   fleet: FleetVessel[];
   onEdit: (stepIdx: number) => void;
 }) {
-  const { active: activeLine } = useShippingLine();
   // ── Cross-step lookups ──
   const customPorts = useCustomPorts();
   const allPorts = useMemo(() => [...PORTS, ...customPorts], [customPorts]);
@@ -204,34 +201,6 @@ export default function ReviewStep({
           }
         }
       `}</style>
-
-      {/* ─── Hero summary — shared VoyageCard for a unified preview look ─── */}
-      {origin && destination && vesselName ? (
-        <VoyageCard
-          tone="active"
-          statusLabel="Weekly Schedule"
-          vesselName={vesselName}
-          vesselType={vesselType ?? ""}
-          lineName={activeLine.name}
-          dateLabel={new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", weekday: "long", year: "numeric" })}
-          fromCode={origin.code}
-          fromCity={origin.city}
-          fromTime={formatTime(sampleDepartureTime) || "—"}
-          toCode={destination.code}
-          toCity={destination.city}
-          toTime={eta ?? "—"}
-          durationLabel={
-            routes.durationLowHrs && routes.durationHighHrs
-              ? `${routes.durationLowHrs}–${routes.durationHighHrs} HRS`
-              : `${tripsTotal} VOYAGES`
-          }
-          progress={0}
-        />
-      ) : (
-        <div className="grid place-items-center rounded-2xl border border-dashed border-slate-300 bg-slate-50/40 px-5 py-10 text-[12.5px] font-medium text-slate-400">
-          Route or vessel not set yet.
-        </div>
-      )}
 
       {/* ─── Single-column timeline ───
          Four sections stack vertically with hairline dividers between them.

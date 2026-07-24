@@ -36,7 +36,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     // Replace mode — only ever one toast visible at a time. Each new call replaces
     // whatever is on screen so rapid-fire actions (multiple copies, etc.) never stack.
     const id = nextId++;
-    // Clear any pending dismiss timers from the previous toast
     timers.current.forEach(clearTimeout);
     timers.current.clear();
     setToasts([{ id, message, variant }]);
