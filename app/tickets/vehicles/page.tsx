@@ -31,6 +31,8 @@ type VehicleRow = {
   vehicleClass: string;
   vehicleLabel: string;
   plateNumber: string;
+  make: string;
+  model: string;
   status: Booking["status"];
   routeOriginCode: string;
   routeDestinationCode: string;
@@ -52,6 +54,8 @@ function flattenVehicles(bookings: Booking[]): VehicleRow[] {
       vehicleClass: b.vehicle!.class,
       vehicleLabel: b.vehicle!.label,
       plateNumber: b.vehicle!.plateNumber,
+      make: b.vehicle!.make,
+      model: b.vehicle!.model,
       status: b.status,
       routeOriginCode: b.routeOriginCode,
       routeDestinationCode: b.routeDestinationCode,
@@ -159,7 +163,7 @@ export default function VehicleTicketsPage() {
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Booking ref</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Route</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Departure</th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">Class</th>
+                  <th className="whitespace-nowrap px-6 py-3 font-medium">Vehicle &amp; class</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Amount</th>
                   <th className="sticky right-0 z-10 w-10 bg-slate-50 px-6 py-3 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)]" />
                 </tr>
@@ -205,18 +209,25 @@ export default function VehicleTicketsPage() {
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
-                      <div className="inline-flex items-baseline gap-1.5 text-[13px] font-medium tracking-tight text-slate-900">
-                        <span>{r.routeOriginCode}</span>
-                        <span className="text-[10.5px] text-slate-400">({r.routeOriginCity})</span>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 shrink-0 text-slate-300"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-                        <span>{r.routeDestinationCode}</span>
-                        <span className="text-[10.5px] text-slate-400">({r.routeDestinationCity})</span>
+                      <div className="flex items-center gap-2.5">
+                        <div>
+                          <div className="text-[13px] font-bold tracking-tight text-slate-900">{r.routeOriginCode}</div>
+                          <div className="mt-0.5 text-[11px] text-slate-400">({r.routeOriginCity})</div>
+                        </div>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0 text-slate-300"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                        <div>
+                          <div className="text-[13px] font-bold tracking-tight text-slate-900">{r.routeDestinationCode}</div>
+                          <div className="mt-0.5 text-[11px] text-slate-400">({r.routeDestinationCity})</div>
+                        </div>
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle text-[13px] font-semibold tracking-tight text-slate-900">
                       {fmtDate(r.departureDate)}<span className="ml-1.5 font-mono font-medium tabular-nums text-slate-600">{fmtTime(r.departureDate)}</span>
                     </td>
-                    <td className="whitespace-nowrap px-6 py-4 align-middle text-[12.5px] font-medium tracking-tight text-slate-700">{r.vehicleClass}</td>
+                    <td className="whitespace-nowrap px-6 py-4 align-middle">
+                      <div className="text-[13px] font-semibold tracking-tight text-slate-900">{r.make} {r.model}</div>
+                      <div className="mt-0.5 text-[11px] text-slate-400">{r.vehicleClass}</div>
+                    </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">₱{r.amount.toLocaleString()}</td>
                     <td className="sticky right-0 z-10 whitespace-nowrap bg-white px-6 py-4 align-middle shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] transition-colors group-hover:bg-slate-50" onClick={(e) => e.stopPropagation()}>
                       <RowMenu

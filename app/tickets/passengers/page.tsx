@@ -403,14 +403,18 @@ export default function TicketsPage() {
                         </div>
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 align-middle">
-                        <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap text-[13px] font-medium tracking-tight text-slate-900">
-                          <span>{r.routeOriginCity}</span>
-                          <span className="font-mono text-[10.5px] tabular-nums text-slate-400">({r.routeOriginCode})</span>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 shrink-0 text-slate-300">
+                        <div className="flex items-center gap-2.5">
+                          <div>
+                            <div className="text-[13px] font-bold tracking-tight text-slate-900">{r.routeOriginCode}</div>
+                            <div className="mt-0.5 text-[11px] text-slate-400">({r.routeOriginCity})</div>
+                          </div>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0 text-slate-300">
                             <path d="M5 12h14M13 6l6 6-6 6" />
                           </svg>
-                          <span>{r.routeDestinationCity}</span>
-                          <span className="font-mono text-[10.5px] tabular-nums text-slate-400">({r.routeDestinationCode})</span>
+                          <div>
+                            <div className="text-[13px] font-bold tracking-tight text-slate-900">{r.routeDestinationCode}</div>
+                            <div className="mt-0.5 text-[11px] text-slate-400">({r.routeDestinationCity})</div>
+                          </div>
                         </div>
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 align-middle text-[13px] font-semibold tracking-tight text-slate-900">
