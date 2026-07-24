@@ -7,6 +7,7 @@ import DateRangePicker, { type DateRange } from "@/components/DateRangePicker";
 import CountUp from "@/components/CountUp";
 import {
   deriveBookings,
+  makePaymentDetails,
   statusLabel,
   statusTone,
   ticketStatusTone,
@@ -1612,6 +1613,8 @@ function synthesizeBackfillBookings(real: Booking[]): Booking[] {
       bookingDate.setHours(hour, Math.floor(rand() * 60), 0, 0);
       const departureDate = new Date(bookingDate);
       departureDate.setDate(departureDate.getDate() + 1 + Math.floor(rand() * 7));
+      const synthPayStatus: Booking["paymentStatus"] =
+        status === "Cancelled" || status === "Refunded" ? "Refunded" : status === "Submitted" ? "Submitted" : "Issued";
       bookings.push({
         ref: `SYN-${d}-${i}`,
         ticketholder: "Synthetic Pax",
@@ -1628,7 +1631,8 @@ function synthesizeBackfillBookings(real: Booking[]): Booking[] {
         contactMobile: "+63 900 000 0000",
         contactEmail: "synthetic@example.com",
         paymentMethod: "Tripket Wallet",
-        paymentStatus: status === "Cancelled" || status === "Refunded" ? "Refunded" : status === "Submitted" ? "Submitted" : "Issued",
+        paymentStatus: synthPayStatus,
+        payment: makePaymentDetails(`SYN-${d}-${i}`, rand, amount, synthPayStatus),
         tickets: [],
       });
     }

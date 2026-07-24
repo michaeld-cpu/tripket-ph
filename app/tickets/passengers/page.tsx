@@ -25,6 +25,7 @@ import {
   type TicketStatus,
   type PaxType,
   PAX_TYPE_LABELS,
+  paxFareBreakdown,
   deriveTicketActivity,
 } from "@/lib/bookings-data";
 import { loadScopedVoyages } from "@/lib/line-scope";
@@ -799,6 +800,12 @@ function TicketDetailDialog({
               {/* Payment Information — mirrors the booking dialog's section,
                   scoped to this single ticket. */}
               <TicketPaymentInformation ticket={ticket} />
+
+              {/* Activity log inline on narrow screens (the side rail hides
+                  below md; this keeps the log visible everywhere). */}
+              <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70 md:hidden">
+                <ActivityLog entries={ticketActivity} />
+              </div>
             </div>
 
             {/* Footer — status-aware ticket mutations + jump back to booking. */}
@@ -830,8 +837,8 @@ function TicketDetailDialog({
             </div>
           </div>
 
-          {/* Right rail — activity / audit log, bottom-anchored. */}
-          <div className="hidden w-[280px] shrink-0 border-l border-slate-100 sm:flex">
+          {/* Right rail — activity / audit log, bottom-anchored (wide screens). */}
+          <div className="hidden w-[280px] shrink-0 border-l border-slate-100 md:flex">
             <ActivityLog entries={ticketActivity} />
           </div>
           </motion.div>
@@ -881,38 +888,46 @@ function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
         </div>
       </div>
 
-      <dl className="divide-y divide-slate-100 px-4 py-1">
-        <div className="flex items-baseline justify-between py-2.5 text-[12.5px]">
-          <dt className="min-w-0 flex-1">
-            <span className="font-medium tracking-tight text-slate-900">{ticket.fareClass} ticket</span>
-            {ticket.comped && (
-              <div className="mt-0.5 text-[11px] text-slate-400">Comped — covered by the vehicle fare</div>
-            )}
-          </dt>
-          <dd className="shrink-0 pl-3">
-            {ticket.comped ? (
-              <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-sky-700 ring-1 ring-sky-100">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
-                  <path d="M3 14h18l-2 5a2 2 0 0 1-1.9 1.3H6.9A2 2 0 0 1 5 19l-2-5Z" />
-                  <path d="M5 14V8a1 1 0 0 1 1-1h7l5 4" />
-                </svg>
-                Comped
-              </span>
-            ) : (
-              <span className="font-mono text-[13px] font-semibold tabular-nums text-slate-900">₱{ticket.fare.toLocaleString()}</span>
-            )}
-          </dd>
-        </div>
-      </dl>
+      {(() => {
+        // Uniform per-passenger breakdown — same fields as the booking dialog's
+        // passenger lines. Transparent amounts (no "Free"): a comped/discounted
+        // seat still shows its Base Fare and Discount, netting to its real total.
+        const b = paxFareBreakdown(ticket);
+        const money = (n: number) => `₱${n.toLocaleString()}`;
+        const signed = (n: number) => (n < 0 ? `−₱${Math.abs(n).toLocaleString()}` : `₱${n.toLocaleString()}`);
+        return (
+          <>
+            <div className="px-4 pt-2 text-[11px] text-slate-500">{PAX_TYPE_LABELS[ticket.paxType]} · {ticket.fareClass}</div>
+            <dl className="divide-y divide-slate-100 px-4 py-1 text-[12.5px]">
+              <PayLine label="Base Fare" value={money(b.base)} />
+              <PayLine label="Discount" value={b.discount > 0 ? signed(-b.discount) : money(0)} valueClass={b.discount > 0 ? "text-rose-500" : undefined} />
+              <PayLine label="Service Fee" value={money(b.serviceFee)} />
+              <PayLine label="Sub total" value={money(b.total)} strong />
+            </dl>
 
-      <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3">
-        <div className="flex items-baseline justify-between">
-          <span className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-slate-500">Total</span>
-          <span className="font-mono text-[16px] font-bold tabular-nums tracking-tight text-slate-900">
-            ₱{(ticket.comped ? 0 : ticket.fare).toLocaleString()}
-          </span>
-        </div>
-      </div>
+            <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-slate-500">Total amount</span>
+                <span className="font-mono text-[16px] font-bold tabular-nums tracking-tight text-slate-900">{money(b.total)}</span>
+              </div>
+              <div className="mt-2">
+                <div className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-slate-500">Remarks</div>
+                <div className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-700">{ticket.note || "—"}</div>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+    </div>
+  );
+}
+
+// One line in the payment breakdown — label left, value right.
+function PayLine({ label, value, muted, strong, valueClass }: { label: string; value: string; muted?: boolean; strong?: boolean; valueClass?: string }) {
+  return (
+    <div className="flex items-baseline justify-between py-2.5">
+      <dt className={"min-w-0 flex-1 " + (strong ? "font-semibold text-slate-900" : "text-slate-600")}>{label}</dt>
+      <dd className={"shrink-0 pl-3 font-mono tabular-nums " + (strong ? "text-[13px] font-semibold text-slate-900" : "text-[12.5px] " + (muted ? "text-slate-400" : valueClass ?? "text-slate-900"))}>{value}</dd>
     </div>
   );
 }

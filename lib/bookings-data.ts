@@ -77,6 +77,18 @@ export const PAX_TYPE_LABELS: Record<PaxType, string> = {
   infant: "Infant",
 };
 
+/** Per-passenger fare breakdown, used identically on the booking dialog's
+ *  passenger list and the single-ticket payment section so both read the same.
+ *  base = published rate, discount = base − charged (capped at base, never
+ *  negative), total = charged + this passenger's share of the service fee. */
+export type PaxFareBreakdown = { base: number; discount: number; serviceFee: number; total: number };
+export function paxFareBreakdown(ticket: Ticket, serviceFeePerPax = 0): PaxFareBreakdown {
+  const base = ticket.grossFare;
+  const discount = Math.max(0, Math.min(base, base - ticket.fare));
+  const charged = base - discount; // === ticket.fare when fare ≥ 0
+  return { base, discount, serviceFee: serviceFeePerPax, total: charged + serviceFeePerPax };
+}
+
 // Per-booking vehicle details. Present only when the booking includes a
 // vehicle slot. Plate + driver name are captured at checkout so the gate
 // crew can match the vehicle and its driver against the manifest.
@@ -105,6 +117,92 @@ export type Vehicle = {
       until the booking is approved. */
   ticketNumber?: string;
 };
+
+// ─────────── Payment provider record ───────────
+// The gateway-facing side of a booking's transaction. Tripket routes payments
+// through one of several partner providers, each fronting a set of checkout
+// methods (e-wallets, cards, over-the-counter). These fields mirror what a
+// real payment webhook would hand back, so the booking dialog can surface the
+// full provider trail rather than just "paid / unpaid".
+export type PaymentProvider = "BeetzeePay" | "AsbirPay" | "MaayoPay";
+export const PAYMENT_PROVIDERS: PaymentProvider[] = ["BeetzeePay", "AsbirPay", "MaayoPay"];
+
+// Provider-reported status of the transaction, independent of the internal
+// booking lifecycle (`Booking.paymentStatus`).
+export type PaymentProviderStatus = "Initial" | "Pending" | "Completed" | "Failed" | "Refunded";
+
+// Checkout methods a provider can front. Kept as a flat catalogue since any
+// provider can, in principle, offer any of them.
+const PAYMENT_METHODS = [
+  "PayMaya Checkout",
+  "GCash",
+  "Card Payment",
+  "GrabPay",
+  "Over-the-Counter",
+  "Online Banking",
+];
+
+export type PaymentDetails = {
+  /** Tripket-side payment reference for this booking. */
+  reference: string;
+  /** Which partner gateway processed the charge. */
+  provider: PaymentProvider;
+  /** Checkout method the customer used (e.g. "PayMaya Checkout"). */
+  method: string;
+  /** The provider's own transaction reference (from their webhook). */
+  providerReference: string;
+  /** Provider-reported transaction state. */
+  status: PaymentProviderStatus;
+  /** Platform service fee bundled into the booking total. */
+  serviceFee: number;
+  /** Sub total before the service fee — i.e. fares + add-ons. */
+  subTotal: number;
+  /** Grand total the customer was charged (subTotal + serviceFee). */
+  total: number;
+  /** Optional free-text remarks captured against the payment. */
+  remarks?: string;
+};
+
+// Deterministic PRNG seeded off a booking ref — used to backfill payment
+// details for older persisted bookings so the values stay stable per ref.
+function refRng(ref: string): () => number {
+  let h = 2166136261;
+  for (let i = 0; i < ref.length; i++) { h ^= ref.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 100000) / 100000; };
+}
+
+// Build a deterministic PaymentDetails from a booking's rng so the seeded data
+// is stable across reloads. `total` is the booking amount; the service fee is
+// carved out of it so subTotal + serviceFee reconciles to the total.
+export function makePaymentDetails(
+  ref: string,
+  rand: () => number,
+  total: number,
+  paymentStatus: Booking["paymentStatus"],
+): PaymentDetails {
+  const provider = PAYMENT_PROVIDERS[Math.floor(rand() * PAYMENT_PROVIDERS.length)];
+  const method = PAYMENT_METHODS[Math.floor(rand() * PAYMENT_METHODS.length)];
+  // Provider status is derived from the funding lifecycle so the two never
+  // contradict: settled → Completed, refunded → Refunded, awaiting → Pending.
+  const status: PaymentProviderStatus =
+    paymentStatus === "Refunded" ? "Refunded"
+      : paymentStatus === "Issued" ? "Completed"
+      : "Pending";
+  // Flat platform service fee, deterministic per booking.
+  const serviceFee = 25 + Math.floor(rand() * 6) * 5; // ₱25–₱50 in ₱5 steps
+  const subTotal = Math.max(0, total - serviceFee);
+  const provRef = `${provider.slice(0, 3).toUpperCase()}-${String(100000 + Math.floor(rand() * 899999))}`;
+  return {
+    reference: `PAY-${ref}`,
+    provider,
+    method,
+    providerReference: provRef,
+    status,
+    serviceFee,
+    subTotal,
+    total,
+  };
+}
 
 const VEHICLE_MAKES = ["Toyota", "Honda", "Mitsubishi", "Hyundai", "Isuzu", "Nissan", "Suzuki", "Ford", "Yamaha", "Kawasaki"];
 const VEHICLE_MODELS_BY_MAKE: Record<string, string[]> = {
@@ -179,9 +277,14 @@ export type Booking = {
   /** Contact details captured at booking. */
   contactMobile: string;
   contactEmail: string;
-  /** Payment metadata. Submitted = paid, awaiting operator approval. */
+  /** Internal lifecycle funding flag driving approval/refund logic.
+      Submitted = paid, awaiting operator approval. Distinct from
+      `payment.status`, which is the payment *provider*'s reported state. */
   paymentMethod: "Tripket Wallet";
   paymentStatus: "Issued" | "Submitted" | "Refunded";
+  /** Payment-provider record — the gateway-facing side of the transaction,
+      surfaced verbatim in the booking dialog's Payment Information section. */
+  payment: PaymentDetails;
   /** Per-pax tickets. tickets.length === pax. */
   tickets: Ticket[];
   /** Audit trail. Seeded from history on first load, then appended to live as
@@ -247,15 +350,21 @@ export function mergeSeededBookings(persisted: Booking[], seeded: Booking[]): Bo
 
 export function reviveBookings(raw: unknown): Booking[] {
   if (!Array.isArray(raw)) return [];
-  const revived = raw.map((b) => ({
-    ...(b as Booking),
-    departureDate: new Date((b as Booking).departureDate as unknown as string),
-    bookingDate: new Date((b as Booking).bookingDate as unknown as string),
-    activity: ((b as Booking).activity ?? []).map((e) => ({
-      ...e,
-      at: new Date(e.at as unknown as string),
-    })),
-  }));
+  const revived = raw.map((b) => {
+    const booking = b as Booking;
+    return {
+      ...booking,
+      departureDate: new Date(booking.departureDate as unknown as string),
+      bookingDate: new Date(booking.bookingDate as unknown as string),
+      // Backfill the payment record for bookings persisted before this field
+      // existed, so the dialog never reads through an undefined `payment`.
+      payment: booking.payment ?? makePaymentDetails(booking.ref, refRng(booking.ref), booking.amount, booking.paymentStatus),
+      activity: (booking.activity ?? []).map((e) => ({
+        ...e,
+        at: new Date(e.at as unknown as string),
+      })),
+    };
+  });
   return purgeCancelled(revived);
 }
 
@@ -590,6 +699,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           ? "Refunded"
           : status === "Submitted" ? "Submitted" : "Issued";
 
+      const amount = pax * baseFare + (hasVehicle ? 500 + Math.floor(rand() * 2000) : 0);
       bookings.push({
         ref,
         ticketholder: `${first} ${last}`,
@@ -602,13 +712,14 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         routeDestinationCity: v.destinationCity ?? v.destinationCode,
         vesselName: v.vesselName ?? "Unknown vessel",
         departureDate: dep,
-        amount: pax * baseFare + (hasVehicle ? 500 + Math.floor(rand() * 2000) : 0),
+        amount,
         status,
         bookingDate,
         contactMobile,
         contactEmail,
         paymentMethod,
         paymentStatus,
+        payment: makePaymentDetails(ref, rand, amount, paymentStatus),
         tickets,
       });
       counter++;
@@ -728,6 +839,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         for (let c = 0; c < compCount; c++) { indexed[c].t.comped = true; indexed[c].t.fare = 0; }
       }
 
+      const submittedAmount = tickets.reduce((sum, t) => sum + t.fare, 0) + (vehicle ? 500 + Math.floor(rand() * 2000) : 0);
       bookings.push({
         ref,
         ticketholder: `${first} ${last}`,
@@ -740,13 +852,14 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         routeDestinationCity: v.destinationCity ?? v.destinationCode!,
         vesselName: v.vesselName ?? "Unknown vessel",
         departureDate: dep,
-        amount: tickets.reduce((sum, t) => sum + t.fare, 0) + (vehicle ? 500 + Math.floor(rand() * 2000) : 0),
+        amount: submittedAmount,
         status: "Submitted",
         bookingDate,
         contactMobile,
         contactEmail,
         paymentMethod: "Tripket Wallet",
         paymentStatus: "Submitted",
+        payment: makePaymentDetails(ref, rand, submittedAmount, "Submitted"),
         tickets,
       });
       counter++;
@@ -857,6 +970,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         for (let c = 0; c < compCount; c++) { indexed[c].t.comped = true; indexed[c].t.fare = 0; }
       }
 
+      const paidAmount = tickets.reduce((sum, t) => sum + t.fare, 0) + (vehicle ? 500 + Math.floor(rand() * 2000) : 0);
       bookings.push({
         ref,
         ticketholder: `${first} ${last}`,
@@ -869,7 +983,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         routeDestinationCity: v.destinationCity ?? v.destinationCode!,
         vesselName: v.vesselName ?? "Unknown vessel",
         departureDate: dep,
-        amount: tickets.reduce((sum, t) => sum + t.fare, 0) + (vehicle ? 500 + Math.floor(rand() * 2000) : 0),
+        amount: paidAmount,
         // Under Review — submitted and paid, awaiting operator approval.
         status: "Submitted",
         bookingDate,
@@ -878,6 +992,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         paymentMethod: "Tripket Wallet",
         // Payment has settled, unlike the not-yet-paid Submitted samples above.
         paymentStatus: "Issued",
+        payment: makePaymentDetails(ref, rand, paidAmount, "Issued"),
         tickets,
       });
       counter++;

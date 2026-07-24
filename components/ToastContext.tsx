@@ -33,7 +33,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const showToast = useCallback((message: string, variant: ToastVariant = "success") => {
-    // Replace mode — only ever one toast visible at a time. Each new call replaces
     const id = nextId++;
     timers.current.forEach(clearTimeout);
     timers.current.clear();

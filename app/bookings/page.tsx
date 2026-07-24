@@ -21,6 +21,7 @@ import {
   ticketStatusTone,
   ticketStatusLabel,
   PAX_TYPE_LABELS,
+  paxFareBreakdown,
   type Booking,
   type BookingStatus,
   type FareClass,
@@ -1583,123 +1584,171 @@ function DocumentPreviewDialog({
 // as meta, then a line for each ticket (grouped by fare class), an optional
 // vehicle fee, a flat booking fee, and a totals strip at the bottom.
 function PaymentInformation({ booking }: { booking: Booking }) {
-  // Group tickets by fare class so the line items collapse when multiple
-  // passengers share the same rate (e.g. "Economy × 3").
-  const grouped = useMemo(() => {
-    const acc = new Map<string, { fareClass: FareClass; fare: number; count: number; subtotal: number }>();
-    // Comped (driver/companion) tickets are surfaced in the Vehicle section
-    // and rolled up into the vehicle fee — skip them here so they don't
-    // render as ₱0 line items.
-    booking.tickets.filter((t) => !t.comped).forEach((t) => {
-      const key = `${t.fareClass}-${t.fare}`;
-      const existing = acc.get(key);
-      if (existing) {
-        existing.count += 1;
-        existing.subtotal += t.fare;
-      } else {
-        acc.set(key, { fareClass: t.fareClass, fare: t.fare, count: 1, subtotal: t.fare });
-      }
-    });
-    return Array.from(acc.values());
-  }, [booking.tickets]);
-  const compedCount = booking.tickets.filter((t) => t.comped).length;
+  const v = booking.vehicle;
+  // List every passenger (matching the roster + pax count). Comped seats ride
+  // free under the vehicle fare, so they show ₱0 / Free rather than being hidden.
+  const passengers = booking.tickets;
+  const passengerSubtotal = passengers.reduce((s, t) => s + t.fare, 0);
+  const vehicleCharge = v ? Math.max(0, booking.amount - passengerSubtotal) : 0;
 
-  const passengerSubtotal = grouped.reduce((s, g) => s + g.subtotal, 0);
-  // Whatever the booking total didn't cover via tickets/booking-fee gets
-  // attributed to the vehicle line — keeps the breakdown reconciled with
-  // the original amount the table column shows.
-  const bookingFee = 40; // flat per-booking convenience fee
-  const vehicleCharge = Math.max(0, booking.amount - passengerSubtotal - bookingFee);
+  // Add-ons + service fee aren't captured per booking yet — sample lines so the
+  // breakdown mirrors the customer Review & Pay screen. Deterministic per ref.
+  const addOns = useMemo(() => {
+    let h = 2166136261;
+    for (let i = 0; i < booking.ref.length; i++) { h ^= booking.ref.charCodeAt(i); h = Math.imul(h, 16777619); }
+    const lead = booking.ticketholder;
+    const all = [
+      { label: "Travel insurance (1×)", price: 50 },
+      { label: `${lead} · Extra cabin bag`, price: 100 },
+      { label: `${lead} · Fragile handling`, price: 150 },
+    ];
+    return all.slice(0, (h >>> 0) % (all.length + 1)); // 0..3 add-ons
+  }, [booking.ref, booking.ticketholder]);
 
+  // Totals come from the payment provider record so the displayed breakdown
+  // reconciles with what the gateway actually charged. The itemized lines
+  // above are the customer-facing composition of that subtotal.
+  const pay = booking.payment;
+  const serviceFee = pay.serviceFee;
+  const subtotal = pay.subTotal;
+  const total = pay.total;
+  // Split the booking service fee evenly across passengers so each line can
+  // show its own share (transparent per-pax total). Rounded to whole pesos.
+  const perPaxServiceFee = passengers.length ? Math.round(serviceFee / passengers.length) : 0;
+
+  const money = (n: number) => `₱${n.toLocaleString()}`;
+  const signed = (n: number) => (n < 0 ? `−₱${Math.abs(n).toLocaleString()}` : `₱${n.toLocaleString()}`);
+  // Payment-provider status pill (Initial / Pending / Completed / Failed /
+  // Refunded) — distinct from the internal booking lifecycle.
   const statusTone =
-    booking.paymentStatus === "Issued"
-      ? "bg-emerald-100 text-emerald-800"
-      : booking.paymentStatus === "Submitted"
-      ? "bg-brand-50 text-brand-700"
-      : "bg-slate-100 text-slate-500";
+    pay.status === "Completed" ? "bg-emerald-100 text-emerald-800"
+    : pay.status === "Pending" || pay.status === "Initial" ? "bg-amber-100 text-amber-800"
+    : pay.status === "Failed" ? "bg-rose-100 text-rose-700"
+    : "bg-slate-100 text-slate-500";
 
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
-      {/* Section header + payment status pill */}
       <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
-        <h3 className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
-          Payment Information
-        </h3>
+        <h3 className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Payment Information</h3>
         <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone}`}>
-          {booking.paymentStatus === "Submitted" ? "Under Review" : booking.paymentStatus}
+          {pay.status}
         </span>
       </div>
 
-      {/* Method strip */}
-      <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100">
-        <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Method</div>
-          <div className="mt-1 text-[12.5px] font-semibold tracking-tight text-slate-900">{booking.paymentMethod}</div>
-        </div>
-        <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Booked on</div>
-          <div className="mt-1 text-[12.5px] font-semibold tracking-tight text-slate-900">{fmtDate(booking.bookingDate)}</div>
-        </div>
+      {/* Provider trail — reference, gateway, method, and the provider's own
+          transaction reference. */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-b border-slate-100 px-4 py-3">
+        <PayMeta label="Payment reference" value={pay.reference} mono />
+        <PayMeta label="Payment provider" value={pay.provider} />
+        <PayMeta label="Payment method" value={pay.method} />
+        <PayMeta label="Provider reference" value={pay.providerReference} mono />
       </div>
 
-      {/* Itemized lines */}
-      <dl className="divide-y divide-slate-100 px-4 py-1">
-        {grouped.map((g) => (
-          <div key={`${g.fareClass}-${g.fare}`} className="flex items-baseline justify-between py-2.5 text-[12.5px]">
-            <dt className="min-w-0 flex-1">
-              <span className="font-medium tracking-tight text-slate-900">{g.fareClass} ticket</span>
-              {g.count > 1 && (
-                <span className="ml-1.5 text-slate-500">× {g.count}</span>
-              )}
-              <div className="mt-0.5 font-mono text-[11px] tabular-nums text-slate-400">
-                ₱{g.fare.toLocaleString()} each
-              </div>
-            </dt>
-            <dd className="shrink-0 pl-3 font-mono text-[13px] font-semibold tabular-nums text-slate-900">
-              ₱{g.subtotal.toLocaleString()}
-            </dd>
-          </div>
-        ))}
-
-        {vehicleCharge > 0 && (
-          <div className="flex items-baseline justify-between py-2.5 text-[12.5px]">
-            <dt className="min-w-0 flex-1">
-              <span className="font-medium tracking-tight text-slate-900">Vehicle</span>
-              {booking.vehicleClass && (
-                <span className="ml-1.5 text-slate-500">{booking.vehicleClass}</span>
-              )}
-              {compedCount > 0 && (
-                <div className="mt-0.5 text-[11px] text-slate-400">
-                  Includes {compedCount} comped {compedCount === 1 ? "seat" : "seats"} (driver + companion)
+      <div className="px-4 py-3">
+        {/* Passengers — full per-pax breakdown (base · discount · service fee)
+            so admins see the transparent amounts, not just a net "Free". */}
+        <PaySectionLabel icon="passenger" text={`Passengers (${passengers.length})`} />
+        <div className="mt-2 space-y-3">
+          {passengers.map((t) => {
+            const b = paxFareBreakdown(t, perPaxServiceFee);
+            return (
+              <div key={t.id} className="border-b border-slate-100 pb-3 last:border-b-0 last:pb-0">
+                <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
+                  <div className="min-w-0 flex-1 truncate">
+                    <span className="font-semibold tracking-tight text-slate-900">Passenger · {t.name}</span>
+                  </div>
+                  <span className="shrink-0 font-mono text-[13px] font-semibold tabular-nums text-slate-900">{money(b.total)}</span>
                 </div>
-              )}
-            </dt>
-            <dd className="shrink-0 pl-3 font-mono text-[13px] font-semibold tabular-nums text-slate-900">
-              ₱{vehicleCharge.toLocaleString()}
-            </dd>
-          </div>
+                <div className="mt-0.5 text-[11px] text-slate-500">{PAX_TYPE_LABELS[t.paxType]} · {t.fareClass}</div>
+                <dl className="mt-1 space-y-0.5 text-[11.5px]">
+                  <div className="flex justify-between"><dt className="text-slate-400">Base Fare</dt><dd className="font-mono tabular-nums text-slate-500">{money(b.base)}</dd></div>
+                  <div className="flex justify-between"><dt className="text-slate-400">Discount</dt><dd className="font-mono tabular-nums text-rose-500">{b.discount > 0 ? signed(-b.discount) : money(0)}</dd></div>
+                  {b.serviceFee > 0 && (
+                    <div className="flex justify-between"><dt className="text-slate-400">Service Fee</dt><dd className="font-mono tabular-nums text-slate-500">{money(b.serviceFee)}</dd></div>
+                  )}
+                </dl>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Vehicles */}
+        {v && (
+          <>
+            <div className="mt-4"><PaySectionLabel icon="vehicle" text="Vehicles (1)" /></div>
+            <div className="mt-1.5 flex items-baseline justify-between gap-3 text-[12.5px]">
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium tracking-tight text-slate-900">{v.year} {v.make} {v.model}</div>
+                <div className="mt-0.5 text-[11px] text-slate-400">{v.class} · {v.plateNumber}</div>
+              </div>
+              <div className="shrink-0 font-mono text-[13px] font-semibold tabular-nums text-slate-900">{money(vehicleCharge)}</div>
+            </div>
+          </>
         )}
 
-        <div className="flex items-baseline justify-between py-2.5 text-[12.5px]">
-          <dt className="min-w-0 flex-1">
-            <span className="font-medium tracking-tight text-slate-900">Booking fee</span>
-            <div className="mt-0.5 text-[11px] text-slate-400">Convenience fee</div>
-          </dt>
-          <dd className="shrink-0 pl-3 font-mono text-[13px] font-semibold tabular-nums text-slate-900">
-            ₱{bookingFee.toLocaleString()}
-          </dd>
-        </div>
-      </dl>
+        {/* Add-ons */}
+        {addOns.length > 0 && (
+          <>
+            <div className="mt-4"><PaySectionLabel icon="addon" text={`Add-ons (${addOns.length})`} /></div>
+            <dl className="mt-1.5 space-y-2">
+              {addOns.map((a) => (
+                <div key={a.label} className="flex items-baseline justify-between gap-3 text-[12.5px]">
+                  <dt className="min-w-0 flex-1 truncate text-slate-900">{a.label}</dt>
+                  <dd className="shrink-0 font-mono text-[13px] font-semibold tabular-nums text-slate-900">{money(a.price)}</dd>
+                </div>
+              ))}
+            </dl>
+          </>
+        )}
 
-      {/* Totals strip */}
-      <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3">
-        <div className="flex items-baseline justify-between">
-          <span className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-slate-500">Total</span>
-          <span className="font-mono text-[16px] font-bold tabular-nums tracking-tight text-slate-900">
-            ₱{booking.amount.toLocaleString()}
-          </span>
+        {/* Sub total + service fee */}
+        <div className="mt-4 space-y-2 border-t border-slate-100 pt-3 text-[12.5px]">
+          <div className="flex items-baseline justify-between">
+            <span className="text-slate-600">Sub total</span>
+            <span className="font-mono font-semibold tabular-nums text-slate-900">{money(subtotal)}</span>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <span className="text-slate-600">Service fee</span>
+            <span className="font-mono font-semibold tabular-nums text-slate-900">{money(serviceFee)}</span>
+          </div>
         </div>
       </div>
+
+      {/* Total amount + remarks */}
+      <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3">
+        <div className="flex items-baseline justify-between">
+          <span className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-slate-500">Total amount</span>
+          <span className="font-mono text-[16px] font-bold tabular-nums tracking-tight text-brand-600">{money(total)}</span>
+        </div>
+        <div className="mt-3">
+          <div className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-slate-500">Remarks</div>
+          <div className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-700">{pay.remarks || "—"}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Label + value pair for the payment provider trail (reference, provider, …).
+function PayMeta({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">{label}</div>
+      <div className={"mt-1 truncate text-[12.5px] font-semibold tracking-tight text-slate-900" + (mono ? " font-mono tabular-nums" : "")}>{value}</div>
+    </div>
+  );
+}
+
+// Small section label with an icon, used inside Payment Information.
+function PaySectionLabel({ icon, text }: { icon: "passenger" | "vehicle" | "addon"; text: string }) {
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-400">
+        {icon === "passenger" && <><circle cx="12" cy="8" r="3.5" /><path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6" /></>}
+        {icon === "vehicle" && <><path d="M3 13l2-5a2 2 0 0 1 1.9-1.3h10.2A2 2 0 0 1 19 8l2 5" /><path d="M3 13h18v4H3z" /><circle cx="7" cy="17.5" r="1.5" /><circle cx="17" cy="17.5" r="1.5" /></>}
+        {icon === "addon" && <><path d="M4 8h16l-1.2 9.3A2 2 0 0 1 16.8 19H7.2a2 2 0 0 1-2-1.7L4 8Z" /><path d="M9 8V6a3 3 0 0 1 6 0v2" /></>}
+      </svg>
+      {text}
     </div>
   );
 }

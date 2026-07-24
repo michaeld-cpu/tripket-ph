@@ -32,7 +32,7 @@ export default function SuspendLineDialog({ open, line, name, onClose, onConfirm
   };
 
   return (
-    <Modal open={open} onClose={() => !submitting && onClose()} maxWidth="max-w-md">
+    <Modal open={open} onClose={() => !submitting && onClose()} maxWidth="max-w-md">  
       <div className="px-6 pb-5 pt-6">
         <div className="flex items-start gap-4">
           <span
