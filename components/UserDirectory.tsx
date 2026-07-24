@@ -4,6 +4,8 @@ import { motion } from "motion/react";
 import PageHeader from "@/components/PageHeader";
 import Select from "@/components/Select";
 import { useShippingLine } from "@/components/ShippingLineContext";
+import { LogoTile } from "@/components/ShippingLineSwitcher";
+import { lines } from "@/lib/shipping-lines";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import { TableSkeleton } from "@/components/Skeleton";
@@ -30,6 +32,14 @@ function reviveUsers(raw: unknown): User[] {
 }
 
 const PAGE_SIZE = 12;
+
+// Stable per-user shipping line so the Users table shows a believable mix of
+// lines (the line each admin is currently on) rather than all the same.
+function lineForUser(id: string) {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return lines[(h >>> 0) % lines.length];
+}
 
 function SortIcon() {
   return (
@@ -76,6 +86,7 @@ export default function UserDirectory({
   noun,
   showStatusFilter = true,
   lockLineToActive = false,
+  showShippingLine = false,
 }: {
   /** Role slice(s) this page shows. Single role hides the Role column; multiple
    *  roles show the column + a Role filter. */
@@ -91,6 +102,9 @@ export default function UserDirectory({
   /** Lock new users to the active shipping line (line-scoped roles, e.g.
    *  operators) — the create dialog shows the line read-only instead of a picker. */
   lockLineToActive?: boolean;
+  /** Show a Shipping line column bound to the active line the admin is viewing
+   *  (Users page); operators omit it. */
+  showShippingLine?: boolean;
 }) {
   const { active } = useShippingLine();
   // Multiple roles → surface the Role column + a Role filter.
@@ -246,6 +260,7 @@ export default function UserDirectory({
                     <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">User <SortIcon /></button>
                   </th>
                   {showRoleColumn && <th className="px-5 py-2.5 font-medium">Role</th>}
+                  {showShippingLine && <th className="px-5 py-2.5 font-medium">Shipping line</th>}
                   <th className="px-5 py-2.5 font-medium">Status</th>
                   <th className="px-5 py-2.5 font-medium">Last active</th>
                   <th className="sticky right-0 z-10 w-10 bg-slate-50 px-5 py-2.5 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)]" />
@@ -254,7 +269,7 @@ export default function UserDirectory({
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={showRoleColumn ? 5 : 4} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={4 + (showRoleColumn ? 1 : 0) + (showShippingLine ? 1 : 0)} className="px-5 py-12 text-center text-sm text-slate-400">
                       No {noun} match your filters.
                     </td>
                   </tr>
@@ -291,6 +306,19 @@ export default function UserDirectory({
                           </span>
                         </td>
                       )}
+
+                      {/* Shipping line — the line each admin is currently on. */}
+                      {showShippingLine && (() => {
+                        const userLine = lineForUser(u.id);
+                        return (
+                          <td className="px-5 py-3.5 align-middle">
+                            <div className="inline-flex items-center gap-2">
+                              <LogoTile line={userLine} size={20} />
+                              <span className="truncate text-[12.5px] font-medium tracking-tight text-slate-700">{userLine.name}</span>
+                            </div>
+                          </td>
+                        );
+                      })()}
 
                       {/* Status */}
                       <td className="px-5 py-3.5 align-middle">

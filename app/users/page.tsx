@@ -13,6 +13,7 @@ export default function UsersPage() {
       createLabel="Create admin"
       noun="users"
       lockLineToActive
+      showShippingLine
     />
   );
 }
