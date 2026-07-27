@@ -1589,7 +1589,6 @@ function PaymentInformation({ booking }: { booking: Booking }) {
   // free under the vehicle fare, so they show ₱0 / Free rather than being hidden.
   const passengers = booking.tickets;
   const passengerSubtotal = passengers.reduce((s, t) => s + t.fare, 0);
-  const vehicleCharge = v ? Math.max(0, booking.amount - passengerSubtotal) : 0;
 
   // Add-ons + service fee aren't captured per booking yet — sample lines so the
   // breakdown mirrors the customer Review & Pay screen. Deterministic per ref.
@@ -1612,9 +1611,21 @@ function PaymentInformation({ booking }: { booking: Booking }) {
   const serviceFee = pay.serviceFee;
   const subtotal = pay.subTotal;
   const total = pay.total;
-  // Split the booking service fee evenly across passengers so each line can
-  // show its own share (transparent per-pax total). Rounded to whole pesos.
-  const perPaxServiceFee = passengers.length ? Math.round(serviceFee / passengers.length) : 0;
+  const addOnSubtotal = addOns.reduce((sum, addOn) => sum + addOn.price, 0);
+  // The customer-facing service fee is shared by each passenger and vehicle
+  // line. Keep cents on the evenly split rows and place the rounding remainder
+  // on the vehicle so all displayed shares reconcile exactly to the gateway fee.
+  const feeLineCount = passengers.length + (v ? 1 : 0);
+  const sharedServiceFee = feeLineCount
+    ? Math.floor((serviceFee * 100) / feeLineCount) / 100
+    : 0;
+  const vehicleServiceFee = v
+    ? Math.max(0, serviceFee - sharedServiceFee * passengers.length)
+    : 0;
+  const vehicleBaseFare = v
+    ? Math.max(0, subtotal - passengerSubtotal - addOnSubtotal)
+    : 0;
+  const vehicleTotal = vehicleBaseFare + vehicleServiceFee;
 
   const money = (n: number) => `₱${n.toLocaleString()}`;
   const signed = (n: number) => (n < 0 ? `−₱${Math.abs(n).toLocaleString()}` : `₱${n.toLocaleString()}`);
@@ -1650,7 +1661,7 @@ function PaymentInformation({ booking }: { booking: Booking }) {
         <PaySectionLabel icon="passenger" text={`Passengers (${passengers.length})`} />
         <div className="mt-2 space-y-3">
           {passengers.map((t) => {
-            const b = paxFareBreakdown(t, perPaxServiceFee);
+            const b = paxFareBreakdown(t, sharedServiceFee);
             return (
               <div key={t.id} className="border-b border-slate-100 pb-3 last:border-b-0 last:pb-0">
                 <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
@@ -1676,12 +1687,18 @@ function PaymentInformation({ booking }: { booking: Booking }) {
         {v && (
           <>
             <div className="mt-4"><PaySectionLabel icon="vehicle" text="Vehicles (1)" /></div>
-            <div className="mt-1.5 flex items-baseline justify-between gap-3 text-[12.5px]">
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-medium tracking-tight text-slate-900">{v.year} {v.make} {v.model}</div>
-                <div className="mt-0.5 text-[11px] text-slate-400">{v.class} · {v.plateNumber}</div>
+            <div className="mt-1.5">
+              <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium tracking-tight text-slate-900">{v.year} {v.make} {v.model}</div>
+                  <div className="mt-0.5 text-[11px] text-slate-400">{v.class} · {v.plateNumber}</div>
+                </div>
+                <div className="shrink-0 font-mono text-[13px] font-semibold tabular-nums text-slate-900">{money(vehicleTotal)}</div>
               </div>
-              <div className="shrink-0 font-mono text-[13px] font-semibold tabular-nums text-slate-900">{money(vehicleCharge)}</div>
+              <dl className="mt-1 space-y-0.5 text-[11.5px]">
+                <div className="flex justify-between"><dt className="text-slate-400">Base Fare</dt><dd className="font-mono tabular-nums text-slate-500">{money(vehicleBaseFare)}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-400">Service Fee</dt><dd className="font-mono tabular-nums text-slate-500">{money(vehicleServiceFee)}</dd></div>
+              </dl>
             </div>
           </>
         )}
