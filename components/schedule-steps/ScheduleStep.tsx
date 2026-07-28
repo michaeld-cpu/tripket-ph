@@ -697,7 +697,7 @@ function BrandTimeDialog({
   // PM offers 12..11. Keep it simple — offer 1..12 and let the window guard
   // flag anything before 4 AM.
   const HOURS_12 = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-  const MINUTES = Array.from({ length: 12 }, (_, i) => i * 5); // 0,5,…,55
+  const MINUTES = Array.from({ length: 60 }, (_, i) => i); // every minute 0..59
 
   if (typeof document === "undefined" || !coords) return null;
 
@@ -756,6 +756,9 @@ function BrandTimeDialog({
                 return (
                   <button
                     key={mm}
+                    // Scroll the selected minute into view on open so odd values
+                    // like :37 aren't buried below the fold.
+                    ref={on ? (el) => el?.scrollIntoView({ block: "center" }) : undefined}
                     type="button"
                     onClick={() => setMinute(mm)}
                     className={
