@@ -10,12 +10,20 @@
  * saved series keep working after this change. Values ≥ 24 are already minutes.
  */
 
-// Operating window — 4:00 AM through 11:59 PM.
+// Operating window — 4:00 AM through 11:59 PM. Any time in this range is valid
+// via the Add-time picker; the quick-add grid below only surfaces the common
+// hours so it stays short.
 export const MIN_MINUTES = 4 * 60; // 240
 export const MAX_MINUTES = 23 * 60 + 59; // 1439
 
-/** Whole-hour tiles used by the quick-add grid (4 AM … 11 PM). */
-export const HOUR_RANGE = Array.from({ length: 23 - 4 + 1 }, (_, i) => (4 + i) * 60);
+/**
+ * Quick-add hour tiles — the departure hours PH shipping lines actually use.
+ * Two clusters: early-morning sailings that clear ports (07:00–08:00) and
+ * afternoon/evening departures after daytime loading (16:00–20:00). We widen
+ * the morning slightly to 6 AM to cover fast-craft first trips. Odd-minute
+ * times (5:10, 8:20, 9:30) go through "Add time" instead of cluttering the grid.
+ */
+export const HOUR_RANGE = [6, 7, 8, 16, 17, 18, 19, 20].map((h) => h * 60);
 
 /** hour → minutes-of-day. */
 export const hourToMin = (h: number): number => h * 60;

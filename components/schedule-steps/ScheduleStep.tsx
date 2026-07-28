@@ -461,32 +461,50 @@ function TimeEditor({
         )}
       </div>
 
-      {/* Quick-add hour grid — a filled tile means an on-the-hour slot exists. */}
+      {/* Quick-add hour tiles — the common PH departure windows: early-morning
+          sailings that clear ports, and afternoon/evening departures after
+          daytime loading. Split into two labelled clusters; a filled tile means
+          an on-the-hour slot exists. Anything off-hour goes through Add time. */}
       {!disabled && (
-        <div className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">Quick add · on the hour</div>
+        <div className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">Quick add · common hours</div>
       )}
-      <div className={"grid grid-cols-5 gap-1.5 sm:grid-cols-10 " + (disabled ? "opacity-50" : "")}>
-        {HOUR_RANGE.map((m) => {
-          const selected = slots.includes(m);
-          return (
-            <button
-              key={m}
-              type="button"
-              disabled={disabled}
-              onClick={() => onToggleQuick(m)}
-              className={
-                "rounded-md px-2 py-1 text-[11.5px] font-medium tabular-nums tracking-tight transition-colors focus-visible:outline-none " +
-                (selected
-                  ? "bg-brand-500 text-white"
-                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50") +
-                (disabled ? " cursor-not-allowed" : "")
-              }
-            >
-              {fmtTime(m)}
-            </button>
-          );
-        })}
-      </div>
+      {(() => {
+        const clusters: { label: string; hours: number[] }[] = [
+          { label: "Morning", hours: HOUR_RANGE.filter((m) => m < 12 * 60) },
+          { label: "Afternoon · Evening", hours: HOUR_RANGE.filter((m) => m >= 12 * 60) },
+        ];
+        return (
+          <div className={"flex flex-wrap items-stretch gap-x-3 gap-y-2 " + (disabled ? "opacity-50" : "")}>
+            {clusters.map((c) => (
+              <div key={c.label} className="min-w-0">
+                <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-300">{c.label}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {c.hours.map((m) => {
+                    const selected = slots.includes(m);
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => onToggleQuick(m)}
+                        className={
+                          "min-w-[52px] rounded-md px-2.5 py-1.5 text-[11.5px] font-medium tabular-nums tracking-tight transition-colors focus-visible:outline-none " +
+                          (selected
+                            ? "bg-brand-50 text-brand-700 ring-1 ring-brand-200"
+                            : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50") +
+                          (disabled ? " cursor-not-allowed" : "")
+                        }
+                      >
+                        {fmtTime(m)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* ── Selected times ──
           Broken out into its own labelled, boxed section so the chosen
@@ -568,15 +586,15 @@ function SlotChip({
   const chipRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-lg bg-white py-1 pl-2 pr-1 shadow-[0_1px_2px_rgba(15,23,42,0.06)] ring-1 ring-slate-200">
+    <span className="inline-flex items-center gap-1 rounded-lg bg-brand-500 py-1 pl-2 pr-1 shadow-[0_1px_3px_rgba(234,88,12,0.35)]">
       <button
         ref={chipRef}
         type="button"
         onClick={() => setEditing(true)}
         title="Edit time"
-        className="inline-flex items-center gap-1.5 rounded-md px-0.5 text-[13px] font-semibold tabular-nums tracking-tight text-slate-800 hover:text-brand-600"
+        className="inline-flex items-center gap-1.5 rounded-md px-0.5 text-[13px] font-semibold tabular-nums tracking-tight text-white hover:text-white/90"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-brand-500">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-white/80">
           <circle cx="12" cy="12" r="9" />
           <path d="M12 8v4l2.5 2.5" />
         </svg>
@@ -586,7 +604,7 @@ function SlotChip({
         type="button"
         aria-label={`Remove ${fmtTime(mins)}`}
         onClick={onRemove}
-        className="flex h-5 w-5 items-center justify-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"
+        className="flex h-5 w-5 items-center justify-center rounded-md text-white/70 hover:bg-white/20 hover:text-white"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="h-3 w-3">
           <path d="M6 6l12 12M18 6L6 18" />
@@ -761,7 +779,7 @@ function BrandTimeDialog({
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><path d="M18 15l-6-6-6 6" /></svg>
             </button>
-            <div className="flex h-6 w-11 items-center justify-center bg-brand-500 font-mono text-[13px] font-bold tabular-nums text-white">
+            <div className="flex h-6 w-11 items-center justify-center bg-slate-100 font-mono text-[13px] font-bold tabular-nums text-slate-700">
               {period}
             </div>
             <button
