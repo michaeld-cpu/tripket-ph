@@ -6,6 +6,7 @@ import { PORTS, findPort } from "@/components/schedule-steps/RoutesStep";
 import type { VesselValue, FleetVessel } from "@/components/schedule-steps/VesselStep";
 import type { FaresValue } from "@/components/schedule-steps/FaresStep";
 import { useCustomPorts } from "@/lib/custom-ports";
+import { fmtTime, normalizeSlot, hourOf, minuteOf } from "@/lib/schedule-time";
 
 /**
  * Review step — final stop of the Create-Schedule wizard.
@@ -89,10 +90,10 @@ export default function ReviewStep({
   // something concrete to show.
   const sampleDepartureTime = useMemo(() => {
     for (const k of activeDays) {
-      const hours = schedule.dayTimes[k];
-      if (hours && hours.length > 0) {
-        const h = hours[0];
-        return `${String(h).padStart(2, "0")}:00`;
+      const slots = schedule.dayTimes[k];
+      if (slots && slots.length > 0) {
+        const mins = normalizeSlot(slots[0]);
+        return `${String(hourOf(mins)).padStart(2, "0")}:${String(minuteOf(mins)).padStart(2, "0")}`;
       }
     }
     return "";
@@ -224,16 +225,16 @@ export default function ReviewStep({
             )}
             <DefRow label="Runs on" value={<WeekdayChips active={activeDays} />} />
             {activeDays.map((k) => {
-              const hours = schedule.dayTimes[k] ?? [];
+              const slots = (schedule.dayTimes[k] ?? []).map(normalizeSlot).sort((a, b) => a - b);
               return (
                 <DefRow
                   key={k}
                   label={k}
                   value={
                     <span className="flex flex-wrap gap-1.5">
-                      {hours.map((h) => (
-                        <span key={h} className="inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10.5px] tabular-nums text-slate-700">
-                          {formatHourLabel(h)}
+                      {slots.map((s) => (
+                        <span key={s} className="inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10.5px] tabular-nums text-slate-700">
+                          {fmtTime(s)}
                         </span>
                       ))}
                     </span>
@@ -602,11 +603,6 @@ function formatTime(hhmm: string): string {
   return `${h12}:${m[2]} ${period}`;
 }
 // Compact hour-only label ("4 AM", "11 PM") used by the per-day time chips.
-function formatHourLabel(h: number): string {
-  const period = h < 12 ? "AM" : "PM";
-  const h12 = ((h + 11) % 12) + 1;
-  return `${h12} ${period}`;
-}
 function prettyType(t: string): string {
   // Mirrors VesselFormBody.typeOptions so review reads identically to the form.
   if (t === "RoRo") return "RoRo (Roll-on / Roll-off)";

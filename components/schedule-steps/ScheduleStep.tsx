@@ -1,5 +1,13 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import {
+  HOUR_RANGE,
+  MAX_MINUTES,
+  MIN_MINUTES,
+  fmtTime,
+  normalizeSlots,
+} from "@/lib/schedule-time";
 
 /**
  * Schedule step — first stop of the Create-Schedule wizard.
@@ -9,21 +17,27 @@ import { useMemo, useState } from "react";
  * times the admin selects here. No one-time mode, no start/end date
  * pickers — just weekday + time slots.
  *
+ * Times: departures may land on any minute (different vessels rarely leave
+ * exactly on the hour). Each slot is stored as minutes-of-day. The hour grid
+ * is a one-tap quick-add (defaults to :00); each selected slot then shows as a
+ * chip whose minute can be tuned, and "Add time" opens a native time input for
+ * arbitrary minutes.
+ *
  * Layout:
  *   ┌─────────────────────────────────────────────────────────────┐
- *   │ Schedule label (Optional)   [Schedule A]                    │
  *   │ Weekdays + times                                            │
- *   │   Monday    ▾  [6 AM] [7 AM] [9 AM] [4 PM]                  │
- *   │   Tuesday   ▸  off                                          │
- *   │   …                                                         │
+ *   │   Runs on   [Mon] [Wed] [Fri]                               │
+ *   │   Quick add [6 AM] [7 AM] [9 AM] …                          │
+ *   │   Selected  [6:00 AM ▾ ✕] [7:30 AM ▾ ✕]  [+ Add time]       │
  *   └─────────────────────────────────────────────────────────────┘
  */
 
 export type DayKey = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 
-// Selected times per weekday. An empty array means the schedule doesn't
-// run that day. Times are stored as 24h hours (4–23); the UI surfaces them
-// as 12h labels ("4 AM", "11 PM").
+// Selected times per weekday. An empty array means the schedule doesn't run
+// that day. Slots are stored as minutes-of-day (0–1439); the UI surfaces them
+// as 12h labels ("4 AM", "6:45 PM"). Legacy series that stored whole hours
+// (0–23) are auto-upgraded on read via normalizeSlots().
 export type ScheduleValue = {
   dayTimes: Partial<Record<DayKey, number[]>>;
   /** Optional operator label shown on each generated voyage card. */
@@ -40,10 +54,8 @@ const DAYS: { key: DayKey; short: string; long: string }[] = [
   { key: "Sun", short: "Sun", long: "Sunday" },
 ];
 
-// Operating hours window — 4 AM through 11 PM inclusive.
-const MIN_HOUR = 4;
-const MAX_HOUR = 23;
-const HOUR_RANGE = Array.from({ length: MAX_HOUR - MIN_HOUR + 1 }, (_, i) => MIN_HOUR + i);
+// Default slot when seeding a freshly-enabled day: 8:00 AM.
+const DEFAULT_SLOT = 8 * 60;
 
 // ─────────── Quick presets ───────────
 // One-tap weekday templates. Each preset just toggles which weekdays are
@@ -56,13 +68,6 @@ const DAY_PRESETS: { id: string; label: string; days: DayKey[] }[] = [
   { id: "tth",      label: "T · Th",    days: ["Tue", "Thu"] },
   { id: "daily",    label: "Daily",     days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] },
 ];
-
-
-function fmtHourLabel(h: number): string {
-  const period = h < 12 ? "AM" : "PM";
-  const display = ((h + 11) % 12) + 1;
-  return `${display} ${period}`;
-}
 
 // Days that have at least one time slot selected.
 function activeDays(v: ScheduleValue): DayKey[] {
@@ -79,10 +84,12 @@ function sameDaySet(a: DayKey[], b: DayKey[]): boolean {
 // none yet) — i.e. the schedule can be represented by the shared-times mode
 // without losing information.
 function isUniform(dayTimes: Partial<Record<DayKey, number[]>>): boolean {
-  const sets = (Object.values(dayTimes) as number[][]).filter((a) => a && a.length > 0);
+  const sets = (Object.values(dayTimes) as number[][])
+    .map(normalizeSlots)
+    .filter((a) => a.length > 0);
   if (sets.length <= 1) return true;
-  const ref = [...sets[0]].sort((a, b) => a - b).join(",");
-  return sets.every((s) => [...s].sort((a, b) => a - b).join(",") === ref);
+  const ref = sets[0].join(",");
+  return sets.every((s) => s.join(",") === ref);
 }
 
 export default function ScheduleStep({
@@ -104,91 +111,96 @@ export default function ScheduleStep({
     isUniform(value.dayTimes) ? "shared" : "custom"
   );
 
-  // The shared time set = union of all active days' times (they're identical
+  // The shared slot set = union of all active days' times (they're identical
   // in shared mode; the union is a safe read even right after switching).
-  const sharedHours = useMemo(() => {
+  const sharedSlots = useMemo(() => {
     const set = new Set<number>();
-    active.forEach((k) => (value.dayTimes[k] ?? []).forEach((h) => set.add(h)));
+    active.forEach((k) => normalizeSlots(value.dayTimes[k]).forEach((m) => set.add(m)));
     return Array.from(set).sort((a, b) => a - b);
   }, [value.dayTimes, active]);
 
   // Toggle which weekdays the schedule runs on (shared mode). Newly-enabled
-  // days inherit the shared time set; disabled days are dropped.
+  // days inherit the shared slot set; disabled days are dropped.
   const toggleSharedDay = (key: DayKey) => {
     const on = (value.dayTimes[key]?.length ?? 0) > 0;
     const next = { ...value.dayTimes };
     if (on) delete next[key];
-    else next[key] = sharedHours.length ? [...sharedHours] : [8];
+    else next[key] = sharedSlots.length ? [...sharedSlots] : [DEFAULT_SLOT];
     onChange({ ...value, dayTimes: next });
   };
 
-  // Toggle an hour in shared mode → applies to every active day at once.
-  // Never invents days: if nothing is selected yet, picking a time is a no-op
-  // (the user must choose the weekdays first, otherwise voyages would appear on
-  // days that were never selected).
-  const toggleSharedHour = (hour: number) => {
+  // Write a new shared slot set across every active day at once. Never
+  // invents days: with nothing selected yet this is a no-op (voyages would
+  // otherwise appear on days that were never chosen).
+  const setSharedSlots = (slots: number[]) => {
     if (active.length === 0) return;
-    const has = sharedHours.includes(hour);
-    const nextHours = (has ? sharedHours.filter((h) => h !== hour) : [...sharedHours, hour]).sort((a, b) => a - b);
+    const clean = Array.from(new Set(slots)).sort((a, b) => a - b);
     const next: Partial<Record<DayKey, number[]>> = {};
-    active.forEach((k) => { next[k] = [...nextHours]; });
+    active.forEach((k) => { next[k] = [...clean]; });
     onChange({ ...value, dayTimes: next });
+  };
+
+  const toggleSharedSlot = (mins: number) => {
+    const has = sharedSlots.includes(mins);
+    setSharedSlots(has ? sharedSlots.filter((m) => m !== mins) : [...sharedSlots, mins]);
+  };
+
+  // Replace one slot with another (minute tuning / add-time). No-op if the
+  // target time already exists on the set.
+  const replaceSharedSlot = (from: number, to: number) => {
+    if (from === to) return;
+    if (sharedSlots.includes(to)) { setSharedSlots(sharedSlots.filter((m) => m !== from)); return; }
+    setSharedSlots(sharedSlots.map((m) => (m === from ? to : m)));
   };
 
   // Switching to shared flattens every active day onto the shared set so the
   // single grid is the source of truth.
   const switchToShared = () => {
-    if (sharedHours.length > 0) {
+    if (sharedSlots.length > 0) {
       const next: Partial<Record<DayKey, number[]>> = {};
-      active.forEach((k) => { next[k] = [...sharedHours]; });
+      active.forEach((k) => { next[k] = [...sharedSlots]; });
       onChange({ ...value, dayTimes: next });
     }
     setMode("shared");
   };
 
-  // Apply a preset — sets the selected weekdays. New weekdays default to
-  // a single 8 AM slot so the schedule isn't empty after toggling; existing
+  // Apply a preset — sets the selected weekdays. New weekdays default to a
+  // single 8 AM slot so the schedule isn't empty after toggling; existing
   // selections keep their times.
   const applyPreset = (days: DayKey[]) => {
     const next: Partial<Record<DayKey, number[]>> = {};
     DAYS.forEach((d) => {
       if (days.includes(d.key)) {
-        // In shared mode every new day inherits the shared set; in custom
-        // mode keep each day's existing times.
         next[d.key] = mode === "shared"
-          ? (sharedHours.length ? [...sharedHours] : [8])
-          : (value.dayTimes[d.key]?.length ? value.dayTimes[d.key]! : [8]);
+          ? (sharedSlots.length ? [...sharedSlots] : [DEFAULT_SLOT])
+          : (value.dayTimes[d.key]?.length ? normalizeSlots(value.dayTimes[d.key]) : [DEFAULT_SLOT]);
       }
     });
     onChange({ ...value, dayTimes: next });
   };
 
-  // Toggle a weekday on/off. Turning a day on seeds it with a single 8 AM
-  // slot; turning it off clears the times for that day.
+  // Toggle a weekday on/off (custom mode). Turning a day on seeds it with a
+  // single 8 AM slot; turning it off clears the times for that day.
   const toggleDay = (key: DayKey) => {
     const has = (value.dayTimes[key]?.length ?? 0) > 0;
     const next = { ...value.dayTimes };
     if (has) delete next[key];
-    else next[key] = [8];
+    else next[key] = [DEFAULT_SLOT];
     onChange({ ...value, dayTimes: next });
   };
 
-  // Toggle a specific hour on a weekday — no-op if the weekday isn't
-  // active yet. Sorts the resulting array so the chip display stays in
-  // chronological order.
-  const toggleHour = (key: DayKey, hour: number) => {
-    const cur = value.dayTimes[key] ?? [];
-    const next = cur.includes(hour) ? cur.filter((h) => h !== hour) : [...cur, hour].sort((a, b) => a - b);
-    onChange({ ...value, dayTimes: { ...value.dayTimes, [key]: next } });
+  // Write one day's slot set (custom mode).
+  const setDaySlots = (key: DayKey, slots: number[]) => {
+    const clean = Array.from(new Set(slots)).sort((a, b) => a - b);
+    onChange({ ...value, dayTimes: { ...value.dayTimes, [key]: clean } });
   };
 
   const totalTrips = useMemo(() => {
-    // Count of weekday × time combos × 30 days / 7 ≈ trips generated by
-    // the server over the rolling 30-day window. The server is authoritative;
-    // this is a quick admin-side preview.
     const slotsPerWeek = Object.values(value.dayTimes).reduce((s, arr) => s + (arr?.length ?? 0), 0);
     return Math.round((slotsPerWeek * 30) / 7);
   }, [value.dayTimes]);
+
+  const totalSlots = Object.values(value.dayTimes).reduce((s, arr) => s + (arr?.length ?? 0), 0);
 
   return (
     <div className="space-y-6">
@@ -214,8 +226,7 @@ export default function ScheduleStep({
             Weekdays
           </label>
           {/* Mode switch — whether each day shares the same departure times
-              or is configured individually. Verb-led labels read as the
-              choice being made, not a status. */}
+              or is configured individually. */}
           <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 text-[11px] font-medium">
             <button
               type="button"
@@ -261,8 +272,7 @@ export default function ScheduleStep({
              Step 1: pick which weekdays as a single chip row.
              Step 2: pick the departure times once — applied to all of them. */
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-            {/* Weekday row — circular day toggles so they read as distinct
-                from the rectangular time tiles below. */}
+            {/* Weekday row */}
             <div className="border-b border-slate-100 px-3.5 py-3">
               <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.08em] text-brand-500">Runs on</div>
               <div className="flex flex-wrap gap-1.5">
@@ -290,56 +300,27 @@ export default function ScheduleStep({
               </div>
             </div>
 
-            {/* Shared hour grid — tinted panel so the times zone reads as a
-                distinct step from the day chips above. */}
+            {/* Departure times — quick-add grid + selected chips with minute tuning */}
             <div className="border-t border-slate-200 bg-slate-50/70 px-3.5 py-3.5">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-brand-500">
-                  Departure times {active.length > 0
-                    ? `· applies to ${active.length} day${active.length === 1 ? "" : "s"}`
-                    : <span className="text-slate-400">· pick days first</span>}
-                </span>
-                {sharedHours.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => { const next: Partial<Record<DayKey, number[]>> = {}; active.forEach((k) => { next[k] = []; }); onChange({ ...value, dayTimes: next }); }}
-                    className="text-[10.5px] font-medium text-slate-400 transition-colors hover:text-rose-500"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              <div className={"grid grid-cols-5 gap-1.5 sm:grid-cols-10 " + (active.length === 0 ? "opacity-50" : "")}>
-                {HOUR_RANGE.map((h) => {
-                  const selected = sharedHours.includes(h);
-                  const disabled = active.length === 0;
-                  return (
-                    <button
-                      key={h}
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => toggleSharedHour(h)}
-                      className={
-                        "rounded-md px-2 py-1 text-[11.5px] font-medium tabular-nums tracking-tight transition-colors focus-visible:outline-none " +
-                        (selected
-                          ? "bg-brand-500 text-white"
-                          : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50") +
-                        (disabled ? " cursor-not-allowed" : "")
-                      }
-                    >
-                      {fmtHourLabel(h)}
-                    </button>
-                  );
-                })}
-              </div>
+              <TimeEditor
+                slots={sharedSlots}
+                disabled={active.length === 0}
+                disabledHint="pick days first"
+                appliesTo={active.length}
+                onToggleQuick={toggleSharedSlot}
+                onChangeSlot={replaceSharedSlot}
+                onAdd={(m) => { if (!sharedSlots.includes(m)) setSharedSlots([...sharedSlots, m]); }}
+                onRemove={(m) => setSharedSlots(sharedSlots.filter((x) => x !== m))}
+                onClear={() => setSharedSlots([])}
+              />
             </div>
           </div>
         ) : (
-          /* ── Custom mode ── per-day rows, each with its own hour grid. */
+          /* ── Custom mode ── per-day rows, each with its own time editor. */
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
             {DAYS.map((d, i) => {
-              const hours = value.dayTimes[d.key] ?? [];
-              const on = hours.length > 0;
+              const slots = normalizeSlots(value.dayTimes[d.key]);
+              const on = slots.length > 0;
               return (
                 <div key={d.key} className={i === 0 ? "" : "border-t border-slate-100"}>
                   <div className={"flex items-center gap-3 px-3.5 " + (on ? "py-2.5" : "py-2")}>
@@ -368,16 +349,16 @@ export default function ScheduleStep({
                     {on ? (
                       <div className="ml-auto flex items-center gap-1.5">
                         <span className="hidden items-center gap-1 sm:flex">
-                          {hours.slice(0, 3).map((h) => (
-                            <span key={h} className="rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-brand-700">
-                              {fmtHourLabel(h)}
+                          {slots.slice(0, 3).map((m) => (
+                            <span key={m} className="rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-brand-700">
+                              {fmtTime(m)}
                             </span>
                           ))}
-                          {hours.length > 3 && (
-                            <span className="font-mono text-[10px] tabular-nums text-slate-400">+{hours.length - 3}</span>
+                          {slots.length > 3 && (
+                            <span className="font-mono text-[10px] tabular-nums text-slate-400">+{slots.length - 3}</span>
                           )}
                         </span>
-                        <span className="font-mono text-[11px] tabular-nums text-slate-400 sm:hidden">{hours.length}</span>
+                        <span className="font-mono text-[11px] tabular-nums text-slate-400 sm:hidden">{slots.length}</span>
                       </div>
                     ) : (
                       <span className="ml-auto text-[11px] font-medium uppercase tracking-[0.08em] text-slate-300">Off</span>
@@ -386,36 +367,17 @@ export default function ScheduleStep({
 
                   {on && (
                     <div className="border-t border-dashed border-slate-200/80 bg-slate-50/40 px-3.5 py-3">
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">Departure times</span>
-                        <button
-                          type="button"
-                          onClick={() => onChange({ ...value, dayTimes: { ...value.dayTimes, [d.key]: [] } })}
-                          className="text-[10.5px] font-medium text-slate-400 transition-colors hover:text-rose-500"
-                        >
-                          Clear
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-5 gap-1.5 sm:grid-cols-10">
-                        {HOUR_RANGE.map((h) => {
-                          const selected = hours.includes(h);
-                          return (
-                            <button
-                              key={h}
-                              type="button"
-                              onClick={() => toggleHour(d.key, h)}
-                              className={
-                                "rounded-md px-2 py-1 text-[11.5px] font-medium tabular-nums tracking-tight transition-colors focus-visible:outline-none " +
-                                (selected
-                                  ? "bg-brand-500 text-white"
-                                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50")
-                              }
-                            >
-                              {fmtHourLabel(h)}
-                            </button>
-                          );
-                        })}
-                      </div>
+                      <TimeEditor
+                        slots={slots}
+                        disabled={false}
+                        appliesTo={1}
+                        hideAppliesTo
+                        onToggleQuick={(m) => setDaySlots(d.key, slots.includes(m) ? slots.filter((x) => x !== m) : [...slots, m])}
+                        onChangeSlot={(from, to) => setDaySlots(d.key, slots.includes(to) ? slots.filter((x) => x !== from) : slots.map((x) => (x === from ? to : x)))}
+                        onAdd={(m) => { if (!slots.includes(m)) setDaySlots(d.key, [...slots, m]); }}
+                        onRemove={(m) => setDaySlots(d.key, slots.filter((x) => x !== m))}
+                        onClear={() => setDaySlots(d.key, [])}
+                      />
                     </div>
                   )}
                 </div>
@@ -438,11 +400,427 @@ export default function ScheduleStep({
           </span>{" "}
           <span className="text-slate-500">
             {totalTrips === 0
-              ? "Toggle at least one weekday and pick at least one hour."
-              : `${active.length} weekday${active.length === 1 ? "" : "s"} · ${Object.values(value.dayTimes).reduce((s, arr) => s + (arr?.length ?? 0), 0)} slot${Object.values(value.dayTimes).reduce((s, arr) => s + (arr?.length ?? 0), 0) === 1 ? "" : "s"} / week · ~${totalTrips} trip${totalTrips === 1 ? "" : "s"} over the next 30 days.`}
+              ? "Toggle at least one weekday and pick at least one time."
+              : `${active.length} weekday${active.length === 1 ? "" : "s"} · ${totalSlots} slot${totalSlots === 1 ? "" : "s"} / week · ~${totalTrips} trip${totalTrips === 1 ? "" : "s"} over the next 30 days.`}
           </span>
         </span>
       </div>
     </div>
+  );
+}
+
+// ─────────── TimeEditor ───────────
+// A departure-times editor for one slot set. The hour grid is a one-tap
+// quick-add (adds/removes the on-the-hour slot). Below it, every selected
+// slot renders as a chip with a minute stepper (:00/:15/:30/:45) and a remove
+// button; "Add time" opens a native time input for arbitrary minutes.
+function TimeEditor({
+  slots,
+  disabled,
+  disabledHint,
+  appliesTo,
+  hideAppliesTo,
+  onToggleQuick,
+  onChangeSlot,
+  onAdd,
+  onRemove,
+  onClear,
+}: {
+  slots: number[];
+  disabled: boolean;
+  disabledHint?: string;
+  appliesTo: number;
+  hideAppliesTo?: boolean;
+  onToggleQuick: (mins: number) => void;
+  onChangeSlot: (from: number, to: number) => void;
+  onAdd: (mins: number) => void;
+  onRemove: (mins: number) => void;
+  onClear: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const addBtnRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-brand-500">
+          {hideAppliesTo ? "Departure times" : (
+            <>Departure times {appliesTo > 0
+              ? `· applies to ${appliesTo} day${appliesTo === 1 ? "" : "s"}`
+              : <span className="text-slate-400">· {disabledHint ?? "pick days first"}</span>}</>
+          )}
+        </span>
+        {slots.length > 0 && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="text-[10.5px] font-medium text-slate-400 transition-colors hover:text-rose-500"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      {/* Quick-add hour grid — a filled tile means an on-the-hour slot exists. */}
+      {!disabled && (
+        <div className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">Quick add · on the hour</div>
+      )}
+      <div className={"grid grid-cols-5 gap-1.5 sm:grid-cols-10 " + (disabled ? "opacity-50" : "")}>
+        {HOUR_RANGE.map((m) => {
+          const selected = slots.includes(m);
+          return (
+            <button
+              key={m}
+              type="button"
+              disabled={disabled}
+              onClick={() => onToggleQuick(m)}
+              className={
+                "rounded-md px-2 py-1 text-[11.5px] font-medium tabular-nums tracking-tight transition-colors focus-visible:outline-none " +
+                (selected
+                  ? "bg-brand-500 text-white"
+                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50") +
+                (disabled ? " cursor-not-allowed" : "")
+              }
+            >
+              {fmtTime(m)}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Selected times ──
+          Broken out into its own labelled, boxed section so the chosen
+          departures read as a distinct list rather than crowding the grid. */}
+      {!disabled && (
+        <div className="mt-3.5 rounded-xl border border-slate-200 bg-white p-3">
+          <div className="mb-2.5 flex items-center gap-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">Selected times</span>
+            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-50 px-1 font-mono text-[10px] font-semibold text-brand-600">{slots.length}</span>
+          </div>
+
+          {slots.length === 0 ? (
+            <p className="mb-3 text-[12px] text-slate-400">
+              Tap an hour above, or use <span className="font-semibold text-brand-600">Add time</span> for an exact minute.
+            </p>
+          ) : (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              {slots.map((m) => (
+                <SlotChip
+                  key={m}
+                  mins={m}
+                  taken={slots}
+                  onChange={(to) => onChangeSlot(m, to)}
+                  onRemove={() => onRemove(m)}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Prominent Add-time affordance — full-width dashed brand button that
+              opens the branded time dialog. */}
+          <div>
+            <button
+              ref={addBtnRef}
+              type="button"
+              onClick={() => setAdding(true)}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-brand-300 bg-brand-50/50 py-2.5 text-[13px] font-semibold text-brand-600 transition-colors hover:border-brand-400 hover:bg-brand-50"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 8v4l2.5 2.5" />
+              </svg>
+              Add departure time
+            </button>
+            {adding && (
+              <BrandTimeDialog
+                anchorRef={addBtnRef}
+                initial={DEFAULT_SLOT}
+                taken={slots}
+                title="Add departure time"
+                confirmLabel="Add time"
+                onCancel={() => setAdding(false)}
+                onConfirm={(mins) => { onAdd(mins); setAdding(false); }}
+              />
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────── SlotChip ───────────
+// A single selected departure time. Clicking the time opens the branded time
+// dialog (pre-filled) so the operator can set the exact hour + minute. The ✕
+// removes the slot.
+function SlotChip({
+  mins,
+  taken,
+  onChange,
+  onRemove,
+}: {
+  mins: number;
+  taken: number[];
+  onChange: (to: number) => void;
+  onRemove: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const chipRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <span className="inline-flex items-center gap-1 rounded-lg bg-white py-1 pl-2 pr-1 shadow-[0_1px_2px_rgba(15,23,42,0.06)] ring-1 ring-slate-200">
+      <button
+        ref={chipRef}
+        type="button"
+        onClick={() => setEditing(true)}
+        title="Edit time"
+        className="inline-flex items-center gap-1.5 rounded-md px-0.5 text-[13px] font-semibold tabular-nums tracking-tight text-slate-800 hover:text-brand-600"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-brand-500">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 8v4l2.5 2.5" />
+        </svg>
+        {fmtTime(mins)}
+      </button>
+      <button
+        type="button"
+        aria-label={`Remove ${fmtTime(mins)}`}
+        onClick={onRemove}
+        className="flex h-5 w-5 items-center justify-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="h-3 w-3">
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+
+      {editing && (
+        <BrandTimeDialog
+          anchorRef={chipRef}
+          initial={mins}
+          taken={taken}
+          self={mins}
+          title="Edit departure time"
+          confirmLabel="Save"
+          onCancel={() => setEditing(false)}
+          onConfirm={(to) => { onChange(to); setEditing(false); }}
+        />
+      )}
+    </span>
+  );
+}
+
+// ─────────── BrandTimeDialog ───────────
+// A branded inline time picker (no native <input type=time>). Portaled to
+// <body> with fixed coordinates anchored to its trigger so it never gets
+// clipped by the scrollable wizard modal. HH:MM display, scrollable hour +
+// minute columns, and an AM/PM toggle. Confirm is disabled when the chosen time
+// collides with another selected slot or falls outside the operating window.
+function BrandTimeDialog({
+  anchorRef,
+  initial,
+  taken,
+  self,
+  title,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+}: {
+  anchorRef: React.RefObject<HTMLElement>;
+  initial: number;
+  taken: number[];
+  /** The slot currently being edited (allowed even though it's "taken"). */
+  self?: number;
+  title: string;
+  confirmLabel: string;
+  onConfirm: (mins: number) => void;
+  onCancel: () => void;
+}) {
+  const DIALOG_W = 260;
+  const DIALOG_H = 300; // approx — for flip decision only
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const place = () => {
+      const el = anchorRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - r.bottom;
+      const up = spaceBelow < DIALOG_H && r.top > spaceBelow;
+      // Clamp horizontally so the panel stays fully on-screen (8px gutter).
+      const left = Math.min(
+        Math.max(8, r.left),
+        window.innerWidth - DIALOG_W - 8
+      );
+      const top = up ? r.top - DIALOG_H - 8 : r.bottom + 8;
+      setCoords({ top, left });
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [anchorRef]);
+
+  const clampInit = Math.min(MAX_MINUTES, Math.max(MIN_MINUTES, initial));
+  const [hour24, setHour24] = useState(Math.floor(clampInit / 60)); // 4..23
+  const [minute, setMinute] = useState(clampInit % 60); // 0..59
+  const [period, setPeriod] = useState<"AM" | "PM">(Math.floor(clampInit / 60) < 12 ? "AM" : "PM");
+
+  // The 12h hour buttons the picker offers (1..12). Selecting one recomputes
+  // the underlying 24h hour from the current AM/PM toggle.
+  const hour12 = ((hour24 + 11) % 12) + 1;
+
+  const composed = (h12: number, per: "AM" | "PM", min: number): number => {
+    let h = h12 % 12; // 12 -> 0
+    if (per === "PM") h += 12;
+    return h * 60 + min;
+  };
+
+  const candidate = composed(hour12, period, minute);
+  const outOfWindow = candidate < MIN_MINUTES || candidate > MAX_MINUTES;
+  const clash = candidate !== self && taken.includes(candidate);
+  const invalid = outOfWindow || clash;
+
+  const setH12 = (h12: number) => {
+    const next = composed(h12, period, minute);
+    setHour24(Math.floor(next / 60));
+  };
+  const setPer = (per: "AM" | "PM") => {
+    setPeriod(per);
+    const next = composed(hour12, per, minute);
+    setHour24(Math.floor(next / 60));
+  };
+
+  // Operating window is 4 AM–11 PM: AM offers 4..11 + 12(noon handled by PM),
+  // PM offers 12..11. Keep it simple — offer 1..12 and let the window guard
+  // flag anything before 4 AM.
+  const HOURS_12 = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+  const MINUTES = Array.from({ length: 12 }, (_, i) => i * 5); // 0,5,…,55
+
+  if (typeof document === "undefined" || !coords) return null;
+
+  return createPortal(
+    <>
+      {/* click-away scrim */}
+      <button type="button" aria-hidden tabIndex={-1} onClick={onCancel} className="fixed inset-0 z-[90] cursor-default" />
+      <div
+        role="dialog"
+        aria-label={title}
+        style={{ position: "fixed", top: coords.top, left: coords.left, width: DIALOG_W }}
+        className="z-[100] overflow-hidden rounded-xl bg-white shadow-[0_12px_32px_rgba(15,23,42,0.16)] ring-1 ring-slate-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header — branded band with the live HH:MM readout. */}
+        <div className="bg-brand-500 px-4 py-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-white/80">{title}</div>
+          <div className="mt-0.5 flex items-baseline gap-2">
+            <span className="font-mono text-[26px] font-bold leading-none tabular-nums tracking-tight text-white">
+              {hour12}:{String(minute).padStart(2, "0")}
+            </span>
+            <span className="text-[13px] font-semibold text-white/90">{period}</span>
+          </div>
+        </div>
+
+        <div className="flex">
+          {/* Hours */}
+          <div className="flex-1 border-r border-slate-100">
+            <div className="px-2 pt-2 text-center text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400">Hour</div>
+            <div className="max-h-[150px] overflow-y-auto px-1.5 py-1.5">
+              {HOURS_12.map((h) => {
+                const on = h === hour12;
+                return (
+                  <button
+                    key={h}
+                    type="button"
+                    onClick={() => setH12(h)}
+                    className={
+                      "mb-0.5 flex w-full items-center justify-center rounded-md py-1.5 text-[13px] font-semibold tabular-nums transition-colors " +
+                      (on ? "bg-brand-500 text-white" : "text-slate-600 hover:bg-slate-100")
+                    }
+                  >
+                    {h}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Minutes */}
+          <div className="flex-1 border-r border-slate-100">
+            <div className="px-2 pt-2 text-center text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400">Min</div>
+            <div className="max-h-[150px] overflow-y-auto px-1.5 py-1.5">
+              {MINUTES.map((mm) => {
+                const on = mm === minute;
+                return (
+                  <button
+                    key={mm}
+                    type="button"
+                    onClick={() => setMinute(mm)}
+                    className={
+                      "mb-0.5 flex w-full items-center justify-center rounded-md py-1.5 text-[13px] font-semibold tabular-nums transition-colors " +
+                      (on ? "bg-brand-500 text-white" : "text-slate-600 hover:bg-slate-100")
+                    }
+                  >
+                    {String(mm).padStart(2, "0")}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* AM / PM */}
+          <div className="flex w-14 flex-col items-stretch justify-center gap-1.5 px-1.5">
+            {(["AM", "PM"] as const).map((per) => {
+              const on = per === period;
+              return (
+                <button
+                  key={per}
+                  type="button"
+                  onClick={() => setPer(per)}
+                  className={
+                    "rounded-md py-1.5 text-[12px] font-semibold transition-colors " +
+                    (on ? "bg-brand-500 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200")
+                  }
+                >
+                  {per}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Validation hint */}
+        {invalid && (
+          <div className="px-3 pb-1 text-[10.5px] font-medium text-rose-500">
+            {outOfWindow ? "Pick a time between 4:00 AM and 11:59 PM." : "That time is already selected."}
+          </div>
+        )}
+
+        {/* Footer actions */}
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-3 py-2.5">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-slate-500 hover:bg-slate-100"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={invalid}
+            onClick={() => onConfirm(candidate)}
+            className={
+              "rounded-lg px-3.5 py-1.5 text-[12px] font-semibold text-white transition-colors " +
+              (invalid ? "cursor-not-allowed bg-slate-300" : "bg-brand-500 hover:bg-brand-600")
+            }
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </>,
+    document.body
   );
 }

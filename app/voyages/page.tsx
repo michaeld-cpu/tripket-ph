@@ -7,6 +7,7 @@ import Select from "@/components/Select";
 import Tooltip from "@/components/Tooltip";
 import CreateScheduleModal from "@/components/CreateScheduleModal";
 import { getSeries, saveSeries } from "@/lib/schedule-series";
+import { normalizeSlot, hourOf, minuteOf } from "@/lib/schedule-time";
 import { MOCK_FLEET, type VesselType } from "@/components/schedule-steps/VesselStep";
 import { PORTS, findPort, codeOf } from "@/components/schedule-steps/RoutesStep";
 import { getCustomPorts } from "@/lib/custom-ports";
@@ -171,24 +172,29 @@ function expandSchedulePayload(
   }
   const dowKeys = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
-  const expansions: { date: Date; hour: number }[] = [];
+  // Slots are stored as minutes-of-day; decode each into hour + minute so a
+  // vessel that leaves at 8:30 or 6:45 expands to the right departure time.
+  const expansions: { date: Date; hour: number; minute: number }[] = [];
   for (let offset = 0; offset < RANGE_DAYS; offset++) {
     const cursor = new Date(start);
     cursor.setDate(cursor.getDate() + offset);
     const dow = (cursor.getDay() + 6) % 7; // Mon=0..Sun=6
     const key = dowKeys[dow];
-    const hours = schedule.dayTimes[key] ?? [];
-    hours.forEach((h) => expansions.push({ date: cursor, hour: h }));
+    const slots = schedule.dayTimes[key] ?? [];
+    slots.forEach((s) => {
+      const mins = normalizeSlot(s);
+      expansions.push({ date: cursor, hour: hourOf(mins), minute: minuteOf(mins) });
+    });
   }
 
   const scheduleLabel = schedule.label?.trim() || undefined;
 
   const stamp = Date.now();
-  return expansions.map(({ date, hour }, i) => ({
+  return expansions.map(({ date, hour, minute }, i) => ({
     id: `vy-${stamp}-${i}`,
     date,
     hour,
-    minute: 0,
+    minute,
     durationHours: avgDuration,
     vesselName,
     vesselType,

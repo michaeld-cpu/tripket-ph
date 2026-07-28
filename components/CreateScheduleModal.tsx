@@ -54,8 +54,9 @@ function initialScheduleValue(seed?: { date?: Date; hour?: number }): ScheduleVa
     // JS getDay: Sun=0..Sat=6; map to our Mon-first DayKey order.
     const keys: DayKey[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const key = keys[dow];
-    const hour = seed.hour ?? 8;
-    return { dayTimes: { [key]: [hour] } };
+    // Slots are minutes-of-day; a clicked calendar hour seeds that hour on-the-dot.
+    const mins = (seed.hour ?? 8) * 60;
+    return { dayTimes: { [key]: [mins] } };
   }
   return { dayTimes: {} };
 }
