@@ -636,7 +636,7 @@ function BrandTimeDialog({
   onCancel: () => void;
 }) {
   const DIALOG_W = 260;
-  const DIALOG_H = 300; // approx — for flip decision only
+  const DIALOG_H = 180; // approx — for flip decision only
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
 
   useLayoutEffect(() => {
@@ -664,40 +664,43 @@ function BrandTimeDialog({
   }, [anchorRef]);
 
   const clampInit = Math.min(MAX_MINUTES, Math.max(MIN_MINUTES, initial));
-  const [hour24, setHour24] = useState(Math.floor(clampInit / 60)); // 4..23
-  const [minute, setMinute] = useState(clampInit % 60); // 0..59
+  // Fields are typed freely (as strings) so the user can clear/retype; the
+  // committed value is derived + validated on confirm.
+  const [hourStr, setHourStr] = useState(String(((Math.floor(clampInit / 60) + 11) % 12) + 1));
+  const [minStr, setMinStr] = useState(String(clampInit % 60).padStart(2, "0"));
   const [period, setPeriod] = useState<"AM" | "PM">(Math.floor(clampInit / 60) < 12 ? "AM" : "PM");
 
-  // The 12h hour buttons the picker offers (1..12). Selecting one recomputes
-  // the underlying 24h hour from the current AM/PM toggle.
-  const hour12 = ((hour24 + 11) % 12) + 1;
+  const hourNum = Number(hourStr);
+  const minNum = Number(minStr);
+  const hourOk = /^\d{1,2}$/.test(hourStr) && hourNum >= 1 && hourNum <= 12;
+  const minOk = /^\d{1,2}$/.test(minStr) && minNum >= 0 && minNum <= 59;
 
-  const composed = (h12: number, per: "AM" | "PM", min: number): number => {
-    let h = h12 % 12; // 12 -> 0
-    if (per === "PM") h += 12;
-    return h * 60 + min;
+  // Compose 12h field values → minutes-of-day (only meaningful when both ok).
+  const candidate = (() => {
+    let h = hourNum % 12; // 12 -> 0
+    if (period === "PM") h += 12;
+    return h * 60 + minNum;
+  })();
+
+  const outOfWindow = hourOk && minOk && (candidate < MIN_MINUTES || candidate > MAX_MINUTES);
+  const clash = hourOk && minOk && candidate !== self && taken.includes(candidate);
+  const invalid = !hourOk || !minOk || outOfWindow || clash;
+
+  // Clamp a typed hour/minute to its range as the user leaves the field.
+  const blurHour = () => {
+    if (hourStr === "") return;
+    const n = Math.min(12, Math.max(1, Number(hourStr) || 1));
+    setHourStr(String(n));
+  };
+  const blurMin = () => {
+    if (minStr === "") { setMinStr("00"); return; }
+    const n = Math.min(59, Math.max(0, Number(minStr) || 0));
+    setMinStr(String(n).padStart(2, "0"));
   };
 
-  const candidate = composed(hour12, period, minute);
-  const outOfWindow = candidate < MIN_MINUTES || candidate > MAX_MINUTES;
-  const clash = candidate !== self && taken.includes(candidate);
-  const invalid = outOfWindow || clash;
+  const togglePeriod = () => setPeriod((p) => (p === "AM" ? "PM" : "AM"));
 
-  const setH12 = (h12: number) => {
-    const next = composed(h12, period, minute);
-    setHour24(Math.floor(next / 60));
-  };
-  const setPer = (per: "AM" | "PM") => {
-    setPeriod(per);
-    const next = composed(hour12, per, minute);
-    setHour24(Math.floor(next / 60));
-  };
-
-  // Operating window is 4 AM–11 PM: AM offers 4..11 + 12(noon handled by PM),
-  // PM offers 12..11. Keep it simple — offer 1..12 and let the window guard
-  // flag anything before 4 AM.
-  const HOURS_12 = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-  const MINUTES = Array.from({ length: 60 }, (_, i) => i); // every minute 0..59
+  const submit = () => { if (!invalid) onConfirm(candidate); };
 
   if (typeof document === "undefined" || !coords) return null;
 
@@ -712,92 +715,73 @@ function BrandTimeDialog({
         className="z-[100] overflow-hidden rounded-xl bg-white shadow-[0_12px_32px_rgba(15,23,42,0.16)] ring-1 ring-slate-200"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header — branded band with the live HH:MM readout. */}
-        <div className="bg-brand-500 px-4 py-3">
+        {/* Header — branded band. */}
+        <div className="bg-brand-500 px-4 py-2.5">
           <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-white/80">{title}</div>
-          <div className="mt-0.5 flex items-baseline gap-2">
-            <span className="font-mono text-[26px] font-bold leading-none tabular-nums tracking-tight text-white">
-              {hour12}:{String(minute).padStart(2, "0")}
-            </span>
-            <span className="text-[13px] font-semibold text-white/90">{period}</span>
-          </div>
         </div>
 
-        <div className="flex">
-          {/* Hours */}
-          <div className="flex-1 border-r border-slate-100">
-            <div className="px-2 pt-2 text-center text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400">Hour</div>
-            <div className="max-h-[150px] overflow-y-auto px-1.5 py-1.5">
-              {HOURS_12.map((h) => {
-                const on = h === hour12;
-                return (
-                  <button
-                    key={h}
-                    type="button"
-                    onClick={() => setH12(h)}
-                    className={
-                      "mb-0.5 flex w-full items-center justify-center rounded-md py-1.5 text-[13px] font-semibold tabular-nums transition-colors " +
-                      (on ? "bg-brand-500 text-white" : "text-slate-600 hover:bg-slate-100")
-                    }
-                  >
-                    {h}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        {/* Field row — HH : MM inputs + an AM/PM toggle with arrows. */}
+        <div className="flex items-center justify-center gap-1.5 px-4 pb-3 pt-4">
+          <input
+            type="text"
+            inputMode="numeric"
+            aria-label="Hour"
+            autoFocus
+            value={hourStr}
+            onChange={(e) => setHourStr(e.target.value.replace(/\D/g, "").slice(0, 2))}
+            onBlur={blurHour}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") onCancel(); }}
+            className={
+              "h-12 w-14 rounded-lg border text-center font-mono text-[22px] font-bold tabular-nums tracking-tight text-slate-900 focus:outline-none focus:ring-2 " +
+              (hourOk ? "border-slate-200 focus:border-brand-400 focus:ring-brand-200" : "border-rose-300 focus:ring-rose-200")
+            }
+          />
+          <span className="pb-0.5 font-mono text-[22px] font-bold text-slate-300">:</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            aria-label="Minute"
+            value={minStr}
+            onChange={(e) => setMinStr(e.target.value.replace(/\D/g, "").slice(0, 2))}
+            onBlur={blurMin}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") onCancel(); }}
+            className={
+              "h-12 w-14 rounded-lg border text-center font-mono text-[22px] font-bold tabular-nums tracking-tight text-slate-900 focus:outline-none focus:ring-2 " +
+              (minOk ? "border-slate-200 focus:border-brand-400 focus:ring-brand-200" : "border-rose-300 focus:ring-rose-200")
+            }
+          />
 
-          {/* Minutes */}
-          <div className="flex-1 border-r border-slate-100">
-            <div className="px-2 pt-2 text-center text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400">Min</div>
-            <div className="max-h-[150px] overflow-y-auto px-1.5 py-1.5">
-              {MINUTES.map((mm) => {
-                const on = mm === minute;
-                return (
-                  <button
-                    key={mm}
-                    // Scroll the selected minute into view on open so odd values
-                    // like :37 aren't buried below the fold.
-                    ref={on ? (el) => el?.scrollIntoView({ block: "center" }) : undefined}
-                    type="button"
-                    onClick={() => setMinute(mm)}
-                    className={
-                      "mb-0.5 flex w-full items-center justify-center rounded-md py-1.5 text-[13px] font-semibold tabular-nums transition-colors " +
-                      (on ? "bg-brand-500 text-white" : "text-slate-600 hover:bg-slate-100")
-                    }
-                  >
-                    {String(mm).padStart(2, "0")}
-                  </button>
-                );
-              })}
+          {/* AM/PM stepper — up/down arrows toggle between the two. */}
+          <div className="ml-1 flex flex-col items-stretch">
+            <button
+              type="button"
+              aria-label="Switch AM/PM"
+              onClick={togglePeriod}
+              className="flex h-4 items-center justify-center rounded-t-md bg-slate-100 text-slate-500 hover:bg-slate-200"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><path d="M18 15l-6-6-6 6" /></svg>
+            </button>
+            <div className="flex h-6 w-11 items-center justify-center bg-brand-500 font-mono text-[13px] font-bold tabular-nums text-white">
+              {period}
             </div>
-          </div>
-
-          {/* AM / PM */}
-          <div className="flex w-14 flex-col items-stretch justify-center gap-1.5 px-1.5">
-            {(["AM", "PM"] as const).map((per) => {
-              const on = per === period;
-              return (
-                <button
-                  key={per}
-                  type="button"
-                  onClick={() => setPer(per)}
-                  className={
-                    "rounded-md py-1.5 text-[12px] font-semibold transition-colors " +
-                    (on ? "bg-brand-500 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200")
-                  }
-                >
-                  {per}
-                </button>
-              );
-            })}
+            <button
+              type="button"
+              aria-label="Switch AM/PM"
+              onClick={togglePeriod}
+              className="flex h-4 items-center justify-center rounded-b-md bg-slate-100 text-slate-500 hover:bg-slate-200"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><path d="M6 9l6 6 6-6" /></svg>
+            </button>
           </div>
         </div>
 
         {/* Validation hint */}
         {invalid && (
-          <div className="px-3 pb-1 text-[10.5px] font-medium text-rose-500">
-            {outOfWindow ? "Pick a time between 4:00 AM and 11:59 PM." : "That time is already selected."}
+          <div className="px-4 pb-1 text-[10.5px] font-medium text-rose-500">
+            {!hourOk ? "Hour must be 1–12."
+              : !minOk ? "Minutes must be 00–59."
+              : outOfWindow ? "Pick a time between 4:00 AM and 11:59 PM."
+              : "That time is already selected."}
           </div>
         )}
 
@@ -813,7 +797,7 @@ function BrandTimeDialog({
           <button
             type="button"
             disabled={invalid}
-            onClick={() => onConfirm(candidate)}
+            onClick={submit}
             className={
               "rounded-lg px-3.5 py-1.5 text-[12px] font-semibold text-white transition-colors " +
               (invalid ? "cursor-not-allowed bg-slate-300" : "bg-brand-500 hover:bg-brand-600")
