@@ -22,16 +22,24 @@ import {
   ticketStatusLabel,
   PAX_TYPE_LABELS,
   paxFareBreakdown,
+  canEditBooking,
+  updatePassenger,
+  updateVehicle,
+  formatExpiry,
+  isExpired,
   type Booking,
   type BookingStatus,
   type FareClass,
   type Ticket,
+  type PassengerPatch,
+  type VehiclePatch,
 } from "@/lib/bookings-data";
 import { loadScopedVoyages } from "@/lib/line-scope";
 import { reviveBookings, mergeSeededBookings } from "@/lib/bookings-data";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 import ActivityLog from "@/components/ActivityLog";
 import Modal from "@/components/Modal";
+import EditEntityDialog, { type EditEntityInit } from "@/components/EditEntityDialog";
 
 
 const PAGE_SIZE = 10;
@@ -96,6 +104,11 @@ export default function BookingsPage() {
   const [copiedTicket, setCopiedTicket] = useState<string | null>(null);
   // Booking being approved via the batch ticket-number dialog.
   const [approveTarget, setApproveTarget] = useState<Booking | null>(null);
+  // Booking ref awaiting a refund confirmation (with required remarks).
+  const [refundTarget, setRefundTarget] = useState<string | null>(null);
+  // Entity being edited via the shared EditEntityDialog, tagged with its
+  // parent booking ref so the save handler knows where to write.
+  const [editTarget, setEditTarget] = useState<{ ref: string; init: EditEntityInit } | null>(null);
   const { showToast } = useToast();
   const handleCopyRef = async (ref: string) => {
     try {
@@ -205,21 +218,58 @@ export default function BookingsPage() {
   // Refunding a booking cascades to its tickets — every non-cancelled ticket
   // tied to the booking is refunded too (a cancelled/void seat isn't). Keeps
   // the passenger tickets consistent with the booking's terminal state.
-  const handleRefund = (ref: string) => {
+  const handleRefund = (ref: string, remarks: string) => {
+    const note = remarks.trim();
     updateBookings((prev) => prev.map((x) => {
       if (x.ref !== ref) return x;
       const tickets = x.tickets.map((t) =>
         t.status === "Cancelled" ? t : { ...t, status: "Refunded" as const });
       return logTo(
         { ...x, status: "Refunded", paymentStatus: "Refunded", tickets },
-        makeActivity("refunded", "Payment refunded", ACTOR, `₱${x.amount.toLocaleString()} returned`),
+        makeActivity(
+          "refunded",
+          "Payment refunded",
+          ACTOR,
+          `₱${x.amount.toLocaleString()} returned — ${note}`,
+        ),
       );
     }));
     showToast(`Booking ${ref} refunded`);
   };
 
+  // Mark an unpaid (Pending) booking as paid → it moves to Under Review
+  // (Submitted), awaiting operator approval. Clears the payment-hold expiry and
+  // issues its tickets (numbers are still assigned later at approval).
+  const handleMarkPaid = (ref: string) => {
+    updateBookings((prev) => prev.map((x) => {
+      if (x.ref !== ref || x.status !== "Pending") return x;
+      const tickets = x.tickets.map((t) =>
+        t.status === "Pending" ? { ...t, status: "Issued" as const } : t);
+      return logTo(
+        { ...x, status: "Submitted", paymentStatus: "Submitted", paymentExpiresAt: undefined, tickets },
+        makeActivity("paid", "Payment received", ACTOR, `₱${x.amount.toLocaleString()} paid`),
+      );
+    }));
+    showToast(`Booking ${ref} marked as paid`);
+  };
+
+  // Persist a passenger / vehicle edit through the shared helpers (which also
+  // append an "edited" activity entry), then close the editor.
+  const handleSavePassenger = (ref: string, ticketId: string, patch: PassengerPatch) => {
+    updateBookings((prev) => updatePassenger(prev, ref, ticketId, patch, ACTOR));
+    setEditTarget(null);
+    showToast("Passenger details updated");
+  };
+  const handleSaveVehicle = (ref: string, patch: VehiclePatch) => {
+    updateBookings((prev) => updateVehicle(prev, ref, patch, ACTOR));
+    setEditTarget(null);
+    showToast("Vehicle details updated");
+  };
+
   // Booking-date range filter — drives the dashboard-style picker.
   const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
+  // Page-stable wall clock for expiry math (memoized once per mount).
+  const now = useMemo(() => new Date(), []);
   const defaultDateRange = useMemo<DateRange>(() => ({
     start: new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30),
     end: today,
@@ -449,6 +499,12 @@ export default function BookingsPage() {
                       <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[b.status]}`}>
                         {statusLabel[b.status]}
                       </span>
+                      {b.status === "Pending" && b.paymentExpiresAt && (
+                        <div className={`mt-1 flex items-center gap-1 text-[10.5px] font-medium ${isExpired(b.paymentExpiresAt, now) ? "text-rose-500" : "text-slate-400"}`}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                          {formatExpiry(b.paymentExpiresAt, now)}
+                        </div>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
                       <div className="text-[13.5px] font-semibold tracking-tight text-slate-900">{b.ticketholder}</div>
@@ -505,6 +561,18 @@ export default function BookingsPage() {
                               </svg>
                             ),
                           },
+                          // Mark as Paid — only for unpaid Pending bookings.
+                          // Moves them into Under Review (Submitted).
+                          {
+                            label: "Mark as Paid",
+                            disabled: b.status !== "Pending",
+                            onClick: () => handleMarkPaid(b.ref),
+                            icon: (
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                <rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" />
+                              </svg>
+                            ),
+                          },
                           // Approve — only meaningful on Submitted bookings
                           // (paid, awaiting approval).
                           {
@@ -521,7 +589,7 @@ export default function BookingsPage() {
                           {
                             label: "Refund",
                             disabled: b.status !== "To Refund",
-                            onClick: () => handleRefund(b.ref),
+                            onClick: () => setRefundTarget(b.ref),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                 <path d="M3 12a9 9 0 1 0 3-6.7" />
@@ -569,7 +637,9 @@ export default function BookingsPage() {
         onClose={() => setOpenRef(null)}
         onCancel={(ref) => { handleCancel(ref); }}
         onApprove={(ref) => { handleApprove(ref); }}
-        onRefund={(ref) => { handleRefund(ref); }}
+        onRefund={(ref) => { setOpenRef(null); setRefundTarget(ref); }}
+        onMarkPaid={(ref) => { handleMarkPaid(ref); }}
+        onEdit={(init) => { if (openBooking) setEditTarget({ ref: openBooking.ref, init }); }}
         copiedTicket={copiedTicket}
         onCopyTicket={handleCopyTicket}
         copiedRef={copiedRef}
@@ -587,6 +657,32 @@ export default function BookingsPage() {
         }}
       />
 
+      <RefundConfirmDialog
+        bookingRef={refundTarget}
+        onClose={() => setRefundTarget(null)}
+        onConfirm={(remarks) => {
+          if (!refundTarget) return;
+          handleRefund(refundTarget, remarks);
+          setRefundTarget(null);
+        }}
+      />
+
+      <EditEntityDialog
+        open={!!editTarget}
+        init={editTarget?.init ?? null}
+        locked={editTarget ? !canEditBooking(
+          (bookings ?? []).find((b) => b.ref === editTarget.ref)?.status ?? "Submitted"
+        ) : false}
+        lockedReason="This booking has settled and can no longer be edited."
+        onClose={() => setEditTarget(null)}
+        onSavePassenger={(patch) => {
+          if (editTarget?.init.kind === "passenger") handleSavePassenger(editTarget.ref, editTarget.init.ticket.id, patch);
+        }}
+        onSaveVehicle={(patch) => {
+          if (editTarget) handleSaveVehicle(editTarget.ref, patch);
+        }}
+      />
+
       <FiltersDialog
         open={filtersOpen}
         onClose={() => setFiltersOpen(false)}
@@ -597,6 +693,7 @@ export default function BookingsPage() {
           { kind: "select", key: "status", label: "Status", value: statusFilter, onChange: (v) => setStatusFilter(v as "all" | BookingStatus), defaultValue: "all",
             options: [
               { value: "all", label: "All status" },
+              { value: "Pending", label: "Pending" },
               { value: "Confirmed", label: "Confirmed" },
               { value: "Submitted", label: "Under Review" },
               { value: "To Refund", label: "For Refund" },
@@ -802,6 +899,101 @@ function ApproveBookingDialog({
   );
 }
 
+// ─────────── Refund confirm dialog ───────────
+// Marking a booking Refunded is money leaving the platform, so it's gated
+// behind an explicit confirmation that also captures a required remark (the
+// reason / payout reference) for the activity log. Confirm stays disabled
+// until a remark is entered.
+function RefundConfirmDialog({
+  bookingRef,
+  onClose,
+  onConfirm,
+}: {
+  bookingRef: string | null;
+  onClose: () => void;
+  onConfirm: (remarks: string) => void;
+}) {
+  const [remarks, setRemarks] = useState("");
+  const [touched, setTouched] = useState(false);
+
+  // Reset the field whenever a new booking is targeted.
+  useEffect(() => {
+    if (bookingRef) { setRemarks(""); setTouched(false); }
+  }, [bookingRef]);
+
+  const valid = remarks.trim().length > 0;
+  const submit = () => {
+    if (!valid) { setTouched(true); return; }
+    onConfirm(remarks);
+  };
+
+  return (
+    <Modal open={!!bookingRef} onClose={onClose} maxWidth="max-w-md">
+      <div className="p-6">
+        <div className="flex items-start gap-3">
+          <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-50 text-brand-600 ring-1 ring-brand-200/70">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+              <rect x="2.5" y="6" width="19" height="13" rx="2" />
+              <path d="M12 9v5m0 0-2-2m2 2 2-2" />
+            </svg>
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">Mark this booking as &lsquo;Refunded&rsquo;?</h2>
+            <p className="mt-0.5 text-[12.5px] leading-relaxed text-slate-500">
+              Booking <span className="font-semibold text-slate-700">&lsquo;{bookingRef}&rsquo;</span> will be marked{" "}
+              <span className="font-semibold text-brand-600">Refunded</span>.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <label className="text-[12px] font-semibold text-slate-700">
+            Remarks <span className="text-rose-500">*</span>
+          </label>
+          <textarea
+            autoFocus
+            rows={3}
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+            onBlur={() => setTouched(true)}
+            placeholder="Enter refund remarks…"
+            className={
+              "mt-1.5 w-full resize-none rounded-lg border px-3 py-2 text-[13px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 " +
+              (touched && !valid
+                ? "border-rose-300 focus:ring-rose-200"
+                : "border-slate-200 focus:border-brand-400 focus:ring-brand-200")
+            }
+          />
+          {touched && !valid && (
+            <p className="mt-1 text-[11.5px] font-medium text-rose-500">Remarks are required before confirming.</p>
+          )}
+        </div>
+
+        <div className="mt-5 flex items-center justify-end gap-2.5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-slate-600 ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!valid}
+            onClick={submit}
+            className={
+              "rounded-lg px-4 py-2 text-[12.5px] font-semibold text-white transition-colors " +
+              (valid ? "bg-brand-500 hover:bg-brand-600" : "cursor-not-allowed bg-brand-300")
+            }
+          >
+            Mark Refunded
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ─────────── Booking detail dialog ───────────
 // Four sections matching the project's visual language:
 //  1. Header — booking ref + ticketholder + status + close
@@ -815,6 +1007,8 @@ function BookingDetailDialog({
   onCancel,
   onApprove,
   onRefund,
+  onMarkPaid,
+  onEdit,
   copiedTicket,
   onCopyTicket,
   copiedRef,
@@ -826,6 +1020,8 @@ function BookingDetailDialog({
   onCancel: (ref: string) => void;
   onApprove: (ref: string) => void;
   onRefund: (ref: string) => void;
+  onMarkPaid: (ref: string) => void;
+  onEdit: (init: EditEntityInit) => void;
   copiedTicket: string | null;
   onCopyTicket: (id: string) => void;
   copiedRef: string | null;
@@ -878,6 +1074,12 @@ function BookingDetailDialog({
                   <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[booking.status]}`}>
                     {statusLabel[booking.status]}
                   </span>
+                  {booking.status === "Pending" && booking.paymentExpiresAt && (
+                    <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${isExpired(booking.paymentExpiresAt) ? "bg-rose-50 text-rose-600" : "bg-slate-100 text-slate-500"}`}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                      {formatExpiry(booking.paymentExpiresAt)}
+                    </span>
+                  )}
                 </div>
                 <h2 className="mt-1.5 truncate text-[17px] font-semibold tracking-tight text-slate-900">{booking.ticketholder}</h2>
                 <p className="mt-0.5 text-[12px] text-slate-500">
@@ -1024,6 +1226,8 @@ function BookingDetailDialog({
               onCancel={onCancel}
               onApprove={onApprove}
               onRefund={onRefund}
+              onMarkPaid={onMarkPaid}
+              onEdit={onEdit}
             />
           </div>
 
@@ -1053,12 +1257,16 @@ function DialogFooter({
   onCancel,
   onApprove,
   onRefund,
+  onMarkPaid,
+  onEdit,
 }: {
   booking: Booking;
   onClose: () => void;
   onCancel: (ref: string) => void;
   onApprove: (ref: string) => void;
   onRefund: (ref: string) => void;
+  onMarkPaid: (ref: string) => void;
+  onEdit: (init: EditEntityInit) => void;
 }) {
   // Single status picker collapses Approve/Refund/Cancel into a ClickUp-style
   // dropdown (matching the tickets dialog). Each selection fires the matching
@@ -1069,23 +1277,115 @@ function DialogFooter({
     if (next === "Confirmed") onApprove(booking.ref);
     else if (next === "Cancelled") onCancel(booking.ref);
     else if (next === "Refunded") onRefund(booking.ref);
-    // Submitted is the intake state; transitioning back isn't a normal flow.
+    else if (next === "Submitted") onMarkPaid(booking.ref); // Pending → paid (Under Review)
     onClose();
   };
 
+  const editable = canEditBooking(booking.status);
+
   return (
     <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-6 py-3.5">
-      <button
-        type="button"
-        onClick={onClose}
-        className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-100"
-      >
-        Close
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-100"
+        >
+          Close
+        </button>
+        <EditBookingButton booking={booking} disabled={!editable} onEdit={onEdit} />
+      </div>
 
       <div className="flex items-center gap-2">
         <BookingStatusPicker current={booking.status} onChange={onChangeStatus} />
       </div>
+    </div>
+  );
+}
+
+// ─────────── EditBookingButton ───────────
+// The single footer entry point into the shared editor. A booking can hold
+// several passengers (± a vehicle), so this opens a small picker listing each
+// editable entity; selecting one hands its init object up to the page, which
+// renders the shared EditEntityDialog. Disabled (with a tooltip) once the
+// booking has settled.
+function EditBookingButton({ booking, disabled, onEdit }: {
+  booking: Booking;
+  disabled: boolean;
+  onEdit: (init: EditEntityInit) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        title={disabled ? "Settled bookings can't be edited" : undefined}
+        onClick={() => setOpen((v) => !v)}
+        className={
+          "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold transition-colors " +
+          (disabled
+            ? "cursor-not-allowed text-slate-300"
+            : "text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100")
+        }
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+          <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
+        Edit booking
+      </button>
+
+      {open && !disabled && (
+        <>
+          <button type="button" aria-hidden tabIndex={-1} onClick={() => setOpen(false)} className="fixed inset-0 z-10 cursor-default" />
+          <div className="absolute bottom-[calc(100%+6px)] left-0 z-20 w-64 overflow-hidden rounded-xl bg-white py-1 shadow-[0_12px_32px_rgba(15,23,42,0.16)] ring-1 ring-slate-200">
+            {/* Passengers group — brand eyebrow. */}
+            <div className="flex items-center gap-1.5 px-3 pb-1 pt-1.5">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-brand-500"><circle cx="12" cy="8" r="3.2" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" /></svg>
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-brand-600">Passengers</span>
+            </div>
+            {booking.tickets.filter((t) => t.status !== "Cancelled").map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => { setOpen(false); onEdit({ kind: "passenger", ticket: t }); }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-slate-700 hover:bg-brand-50/50"
+              >
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-50 text-brand-500">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><circle cx="12" cy="8" r="3.2" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" /></svg>
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-semibold">{t.name}</span>
+                  <span className="ml-1 text-slate-400">· {PAX_TYPE_LABELS[t.paxType]}</span>
+                </span>
+              </button>
+            ))}
+            {booking.vehicle && (
+              <>
+                {/* Vehicle group — indigo eyebrow. */}
+                <div className="mt-0.5 flex items-center gap-1.5 border-t border-slate-100 px-3 pb-1 pt-2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-indigo-500"><path d="M3 13l2-5a2 2 0 0 1 1.9-1.3h10.2A2 2 0 0 1 19 8l2 5" /><path d="M5 17h14" /><circle cx="7.5" cy="17.5" r="1.5" /><circle cx="16.5" cy="17.5" r="1.5" /></svg>
+                  <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-indigo-600">Vehicle</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setOpen(false); onEdit({ kind: "vehicle", vehicle: booking.vehicle! }); }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-slate-700 hover:bg-indigo-50/50"
+                >
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-indigo-50 text-indigo-500">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M3 13l2-5a2 2 0 0 1 1.9-1.3h10.2A2 2 0 0 1 19 8l2 5" /><path d="M5 17h14" /><circle cx="7.5" cy="17.5" r="1.5" /><circle cx="16.5" cy="17.5" r="1.5" /></svg>
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    <span className="font-semibold">{[booking.vehicle.make, booking.vehicle.model].filter(Boolean).join(" ") || booking.vehicle.class}</span>
+                    <span className="ml-1 text-slate-400">· {booking.vehicle.plateNumber}</span>
+                  </span>
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1127,12 +1427,16 @@ function BookingStatusPicker({
     if (s === "Refunded") return current === "To Refund";
     // A booking already flagged To Refund can only proceed to the actual refund.
     if (current === "To Refund") return false;
-    // Submitted is an intake state — you can't move a booking back to it.
-    if (s === "Submitted") return false;
+    // "Mark as Paid" moves an unpaid Pending booking into Under Review — only
+    // valid from Pending.
+    if (s === "Submitted") return current === "Pending";
+    // A Pending (unpaid) booking must be paid before it can be approved.
+    if (s === "Confirmed" && current === "Pending") return false;
     return true;
   };
 
   const options: { value: BookingStatus; label: string }[] = [
+    { value: "Submitted",   label: "Mark as Paid" },
     { value: "Confirmed",   label: "Approve" },
     { value: "Refunded",    label: "Refund" },
     { value: "Cancelled",   label: "Cancel booking" },

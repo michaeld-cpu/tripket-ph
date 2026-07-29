@@ -20,17 +20,22 @@ import {
   ticketStatusTone,
   ticketStatusLabel,
   type Booking,
+  type BookingStatus,
   type FareClass,
   type Ticket,
   type TicketStatus,
   type PaxType,
+  type PassengerPatch,
   PAX_TYPE_LABELS,
   paxFareBreakdown,
   deriveTicketActivity,
+  canEditBooking,
+  updatePassenger,
 } from "@/lib/bookings-data";
 import { loadScopedVoyages } from "@/lib/line-scope";
 import { reviveBookings, mergeSeededBookings } from "@/lib/bookings-data";
 import { loadStore, saveStore } from "@/lib/persisted-store";
+import EditEntityDialog from "@/components/EditEntityDialog";
 
 // ─────────── Flat ticket row shape ───────────
 // Each ticket gets flattened into a row that carries enough of its parent
@@ -38,6 +43,7 @@ import { loadStore, saveStore } from "@/lib/persisted-store";
 // in the table. Mutations on a row should mirror back into the booking.
 type TicketRow = Ticket & {
   bookingRef: string;
+  bookingStatus: BookingStatus;
   ticketholder: string;
   routeOriginCode: string;
   routeDestinationCode: string;
@@ -55,6 +61,7 @@ function flattenTickets(bookings: Booking[]): TicketRow[] {
       rows.push({
         ...t,
         bookingRef: b.ref,
+        bookingStatus: b.status,
         ticketholder: b.ticketholder,
         routeOriginCode: b.routeOriginCode,
         routeDestinationCode: b.routeDestinationCode,
@@ -125,6 +132,7 @@ export default function TicketsPage() {
   // Row whose "Mark Paid" was triggered from the row menu — opens the
   // ticket-number prompt before committing the Paid status.
   const [paidTarget, setPaidTarget] = useState<TicketRow | null>(null);
+  const [editTarget, setEditTarget] = useState<TicketRow | null>(null);
 
   // Copy-to-clipboard state for ticket IDs.
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -260,6 +268,19 @@ export default function TicketsPage() {
       saveStore("bookings", active.id, next);
       return next;
     });
+  };
+
+  // Shared editor save — routes through the same helper the bookings page uses,
+  // so an edit here logs identically and syncs across both surfaces.
+  const savePassenger = (row: TicketRow, patch: PassengerPatch) => {
+    setBookings((prev) => {
+      if (!prev) return prev;
+      const next = updatePassenger(prev, row.bookingRef, row.id, patch, "Someone");
+      saveStore("bookings", active.id, next);
+      return next;
+    });
+    setEditTarget(null);
+    showToast("Passenger details updated");
   };
 
   return (
@@ -456,6 +477,18 @@ export default function TicketsPage() {
                                 </svg>
                               ),
                             },
+                            // Edit passenger — opens the shared editor. Locked once
+                            // the parent booking has settled.
+                            {
+                              label: "Edit passenger",
+                              disabled: !canEditBooking(r.bookingStatus),
+                              onClick: () => setEditTarget(r),
+                              icon: (
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                  <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                                </svg>
+                              ),
+                            },
                             // Mark Paid — terminal Cancelled/Refunded tickets stay locked.
                             {
                               label: "Mark Issued",
@@ -543,6 +576,15 @@ export default function TicketsPage() {
         }}
       />
 
+      <EditEntityDialog
+        open={!!editTarget}
+        init={editTarget ? { kind: "passenger", ticket: editTarget } : null}
+        locked={editTarget ? !canEditBooking(editTarget.bookingStatus) : false}
+        onClose={() => setEditTarget(null)}
+        onSavePassenger={(patch) => { if (editTarget) savePassenger(editTarget, patch); }}
+        onSaveVehicle={() => { /* not used for passenger tickets */ }}
+      />
+
       <FiltersDialog
         open={filtersOpen}
         onClose={() => setFiltersOpen(false)}
@@ -553,6 +595,7 @@ export default function TicketsPage() {
           { kind: "select", key: "status", label: "Status", value: statusFilter, onChange: (v) => setStatusFilter(v as "all" | TicketStatus), defaultValue: "all",
             options: [
               { value: "all", label: "All status" },
+              { value: "Pending", label: "Pending" },
               { value: "Issued", label: "Issued" },
               { value: "To Refund", label: "For Refund" },
               { value: "Refunded", label: "Refunded" },

@@ -113,9 +113,13 @@ const SettingsIcon = ({ className }: IconProps) => (
   </svg>
 );
 
-const ShieldIcon = ({ className }: IconProps) => (
+// ID / contact-card — an avatar beside detail lines. Reads as "accounts".
+const AccountsIcon = ({ className }: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M12 3 4 6v6c0 4.4 3.4 8.4 8 9 4.6-.6 8-4.6 8-9V6l-8-3Z" />
+    <rect x="2" y="5" width="20" height="14" rx="2" />
+    <circle cx="8" cy="11" r="2" />
+    <path d="M5 16c.5-1.4 1.7-2 3-2s2.5.6 3 2" />
+    <path d="M14 10h4M14 13.5h3" />
   </svg>
 );
 
@@ -145,8 +149,9 @@ type NavEntry = NavLeaf | NavGroup;
 // Flat list — section title labels removed for compactness. A single hairline
 // divider separates the top "Overview" cluster from everything else, and a
 // second divider before Settings, matching reference apps like Linear / Vercel.
-// Nav is role-aware: the Security group (Users + Audit logs) is platform-level
-// governance and shows only for admins. Operators get the line-scoped set.
+// Nav is role-aware: the Accounts group (Users + Operators) and Audit logs are
+// platform-level governance and show only for admins. Operators get the
+// line-scoped set.
 function buildNavEntries(role: "admin" | "operator"): (NavEntry | { kind: "divider" })[] {
   const ticketsGroup: NavEntry = {
     kind: "group",
@@ -159,15 +164,14 @@ function buildNavEntries(role: "admin" | "operator"): (NavEntry | { kind: "divid
     ],
   };
 
-  const securityGroup: NavEntry = {
+  const accountsGroup: NavEntry = {
     kind: "group",
-    basePath: "/security",
-    label: "Security",
-    Icon: ShieldIcon,
+    basePath: "/accounts",
+    label: "Accounts",
+    Icon: AccountsIcon,
     children: [
       { kind: "leaf", href: "/users",      label: "Users",      Icon: UsersIcon },
       { kind: "leaf", href: "/operators",  label: "Operators",  Icon: OperatorsIcon },
-      { kind: "leaf", href: "/audit-logs", label: "Audit logs", Icon: AuditIcon },
     ],
   };
 
@@ -183,7 +187,7 @@ function buildNavEntries(role: "admin" | "operator"): (NavEntry | { kind: "divid
     ticketsGroup,
     { kind: "leaf", href: "/reports",  label: "Reports",   Icon: ReportsIcon },
 
-    ...(role === "admin" ? [securityGroup] : []),
+    ...(role === "admin" ? [accountsGroup, { kind: "leaf", href: "/audit-logs", label: "Audit logs", Icon: AuditIcon } as NavEntry] : []),
 
     { kind: "divider" },
 
@@ -293,7 +297,7 @@ function NavLink({
   const { href, label, Icon } = leaf;
   // cascadeIdx of -1 means "no entrance stagger" — used when this NavLink
   // is rendered inside an already-animating container (e.g. the expanded
-  // Security group) so it doesn't compound the delay.
+  // Accounts group) so it doesn't compound the delay.
   const useStagger = cascadeIdx >= 0;
   return (
     <motion.div

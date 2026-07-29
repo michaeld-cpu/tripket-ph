@@ -3,17 +3,19 @@
 // (stored in `tripket.voyages` localStorage). Each voyage seeds 1-3 mock
 // bookings so the table has something to render before a real booking system
 // is wired up.
-// Booking lifecycle. Submitted = paid but awaiting operator approval;
-// Confirmed = approved; To Refund = cancelled and eligible for a refund
-// (money not yet returned); Refunded = money returned.
-export type BookingStatus = "Confirmed" | "Submitted" | "Cancelled" | "To Refund" | "Refunded";
+// Booking lifecycle. Pending = placed but NOT paid yet (awaiting payment; the
+// user-side hold expires if unpaid — see `paymentExpiresAt`); Submitted = paid
+// but awaiting operator approval; Confirmed = approved; To Refund = cancelled
+// and eligible for a refund (money not yet returned); Refunded = money returned.
+export type BookingStatus = "Pending" | "Confirmed" | "Submitted" | "Cancelled" | "To Refund" | "Refunded";
 
 export type FareClass = "Economy" | "Tourist" | "Business";
 export type PassengerSex = "Male" | "Female";
 // Per-ticket lifecycle. Tickets have no "Under Review" state — that's a
-// booking-only concept. A paid ticket is Issued; Cancelled = void; To Refund =
+// booking-only concept. Pending = the booking hasn't been paid, so the ticket
+// isn't issued yet; a paid ticket is Issued; Cancelled = void; To Refund =
 // eligible for refund (money not yet returned); Refunded = money returned.
-export type TicketStatus = "Issued" | "Cancelled" | "To Refund" | "Refunded";
+export type TicketStatus = "Pending" | "Issued" | "Cancelled" | "To Refund" | "Refunded";
 
 // Per-pax ticket carried under one booking. Each ticket has its own ID
 // suffixed off the booking ref (TKT-0001-A, TKT-0001-B, …) so passengers can
@@ -187,7 +189,8 @@ export function makePaymentDetails(
   const status: PaymentProviderStatus =
     paymentStatus === "Refunded" ? "Refunded"
       : paymentStatus === "Issued" ? "Completed"
-      : "Pending";
+      : paymentStatus === "Pending" ? "Initial" // not paid yet — no charge attempted
+      : "Pending"; // Submitted — payment settling
   // Flat platform service fee, deterministic per booking.
   const serviceFee = 25 + Math.floor(rand() * 6) * 5; // ₱25–₱50 in ₱5 steps
   const subTotal = Math.max(0, total - serviceFee);
@@ -274,14 +277,19 @@ export type Booking = {
   amount: number;
   status: BookingStatus;
   bookingDate: Date;
+  /** When an unpaid (Pending) booking's payment hold lapses. Set only while
+      status is "Pending"; the user side voids the booking after this. Drives
+      the "Expires in Xh" hint in the admin table and dialog. */
+  paymentExpiresAt?: Date;
   /** Contact details captured at booking. */
   contactMobile: string;
   contactEmail: string;
   /** Internal lifecycle funding flag driving approval/refund logic.
-      Submitted = paid, awaiting operator approval. Distinct from
-      `payment.status`, which is the payment *provider*'s reported state. */
+      Pending = not paid yet; Submitted = paid, awaiting operator approval.
+      Distinct from `payment.status`, which is the payment *provider*'s
+      reported state. */
   paymentMethod: "Tripket Wallet";
-  paymentStatus: "Issued" | "Submitted" | "Refunded";
+  paymentStatus: "Pending" | "Issued" | "Submitted" | "Refunded";
   /** Payment-provider record — the gateway-facing side of the transaction,
       surfaced verbatim in the booking dialog's Payment Information section. */
   payment: PaymentDetails;
@@ -301,6 +309,105 @@ export function makeActivity(
   detail?: string
 ): ActivityEntry {
   return { id: `act-live-${Date.now()}-${activitySeq++}`, kind, title, detail, actor, at: new Date() };
+}
+
+// ─────────── Shared edit helpers ───────────
+// One code path for editing a booking's passenger tickets and vehicle, reused
+// by the Bookings page and the Tickets (passengers / vehicles) modules — all
+// three read and write the same persisted "bookings" store, so an edit made on
+// any surface shows up everywhere.
+
+// Fare/amount fields are intentionally NOT editable here: they feed the
+// payment totals and provider record, so they stay read-only to avoid
+// desyncing money. Identity + contact + logistics only.
+export type PassengerPatch = Partial<
+  Pick<Ticket, "name" | "age" | "sex" | "nationality" | "paxType" | "fareClass" | "documentType" | "documentRef" | "phone" | "email" | "idFrontUrl" | "idBackUrl">
+>;
+export type VehiclePatch = Partial<
+  Pick<Vehicle, "class" | "plateNumber" | "make" | "model" | "year" | "label" | "includedSeats" | "orUrl" | "crUrl" | "photoUrl">
+>;
+
+// Editing is allowed only before a booking settles. Once it's queued for
+// refund, refunded, or cancelled, the record is treated as historical and
+// locked so we don't rewrite a settled transaction.
+export function canEditBooking(status: BookingStatus): boolean {
+  return status === "Pending" || status === "Submitted" || status === "Confirmed";
+}
+
+// Prepend an activity entry to a booking, seeding the log from its derived
+// history the first time. Shared so every surface logs edits identically.
+export function logTo(b: Booking, entry: ActivityEntry): Booking {
+  return { ...b, activity: [entry, ...(b.activity ?? deriveActivity(b))] };
+}
+
+// ─────────── Payment-hold expiry ───────────
+// Unpaid (Pending) bookings hold the seats for a fixed window; the user side
+// voids them once it lapses. We surface the remaining time so admins can spot
+// bookings about to expire.
+export const PAYMENT_HOLD_HOURS = 24;
+
+// Human "Expires in 3h 20m" / "Expires soon" / "Expired" for a Pending
+// booking. `now` is injectable so callers using a page-stable clock stay
+// deterministic. Returns null when there's no expiry (non-Pending bookings).
+export function formatExpiry(expiresAt: Date | undefined, now: Date = new Date()): string | null {
+  if (!expiresAt) return null;
+  const ms = expiresAt.getTime() - now.getTime();
+  if (ms <= 0) return "Expired";
+  const mins = Math.floor(ms / 60000);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h >= 1) return `Expires in ${h}h${m > 0 ? ` ${m}m` : ""}`;
+  return `Expires in ${m}m`;
+}
+
+// True once the hold has lapsed (past-due, unpaid).
+export function isExpired(expiresAt: Date | undefined, now: Date = new Date()): boolean {
+  return !!expiresAt && expiresAt.getTime() <= now.getTime();
+}
+
+// Apply a passenger patch to one ticket inside its booking, append an "edited"
+// activity entry, and return a new Booking[] (pure — callers persist the
+// result). No-op if the booking/ticket isn't found or the booking is locked.
+export function updatePassenger(
+  bookings: Booking[],
+  bookingRef: string,
+  ticketId: string,
+  patch: PassengerPatch,
+  actor = "Someone",
+): Booking[] {
+  return bookings.map((b) => {
+    if (b.ref !== bookingRef || !canEditBooking(b.status)) return b;
+    let editedName = "";
+    const tickets = b.tickets.map((t) => {
+      if (t.id !== ticketId) return t;
+      editedName = patch.name ?? t.name;
+      return { ...t, ...patch };
+    });
+    if (!editedName) return b; // ticket not in this booking
+    return logTo(
+      { ...b, tickets },
+      makeActivity("edited", "Passenger details updated", actor, editedName),
+    );
+  });
+}
+
+// Apply a vehicle patch to a booking's vehicle. No-op if there's no vehicle or
+// the booking is locked.
+export function updateVehicle(
+  bookings: Booking[],
+  bookingRef: string,
+  patch: VehiclePatch,
+  actor = "Someone",
+): Booking[] {
+  return bookings.map((b) => {
+    if (b.ref !== bookingRef || !canEditBooking(b.status) || !b.vehicle) return b;
+    const vehicle: Vehicle = { ...b.vehicle, ...patch };
+    const label = [vehicle.make, vehicle.model].filter(Boolean).join(" ") || vehicle.class;
+    return logTo(
+      { ...b, vehicle, vehicleClass: vehicle.class },
+      makeActivity("edited", "Vehicle details updated", actor, label),
+    );
+  });
 }
 
 // ─────────── Activity log ───────────
@@ -348,14 +455,52 @@ export function mergeSeededBookings(persisted: Booking[], seeded: Booking[]): Bo
   return additions.length === 0 ? persisted : [...persisted, ...additions];
 }
 
+// Fixed demo record for the missing-photo / Pending flow. Applied on every
+// load (in reviveBookings) so it works against an already-persisted store
+// without needing a reseed: this booking is forced Pending (unpaid) with its
+// uploaded photos stripped, so the edit dialog reliably shows the Upload
+// prompts. Swap the ref here to demo a different booking.
+const DEMO_MISSING_PHOTO_REF = "TKT-0272";
+
+function applyDemoOverride(booking: Booking): Booking {
+  if (booking.ref !== DEMO_MISSING_PHOTO_REF) return booking;
+  const now = new Date();
+  const expires = new Date(now); expires.setHours(expires.getHours() + 18);
+  // Pin the booking date to today so the table's default 30-day window never
+  // hides it.
+  const bookedToday = new Date(now); bookedToday.setHours(0, 0, 0, 0);
+  return {
+    ...booking,
+    status: "Pending",
+    paymentStatus: "Pending",
+    paymentExpiresAt: expires,
+    bookingDate: bookedToday,
+    // Strip every uploaded ID photo so the passenger editor shows Upload/Missing.
+    tickets: booking.tickets.map((t) => ({
+      ...t,
+      status: t.status === "Cancelled" || t.status === "Refunded" ? t.status : "Pending",
+      idFrontUrl: "",
+      idBackUrl: "",
+    })),
+    // Strip the vehicle's OR / CR / photo too, if it has a vehicle.
+    vehicle: booking.vehicle
+      ? { ...booking.vehicle, orUrl: "", crUrl: "", photoUrl: undefined }
+      : booking.vehicle,
+  };
+}
+
 export function reviveBookings(raw: unknown): Booking[] {
   if (!Array.isArray(raw)) return [];
   const revived = raw.map((b) => {
     const booking = b as Booking;
-    return {
+    return applyDemoOverride({
       ...booking,
       departureDate: new Date(booking.departureDate as unknown as string),
       bookingDate: new Date(booking.bookingDate as unknown as string),
+      // Revive the payment-hold expiry (Pending bookings only).
+      paymentExpiresAt: booking.paymentExpiresAt
+        ? new Date(booking.paymentExpiresAt as unknown as string)
+        : undefined,
       // Backfill the payment record for bookings persisted before this field
       // existed, so the dialog never reads through an undefined `payment`.
       payment: booking.payment ?? makePaymentDetails(booking.ref, refRng(booking.ref), booking.amount, booking.paymentStatus),
@@ -363,7 +508,7 @@ export function reviveBookings(raw: unknown): Booking[] {
         ...e,
         at: new Date(e.at as unknown as string),
       })),
-    };
+    });
   });
   return purgeCancelled(revived);
 }
@@ -480,6 +625,18 @@ function pickMockImage(_bucket: "idFront" | "idBack" | "vehiclePhoto" | "or" | "
   return PLACEHOLDER_CAT;
 }
 
+// Like pickMockImage, but leaves a deterministic share of records without a
+// photo (empty string) so the editor's "Missing / Upload" state is visible in
+// the seed data. `missChance` is 0–1. Required buckets (ID / OR / CR) use a
+// small chance; the optional vehicle photo uses a larger one.
+function maybeMockImage(
+  bucket: "idFront" | "idBack" | "vehiclePhoto" | "or" | "cr",
+  rand: () => number,
+  missChance: number,
+): string {
+  return rand() < missChance ? "" : pickMockImage(bucket, rand);
+}
+
 // ─────────── Deterministic pseudo-random helpers ───────────
 // We want each voyage's bookings to look randomly-distributed but stay stable
 // across re-renders so users don't see rows shuffle when filters change.
@@ -551,13 +708,13 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           make,
           model,
           label: `${labelPrefix} ${model}`,
-          // 60% of bookings include an optional vehicle photo.
-          // Optional vehicle photo — every booking gets one so the dialog
-          // always has something to preview.
-          photoUrl: pickMockImage("vehiclePhoto", rand),
-          // OR + CR are both required at checkout — always present in mock data.
-          orUrl: pickMockImage("or", rand),
-          crUrl: pickMockImage("cr", rand),
+          // Optional vehicle photo — often absent, so the editor shows the
+          // Upload state for it frequently.
+          photoUrl: maybeMockImage("vehiclePhoto", rand, 0.45) || undefined,
+          // OR + CR are required at checkout, but a small share arrive without
+          // one uploaded yet so the admin sees the "Missing" prompt.
+          orUrl: maybeMockImage("or", rand, 0.2),
+          crUrl: maybeMockImage("cr", rand, 0.2),
         };
       }
       const statusRoll = rand();
@@ -574,7 +731,12 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         ? "Refunded"
         : counter === 2
           ? "To Refund"
-          : statusRoll < 0.65 ? "Confirmed" : statusRoll < 0.9 ? "Submitted" : "To Refund";
+          : counter === 3
+            ? "Pending" // guaranteed unpaid sample so the state always shows
+            : statusRoll < 0.6 ? "Confirmed"
+              : statusRoll < 0.78 ? "Submitted"
+              : statusRoll < 0.9 ? "Pending"
+              : "To Refund";
       const forceTicketMix17 = counter === 17;
       const first = FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
       const last = LAST_NAMES[Math.floor(rand() * LAST_NAMES.length)];
@@ -626,6 +788,8 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         const ticketStatus: TicketStatus = (() => {
           if (status === "To Refund") return "To Refund";
           if (status === "Refunded")  return "Refunded";
+          // Pending booking = unpaid, so its tickets aren't issued yet.
+          if (status === "Pending")   return "Pending";
           // Under Review (Submitted) is a booking-only state; its tickets are
           // paid, so they're Issued.
           if (forceTicketMix17) {
@@ -654,8 +818,10 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           nationality: "Filipino",
           documentType: idType.label,
           documentRef: idType.format(rand),
-          idFrontUrl: pickMockImage("idFront", rand),
-          idBackUrl: pickMockImage("idBack", rand),
+          // A share of passengers haven't uploaded one or both ID sides yet,
+          // so the editor surfaces the "Missing / Upload" state.
+          idFrontUrl: maybeMockImage("idFront", rand, 0.25),
+          idBackUrl: maybeMockImage("idBack", rand, 0.35),
           // Provisional fare; comping pass below zeros out the seats
           // covered by the vehicle fee. grossFare stays at the published
           // rate so the per-passenger display can stay neutral.
@@ -697,7 +863,22 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       const paymentStatus: Booking["paymentStatus"] =
         status === "Refunded"
           ? "Refunded"
+          : status === "Pending" ? "Pending"
           : status === "Submitted" ? "Submitted" : "Issued";
+
+      // Pending (unpaid) bookings hold their seats for PAYMENT_HOLD_HOURS. Some
+      // samples are deliberately near-lapse (or already expired) so the admin
+      // table shows the full spread of the expiry hint.
+      const paymentExpiresAt = status === "Pending"
+        ? (() => {
+            const exp = new Date(bookingDate);
+            // Hours offset from the deterministic rng: mostly in-window, a few
+            // about to lapse, one already expired.
+            const offset = Math.floor(rand() * (PAYMENT_HOLD_HOURS + 6)) - 3; // -3..+26h
+            exp.setHours(exp.getHours() + offset);
+            return exp;
+          })()
+        : undefined;
 
       const amount = pax * baseFare + (hasVehicle ? 500 + Math.floor(rand() * 2000) : 0);
       bookings.push({
@@ -715,6 +896,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         amount,
         status,
         bookingDate,
+        paymentExpiresAt,
         contactMobile,
         contactEmail,
         paymentMethod,
@@ -783,9 +965,9 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           make,
           model,
           label: `${labelPrefix} ${model}`,
-          photoUrl: pickMockImage("vehiclePhoto", rand),
-          orUrl: pickMockImage("or", rand),
-          crUrl: pickMockImage("cr", rand),
+          photoUrl: maybeMockImage("vehiclePhoto", rand, 0.45) || undefined,
+          orUrl: maybeMockImage("or", rand, 0.2),
+          crUrl: maybeMockImage("cr", rand, 0.2),
         };
       }
 
@@ -816,8 +998,8 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           nationality: "Filipino",
           documentType: idType.label,
           documentRef: idType.format(rand),
-          idFrontUrl: pickMockImage("idFront", rand),
-          idBackUrl: pickMockImage("idBack", rand),
+          idFrontUrl: maybeMockImage("idFront", rand, 0.25),
+          idBackUrl: maybeMockImage("idBack", rand, 0.35),
           fare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
           grossFare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
           phone: isLead ? contactMobile : `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14),
@@ -914,9 +1096,9 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           make,
           model,
           label: `${labelPrefix} ${model}`,
-          photoUrl: pickMockImage("vehiclePhoto", rand),
-          orUrl: pickMockImage("or", rand),
-          crUrl: pickMockImage("cr", rand),
+          photoUrl: maybeMockImage("vehiclePhoto", rand, 0.45) || undefined,
+          orUrl: maybeMockImage("or", rand, 0.2),
+          crUrl: maybeMockImage("cr", rand, 0.2),
         };
       }
 
@@ -947,8 +1129,8 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           nationality: "Filipino",
           documentType: idType.label,
           documentRef: idType.format(rand),
-          idFrontUrl: pickMockImage("idFront", rand),
-          idBackUrl: pickMockImage("idBack", rand),
+          idFrontUrl: maybeMockImage("idFront", rand, 0.25),
+          idBackUrl: maybeMockImage("idBack", rand, 0.35),
           fare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
           grossFare: Math.round(baseFare * FARE_CLASS_MULTIPLIER[fareClass]),
           phone: isLead ? contactMobile : `+63 ${900 + Math.floor(rand() * 99)}${String(1000000 + Math.floor(rand() * 8999999))}`.slice(0, 14),
@@ -999,14 +1181,18 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
     });
   }
 
-  // Newest bookings first.
-  return bookings.sort((a, b) => b.bookingDate.getTime() - a.bookingDate.getTime());
+  // Newest bookings first. Apply the fixed demo override so a fresh seed shows
+  // it too (the persisted-store path applies it in reviveBookings).
+  return bookings
+    .map(applyDemoOverride)
+    .sort((a, b) => b.bookingDate.getTime() - a.bookingDate.getTime());
 }
 // Unified status palette — uppercase labels, no dots, restrained tones.
 // Approved = opaque emerald (settled / good); Submitted = brand-orange
 // (needs approval); To Refund = amber (payout pending); Cancelled = struck
 // slate; Refunded = sky.
 export const statusTone: Record<BookingStatus, string> = {
+  Pending:     "bg-yellow-50 text-yellow-700 ring-1 ring-inset ring-yellow-200",
   Confirmed:   "bg-emerald-100 text-emerald-800",
   Submitted:   "bg-brand-50 text-brand-700",
   Cancelled:   "bg-slate-100 text-slate-500",
@@ -1017,6 +1203,7 @@ export const statusTone: Record<BookingStatus, string> = {
 // Display label per status — keeps the internal "Confirmed" value (so all
 // existing logic still works) while surfacing "Approved" to the operator.
 export const statusLabel: Record<BookingStatus, string> = {
+  Pending:     "Pending",
   Confirmed:   "Confirmed",
   Submitted:   "Under Review",
   Cancelled:   "Cancelled",
@@ -1024,10 +1211,11 @@ export const statusLabel: Record<BookingStatus, string> = {
   Refunded:    "Refunded",
 };
 
-// Per-ticket palette — Issued is the healthy default (emerald), Cancelled is
-// quietly muted slate, To Refund is amber (payout pending), Refunded matches
-// the booking-level refund tone.
+// Per-ticket palette — Pending is a waiting (yellow) state, Issued is the
+// healthy default (emerald), Cancelled is quietly muted slate, To Refund is
+// amber (payout pending), Refunded matches the booking-level refund tone.
 export const ticketStatusTone: Record<TicketStatus, string> = {
+  Pending:     "bg-yellow-50 text-yellow-700 ring-1 ring-inset ring-yellow-200",
   Issued:      "bg-emerald-100 text-emerald-800",
   Cancelled:   "bg-slate-100 text-slate-500",
   "To Refund": "bg-amber-100 text-amber-800",
@@ -1036,6 +1224,7 @@ export const ticketStatusTone: Record<TicketStatus, string> = {
 
 // Per-ticket display label — "To Refund" surfaces as "For Refund".
 export const ticketStatusLabel: Record<TicketStatus, string> = {
+  Pending:     "Pending",
   Issued:      "Issued",
   Cancelled:   "Cancelled",
   "To Refund": "For Refund",

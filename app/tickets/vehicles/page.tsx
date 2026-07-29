@@ -16,10 +16,14 @@ import {
   mergeSeededBookings,
   statusTone,
   statusLabel,
+  canEditBooking,
+  updateVehicle,
   type Booking,
+  type VehiclePatch,
 } from "@/lib/bookings-data";
 import { loadScopedVoyages } from "@/lib/line-scope";
 import { loadStore, saveStore } from "@/lib/persisted-store";
+import EditEntityDialog from "@/components/EditEntityDialog";
 
 const PAGE_SIZE = 10;
 
@@ -92,6 +96,7 @@ export default function VehicleTicketsPage() {
   const [page, setPage] = useState(1);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [editRef, setEditRef] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -123,6 +128,24 @@ export default function VehicleTicketsPage() {
   useEffect(() => { setPage(1); }, [query]);
 
   const rows = useMemo(() => (bookings ? flattenVehicles(bookings) : []), [bookings]);
+
+  // Booking whose vehicle is being edited — the editor works off the real
+  // Vehicle object (not the flattened row) so it reads/writes every field.
+  const editBooking = useMemo(
+    () => (bookings ?? []).find((b) => b.ref === editRef) ?? null,
+    [bookings, editRef]
+  );
+
+  const saveVehicle = (ref: string, patch: VehiclePatch) => {
+    setBookings((prev) => {
+      if (!prev) return prev;
+      const next = updateVehicle(prev, ref, patch, "Someone");
+      saveStore("bookings", active.id, next);
+      return next;
+    });
+    setEditRef(null);
+    showToast("Vehicle details updated");
+  };
   const openRow = useMemo(() => rows.find((r) => r.id === openId) ?? null, [rows, openId]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -252,6 +275,11 @@ export default function VehicleTicketsPage() {
                           label: "View booking",
                           onClick: () => { window.location.href = `/bookings?ref=${r.bookingRef}`; },
                           icon: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" /><circle cx="12" cy="12" r="3" /></svg>),
+                        }, {
+                          label: "Edit vehicle",
+                          disabled: !canEditBooking(r.status),
+                          onClick: () => setEditRef(r.bookingRef),
+                          icon: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>),
                         }]}
                       />
                     </td>
@@ -266,6 +294,15 @@ export default function VehicleTicketsPage() {
       )}
 
       <VehicleDetailDialog row={openRow} lineName={active.name} onClose={() => setOpenId(null)} />
+
+      <EditEntityDialog
+        open={!!editBooking?.vehicle}
+        init={editBooking?.vehicle ? { kind: "vehicle", vehicle: editBooking.vehicle } : null}
+        locked={editBooking ? !canEditBooking(editBooking.status) : false}
+        onClose={() => setEditRef(null)}
+        onSavePassenger={() => { /* not used for vehicle tickets */ }}
+        onSaveVehicle={(patch) => { if (editRef) saveVehicle(editRef, patch); }}
+      />
     </div>
   );
 }

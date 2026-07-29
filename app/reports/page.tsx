@@ -1303,8 +1303,8 @@ function buildDailyTrend(bookings: Booking[], range: DateRange) {
 }
 
 function bucketBookingStatus(bookings: Booking[]): { key: BookingStatus; count: number }[] {
-  const order: BookingStatus[] = ["Confirmed", "Submitted", "Cancelled", "To Refund", "Refunded"];
-  const counts: Record<BookingStatus, number> = { Confirmed: 0, Submitted: 0, Cancelled: 0, "To Refund": 0, Refunded: 0 };
+  const order: BookingStatus[] = ["Pending", "Confirmed", "Submitted", "Cancelled", "To Refund", "Refunded"];
+  const counts: Record<BookingStatus, number> = { Pending: 0, Confirmed: 0, Submitted: 0, Cancelled: 0, "To Refund": 0, Refunded: 0 };
   bookings.forEach((b) => { counts[b.status] += 1; });
   return order.map((k) => ({ key: k, count: counts[k] }));
 }
@@ -1641,8 +1641,8 @@ function synthesizeBackfillBookings(real: Booking[]): Booking[] {
 }
 
 function bucketTicketStatus(bookings: Booking[]): { key: TicketStatus; count: number }[] {
-  const order: TicketStatus[] = ["Issued", "Cancelled", "To Refund", "Refunded"];
-  const counts: Record<TicketStatus, number> = { Issued: 0, Cancelled: 0, "To Refund": 0, Refunded: 0 };
+  const order: TicketStatus[] = ["Pending", "Issued", "Cancelled", "To Refund", "Refunded"];
+  const counts: Record<TicketStatus, number> = { Pending: 0, Issued: 0, Cancelled: 0, "To Refund": 0, Refunded: 0 };
   bookings.forEach((b) => b.tickets.forEach((t) => { counts[t.status] += 1; }));
   return order.map((k) => ({ key: k, count: counts[k] }));
 }
