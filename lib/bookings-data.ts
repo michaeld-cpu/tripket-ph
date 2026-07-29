@@ -1192,7 +1192,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
 // (needs approval); To Refund = amber (payout pending); Cancelled = struck
 // slate; Refunded = sky.
 export const statusTone: Record<BookingStatus, string> = {
-  Pending:     "bg-yellow-50 text-yellow-700 ring-1 ring-inset ring-yellow-200",
+  Pending:     "bg-yellow-50 text-yellow-700",
   Confirmed:   "bg-emerald-100 text-emerald-800",
   Submitted:   "bg-brand-50 text-brand-700",
   Cancelled:   "bg-slate-100 text-slate-500",
@@ -1215,7 +1215,7 @@ export const statusLabel: Record<BookingStatus, string> = {
 // healthy default (emerald), Cancelled is quietly muted slate, To Refund is
 // amber (payout pending), Refunded matches the booking-level refund tone.
 export const ticketStatusTone: Record<TicketStatus, string> = {
-  Pending:     "bg-yellow-50 text-yellow-700 ring-1 ring-inset ring-yellow-200",
+  Pending:     "bg-yellow-50 text-yellow-700",
   Issued:      "bg-emerald-100 text-emerald-800",
   Cancelled:   "bg-slate-100 text-slate-500",
   "To Refund": "bg-amber-100 text-amber-800",

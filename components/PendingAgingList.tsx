@@ -18,14 +18,16 @@ type Pending = {
   voyageId: string;
   departure: string;
   amount: number;
-  // Submitted = paid, awaiting operator approval (was "Pending").
-  status: "Submitted" | "Confirmed" | "Cancelled";
+  // Pending = partial booking, not paid yet — the state this list surfaces.
+  // (Submitted = paid, awaiting admin approval — a distinct state.)
+  status: "Pending" | "Submitted" | "Confirmed" | "Cancelled";
   bookingDate: string;
   ageMinutes: number;
 };
 
 // Unified status palette — matches the bookings table sitewide.
 const statusTone: Record<Pending["status"], string> = {
+  Pending: "bg-yellow-50 text-yellow-700",
   Submitted: "bg-brand-50 text-brand-700",
   Confirmed: "bg-emerald-100 text-emerald-800",
   Cancelled: "bg-slate-100 text-slate-500",
