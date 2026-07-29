@@ -606,10 +606,6 @@ function SlotChip({
           </svg>
         </span>
         {fmtTime(mins)}
-        {/* "Edit" cue that expands in on hover. */}
-        <span className="max-w-0 overflow-hidden text-[11px] font-medium text-white/80 opacity-0 transition-all duration-150 group-hover:ml-0.5 group-hover:max-w-[40px] group-hover:opacity-100">
-          Edit
-        </span>
       </button>
       <button
         type="button"
