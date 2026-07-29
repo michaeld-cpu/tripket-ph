@@ -7,7 +7,7 @@ import Select from "@/components/Select";
 import Tooltip from "@/components/Tooltip";
 import CreateScheduleModal from "@/components/CreateScheduleModal";
 import { getSeries, saveSeries } from "@/lib/schedule-series";
-import { normalizeSlot, hourOf, minuteOf } from "@/lib/schedule-time";
+import { normalizeSlot, hourOf, minuteOf, fmtTime } from "@/lib/schedule-time";
 import { MOCK_FLEET, type VesselType } from "@/components/schedule-steps/VesselStep";
 import { PORTS, findPort, codeOf } from "@/components/schedule-steps/RoutesStep";
 import { getCustomPorts } from "@/lib/custom-ports";
@@ -929,8 +929,10 @@ function VoyageCard({
     for (let i = 0; i < voyage.id.length; i++) { h ^= voyage.id.charCodeAt(i); h = Math.imul(h, 16777619); }
     return (h >>> 0) % 100;
   })();
-  // A live (Scheduled) voyage reads as "Active"; other lifecycle states show as-is.
-  const statusLabel = voyage.status === "Scheduled" ? "Active" : voyage.status;
+  // Departure time (e.g. "4:30 AM") for the card caption — mirrors the weekly
+  // template card. Non-scheduled lifecycle states still surface their status.
+  const timeLabel = fmtTime(voyage.hour * 60 + voyage.minute);
+  const captionMeta = voyage.status === "Scheduled" ? timeLabel : voyage.status;
 
   return (
     <button
@@ -970,7 +972,7 @@ function VoyageCard({
 
       {/* ID + status caption. */}
       <span className="truncate text-[10px] font-medium tracking-tight text-slate-500">
-        ID: {shortId} | {statusLabel}
+        ID: {shortId} | {captionMeta}
       </span>
       {/* Route — headline, using origin/destination codes. */}
       <span

@@ -586,19 +586,30 @@ function SlotChip({
   const chipRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-lg bg-brand-500 py-1 pl-2 pr-1 shadow-[0_1px_3px_rgba(234,88,12,0.35)]">
+    <span className="group inline-flex items-center gap-1 rounded-lg bg-brand-500 py-1 pl-2 pr-1 shadow-[0_1px_3px_rgba(234,88,12,0.35)] transition-colors hover:bg-brand-600">
       <button
         ref={chipRef}
         type="button"
         onClick={() => setEditing(true)}
         title="Edit time"
-        className="inline-flex items-center gap-1.5 rounded-md px-0.5 text-[13px] font-semibold tabular-nums tracking-tight text-white hover:text-white/90"
+        className="inline-flex items-center gap-1.5 rounded-md px-0.5 text-[13px] font-semibold tabular-nums tracking-tight text-white"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-white/80">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 8v4l2.5 2.5" />
-        </svg>
+        {/* Clock by default; on hover it swaps to a pencil to signal "edit". */}
+        <span className="relative grid h-3.5 w-3.5 place-items-center text-white/80">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute h-3.5 w-3.5 transition-opacity group-hover:opacity-0">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v4l2.5 2.5" />
+          </svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+        </span>
         {fmtTime(mins)}
+        {/* "Edit" cue that expands in on hover. */}
+        <span className="max-w-0 overflow-hidden text-[11px] font-medium text-white/80 opacity-0 transition-all duration-150 group-hover:ml-0.5 group-hover:max-w-[40px] group-hover:opacity-100">
+          Edit
+        </span>
       </button>
       <button
         type="button"
