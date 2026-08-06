@@ -367,11 +367,15 @@ export default function BookingsPage() {
       if (routeFilter !== "all" && `${b.routeOriginCode}→${b.routeDestinationCode}` !== routeFilter) return false;
       if (vesselFilter !== "all" && b.vesselName !== vesselFilter) return false;
       if (statusFilter !== "all" && b.status !== statusFilter) return false;
-      if (b.bookingDate < dateRange.start || b.bookingDate > dateRange.end) return false;
       if (q) {
         const hay = `${b.ref} ${b.ticketholder} ${b.routeOriginCode} ${b.routeDestinationCode} ${b.vesselName}`.toLowerCase();
         if (!hay.includes(q)) return false;
+        // An explicit text search targets a specific booking, so it isn't
+        // constrained by the date-range picker — otherwise an exact ref match
+        // outside the current window silently returns nothing.
+        return true;
       }
+      if (b.bookingDate < dateRange.start || b.bookingDate > dateRange.end) return false;
       return true;
     });
   }, [bookings, query, routeFilter, vesselFilter, statusFilter, dateRange]);
@@ -1345,7 +1349,10 @@ function EditBookingButton({ booking, disabled, onEdit }: {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-brand-500"><circle cx="12" cy="8" r="3.2" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" /></svg>
               <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-brand-600">Passengers</span>
             </div>
-            {booking.tickets.filter((t) => t.status !== "Cancelled").map((t) => (
+            {/* Cancelled and customer-removed passengers are excluded — both
+                are settled/pending-refund records, not editable rows. They
+                remain visible in the booking roster + activity log. */}
+            {booking.tickets.filter((t) => t.status !== "Cancelled" && !t.removedByUser).map((t) => (
               <button
                 key={t.id}
                 type="button"
@@ -1547,6 +1554,12 @@ function PassengerTable({
                 <span className="truncate font-mono text-[12.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-900">{t.ticketNumber ?? "—"}</span>
                 <div className="min-w-0">
                   <span className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{t.name || "—"}</span>
+                  {t.removedByUser && (
+                    <span className="mt-0.5 flex items-center gap-1 text-[10.5px] font-medium text-amber-700">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 shrink-0"><circle cx="9" cy="8" r="3" /><path d="M4 20c0-3 2.2-5 5-5s5 2 5 5" /><path d="M16 11h5" /></svg>
+                      Removed by customer
+                    </span>
+                  )}
                 </div>
                 <span className="text-[12px] font-medium tracking-tight text-slate-700">{t.sex}</span>
                 <span className="font-mono text-[12px] tabular-nums text-slate-700">{t.age}</span>
@@ -1744,7 +1757,7 @@ function VehicleInformation({ booking }: { booking: Booking }) {
                 <ul className="mt-1.5 space-y-1.5 text-[12px]">
                   <RequirementRow label="Official Receipt (OR)" required uploaded={!!v.orUrl} previewUrl={v.orUrl} onPreview={() => v.orUrl && setPreview({ title: "Official Receipt (OR)", url: v.orUrl })} />
                   <RequirementRow label="Certificate of Registration (CR)" required uploaded={!!v.crUrl} previewUrl={v.crUrl} onPreview={() => v.crUrl && setPreview({ title: "Certificate of Registration (CR)", url: v.crUrl })} />
-                  <RequirementRow label="Vehicle Photo" required={false} uploaded={!!v.photoUrl} previewUrl={v.photoUrl} onPreview={() => v.photoUrl && setPreview({ title: "Vehicle Photo", url: v.photoUrl })} />
+                  <RequirementRow label="Vehicle Photo" required uploaded={!!v.photoUrl} previewUrl={v.photoUrl} onPreview={() => v.photoUrl && setPreview({ title: "Vehicle Photo", url: v.photoUrl })} />
                 </ul>
               </div>
             </div>

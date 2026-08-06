@@ -242,11 +242,13 @@ export default function TicketsPage() {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (classFilter !== "all" && r.fareClass !== classFilter) return false;
       if (paxTypeFilter !== "all" && r.paxType !== paxTypeFilter) return false;
-      if (r.bookingDate < dateRange.start || r.bookingDate > dateRange.end) return false;
       if (q) {
         const hay = `${r.id} ${r.bookingRef} ${r.name} ${r.routeOriginCode} ${r.routeDestinationCode} ${r.vesselName}`.toLowerCase();
         if (!hay.includes(q)) return false;
+        // Explicit search targets a specific ticket, so skip the date window.
+        return true;
       }
+      if (r.bookingDate < dateRange.start || r.bookingDate > dateRange.end) return false;
       return true;
     });
   }, [rows, query, routeFilter, vesselFilter, statusFilter, classFilter, paxTypeFilter, dateRange]);
@@ -399,6 +401,12 @@ export default function TicketsPage() {
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 align-middle">
                         <span className="text-[13.5px] font-semibold tracking-tight text-slate-900">{r.name}</span>
+                        {r.removedByUser && (
+                          <span className="mt-0.5 flex items-center gap-1 text-[10.5px] font-medium text-amber-700">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 shrink-0"><circle cx="9" cy="8" r="3" /><path d="M4 20c0-3 2.2-5 5-5s5 2 5 5" /><path d="M16 11h5" /></svg>
+                            Removed by customer
+                          </span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 align-middle">
                         <div className="inline-flex items-center gap-1.5">

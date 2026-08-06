@@ -65,6 +65,11 @@ export type Ticket = {
       configured passenger types (Senior/PWD/Student/Infant) or "regular"
       for full-fare adults. Distinct from fareClass (cabin) and comped. */
   paxType: PaxType;
+  /** True when the customer removed this passenger from their booking on the
+      user side. The ticket is NOT hard-deleted — the admin still sees the row,
+      it's flagged "To Refund", and the removal is surfaced in the activity
+      log. Distinct from an admin-initiated cancellation. */
+  removedByUser?: boolean;
 };
 
 // Mirrors the vessel-creation passenger types (defaultPassengerTypes) plus
@@ -415,7 +420,8 @@ export function updateVehicle(
 // derived deterministically from a booking's lifecycle until a real audit
 // backend feeds them. Newest first.
 export type ActivityKind =
-  | "created" | "approved" | "paid" | "ticket_paid" | "to_refund" | "refunded" | "cancelled" | "edited" | "note";
+  | "created" | "approved" | "paid" | "ticket_paid" | "to_refund" | "refunded" | "cancelled" | "edited" | "note"
+  | "passenger_removed";
 
 export type ActivityEntry = {
   id: string;
@@ -489,22 +495,47 @@ function applyDemoOverride(booking: Booking): Booking {
   };
 }
 
+// Booking ref that carries the "customer removed a passenger" sample. Must
+// match the forced sample in deriveBookings so a fresh seed and a migrated
+// stale store agree.
+const USER_REMOVED_SAMPLE_REF = "TKT-0004";
+
+// Migrate a persisted booking seeded before `removedByUser` existed: on the
+// sample booking, flag its 2nd passenger (or the last one if only 1) as
+// customer-removed and roll it into the refund queue. Idempotent — does
+// nothing once any ticket already carries the flag. Returns the (possibly
+// new) booking; drops cached `activity` so the log re-derives with the entry.
+function migrateUserRemovedSample(b: Booking): Booking {
+  if (b.ref !== USER_REMOVED_SAMPLE_REF) return b;
+  if (b.tickets.some((t) => t.removedByUser)) return b;
+  if (b.tickets.length === 0) return b;
+  const idx = b.tickets.length > 1 ? 1 : 0;
+  const tickets = b.tickets.map((t, i) =>
+    i === idx ? { ...t, removedByUser: true, status: "To Refund" as const } : t,
+  );
+  // Drop the cached activity so deriveActivity re-runs and emits the
+  // "Passenger removed by customer" entry.
+  const { activity: _drop, ...rest } = b;
+  void _drop;
+  return { ...rest, tickets };
+}
+
 export function reviveBookings(raw: unknown): Booking[] {
   if (!Array.isArray(raw)) return [];
   const revived = raw.map((b) => {
-    const booking = b as Booking;
+    const migrated = migrateUserRemovedSample(b as Booking);
     return applyDemoOverride({
-      ...booking,
-      departureDate: new Date(booking.departureDate as unknown as string),
-      bookingDate: new Date(booking.bookingDate as unknown as string),
+      ...migrated,
+      departureDate: new Date(migrated.departureDate as unknown as string),
+      bookingDate: new Date(migrated.bookingDate as unknown as string),
       // Revive the payment-hold expiry (Pending bookings only).
-      paymentExpiresAt: booking.paymentExpiresAt
-        ? new Date(booking.paymentExpiresAt as unknown as string)
+      paymentExpiresAt: migrated.paymentExpiresAt
+        ? new Date(migrated.paymentExpiresAt as unknown as string)
         : undefined,
       // Backfill the payment record for bookings persisted before this field
       // existed, so the dialog never reads through an undefined `payment`.
-      payment: booking.payment ?? makePaymentDetails(booking.ref, refRng(booking.ref), booking.amount, booking.paymentStatus),
-      activity: (booking.activity ?? []).map((e) => ({
+      payment: migrated.payment ?? makePaymentDetails(migrated.ref, refRng(migrated.ref), migrated.amount, migrated.paymentStatus),
+      activity: (migrated.activity ?? []).map((e) => ({
         ...e,
         at: new Date(e.at as unknown as string),
       })),
@@ -531,6 +562,13 @@ export function deriveActivity(b: Booking): ActivityEntry[] {
 
   // 1. Created (system, at booking time).
   push("created", "Booking created", "System", `${b.pax} passenger${b.pax === 1 ? "" : "s"} · ${b.routeOriginCode} → ${b.routeDestinationCode}`);
+
+  // 1b. Customer-side passenger removals — the tickets stay on the booking
+  // (flagged for refund), so surface each removal in the booking trail too.
+  b.tickets.filter((t) => t.removedByUser).forEach((t) => {
+    step(15 + Math.floor(rand() * 180));
+    push("passenger_removed", "Passenger removed by customer", t.name, `${t.name} removed · fare ₱${t.grossFare.toLocaleString()} flagged for refund`);
+  });
 
   // 2. Approval / payment depending on status.
   if (b.status === "Confirmed" || b.status === "Refunded") {
@@ -583,7 +621,13 @@ export function deriveTicketActivity(t: Ticket, ref: string, createdAt: Date): A
     step(20 + Math.floor(rand() * 200));
     push("ticket_paid", "Marked as paid", staff(), t.ticketNumber ? `Ticket no. ${t.ticketNumber}` : undefined);
   }
-  if (t.status === "Cancelled" || t.status === "To Refund" || t.status === "Refunded") {
+  if (t.removedByUser) {
+    // Customer removed this passenger on the user side — the ticket stays on
+    // record and rolls into the refund queue, so it's logged as a customer
+    // action rather than an admin cancellation.
+    step(60 + Math.floor(rand() * 400));
+    push("passenger_removed", "Passenger removed by customer", t.name, `${t.name} removed from booking · fare ₱${t.grossFare.toLocaleString()} flagged for refund`);
+  } else if (t.status === "Cancelled" || t.status === "To Refund" || t.status === "Refunded") {
     step(60 + Math.floor(rand() * 400));
     push("cancelled", "Ticket cancelled", staff());
   }
@@ -686,9 +730,11 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
       // under the vehicle fee), so we floor pax at 2 in that case.
       const pax = counter === 17
         ? 4 // forced sample: 4 passengers with mixed ticket statuses
-        : hasVehicle
-          ? 2 + Math.floor(rand() * 3) // 2-4 pax when a vehicle is involved
-          : 1 + Math.floor(rand() * 4);
+        : counter === 4
+          ? 3 // forced sample: multi-pax booking with a user-removed passenger
+          : hasVehicle
+            ? 2 + Math.floor(rand() * 3) // 2-4 pax when a vehicle is involved
+            : 1 + Math.floor(rand() * 4);
       const vehicleClass = hasVehicle ? VEHICLE_LABELS[Math.floor(rand() * VEHICLE_LABELS.length)] : undefined;
       // Realistic PH plate format: 3 letters + space + 4 digits (e.g. ABC 1234).
       let vehicle: Vehicle | undefined;
@@ -733,11 +779,17 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           ? "To Refund"
           : counter === 3
             ? "Pending" // guaranteed unpaid sample so the state always shows
-            : statusRoll < 0.6 ? "Confirmed"
-              : statusRoll < 0.78 ? "Submitted"
-              : statusRoll < 0.9 ? "Pending"
-              : "To Refund";
+            : counter === 4
+              ? "Confirmed" // paid booking so the user-removed pax has a fare to refund
+              : statusRoll < 0.6 ? "Confirmed"
+                : statusRoll < 0.78 ? "Submitted"
+                : statusRoll < 0.9 ? "Pending"
+                : "To Refund";
       const forceTicketMix17 = counter === 17;
+      // counter === 4 → a multi-pax booking where the customer removed one
+      // passenger on the user side. That ticket stays on record, flagged To
+      // Refund, and shows a "Passenger removed by customer" activity entry.
+      const forceUserRemoved4 = counter === 4 && pax >= 2;
       const first = FIRST_NAMES[Math.floor(rand() * FIRST_NAMES.length)];
       const last = LAST_NAMES[Math.floor(rand() * LAST_NAMES.length)];
       // Booking date sits 1-14 days before departure.
@@ -785,7 +837,11 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         const paxEmail = isLead
           ? contactEmail
           : `${tFirst.toLowerCase()}.${last.replace(/\s+/g, "").toLowerCase()}@example.com`;
+        // The customer removed this specific passenger — the ticket rolls into
+        // the refund queue but stays visible to the admin.
+        const isUserRemoved = forceUserRemoved4 && p === 1;
         const ticketStatus: TicketStatus = (() => {
+          if (isUserRemoved) return "To Refund";
           if (status === "To Refund") return "To Refund";
           if (status === "Refunded")  return "Refunded";
           // Pending booking = unpaid, so its tickets aren't issued yet.
@@ -830,6 +886,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           phone: paxPhone,
           email: paxEmail,
           status: ticketStatus,
+          ...(isUserRemoved ? { removedByUser: true } : {}),
         });
         void fareClasses; // silence lint
       }
