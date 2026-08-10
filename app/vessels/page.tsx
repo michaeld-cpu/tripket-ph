@@ -297,8 +297,6 @@ export default function VesselsPage() {
                   { value: "all", label: "All status" },
                   { value: "Active", label: "Active" },
                   { value: "Inactive", label: "Inactive" },
-                  { value: "Maintenance", label: "Maintenance" },
-                  { value: "Retired", label: "Retired" },
                 ]}
               />
             </div>
