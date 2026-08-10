@@ -106,6 +106,8 @@ export default function BookingsPage() {
   const [approveTarget, setApproveTarget] = useState<Booking | null>(null);
   // Booking ref awaiting a refund confirmation (with required remarks).
   const [refundTarget, setRefundTarget] = useState<string | null>(null);
+  // Cancelling queues money for return, so it confirms first.
+  const [cancelTarget, setCancelTarget] = useState<string | null>(null);
   // Entity being edited via the shared EditEntityDialog, tagged with its
   // parent booking ref so the save handler knows where to write.
   const [editTarget, setEditTarget] = useState<{ ref: string; init: EditEntityInit } | null>(null);
@@ -607,7 +609,7 @@ export default function BookingsPage() {
                             label: "Cancel booking",
                             danger: true,
                             disabled: b.status === "To Refund" || b.status === "Refunded",
-                            onClick: () => handleCancel(b.ref),
+                            onClick: () => setCancelTarget(b.ref),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                 <circle cx="12" cy="12" r="9" />
@@ -668,6 +670,16 @@ export default function BookingsPage() {
           if (!refundTarget) return;
           handleRefund(refundTarget, remarks);
           setRefundTarget(null);
+        }}
+      />
+
+      <CancelConfirmDialog
+        booking={cancelTarget ? bookings?.find((b) => b.ref === cancelTarget) ?? null : null}
+        onClose={() => setCancelTarget(null)}
+        onConfirm={() => {
+          if (!cancelTarget) return;
+          handleCancel(cancelTarget);
+          setCancelTarget(null);
         }}
       />
 
@@ -908,6 +920,80 @@ function ApproveBookingDialog({
 // behind an explicit confirmation that also captures a required remark (the
 // reason / payout reference) for the activity log. Confirm stays disabled
 // until a remark is entered.
+// ─────────── CancelConfirmDialog ───────────
+// Cancelling isn't just a status flip — it cascades to every non-terminal
+// ticket in the booking and queues the amount for return. The copy names that
+// consequence (tickets + peso amount) instead of asking "are you sure", and the
+// dismiss button says "Keep booking" so it can't be misread as the destructive
+// action next to it.
+function CancelConfirmDialog({
+  booking,
+  onClose,
+  onConfirm,
+}: {
+  booking: Booking | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  // Already-terminal tickets don't move, so only count the ones that will.
+  const affected = booking
+    ? booking.tickets.filter((t) => t.status !== "Cancelled" && t.status !== "Refunded").length
+    : 0;
+
+  return (
+    <Modal open={!!booking} onClose={onClose} maxWidth="max-w-md">
+      <div className="p-6">
+        <div className="flex items-start gap-3">
+          <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-rose-50 text-rose-600 ring-1 ring-rose-200/70">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M6 6l12 12" />
+            </svg>
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">
+              Cancel booking &lsquo;{booking?.ref}&rsquo;?
+            </h2>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-slate-500">
+              {affected > 0 ? (
+                <>
+                  This releases {affected} {affected === 1 ? "seat" : "seats"} and marks the booking{" "}
+                  <span className="font-semibold text-brand-600">For Refund</span> — queueing{" "}
+                  <span className="font-semibold text-slate-700">₱{(booking?.amount ?? 0).toLocaleString()}</span> for
+                  return to the passenger. The payout is processed separately.
+                </>
+              ) : (
+                <>
+                  This marks the booking <span className="font-semibold text-brand-600">For Refund</span>. Its tickets
+                  are already settled, so no seats change.
+                </>
+              )}
+            </p>
+            <p className="mt-2 text-[12px] font-medium text-slate-600">This can&apos;t be undone.</p>
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-center justify-end gap-2.5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-slate-600 ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
+          >
+            Keep booking
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-lg bg-rose-600 px-4 py-2 text-[12.5px] font-semibold text-white transition-colors hover:bg-rose-700"
+          >
+            Cancel booking
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function RefundConfirmDialog({
   bookingRef,
   onClose,
