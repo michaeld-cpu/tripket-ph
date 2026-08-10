@@ -168,7 +168,6 @@ export default function RoutesPage() {
   const { active } = useShippingLine();
   const [routes, setRoutes] = useState<Route[] | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [query, setQuery] = useState("");
   const [originFilter, setOriginFilter] = useState<string>("all");
   const [destinationFilter, setDestinationFilter] = useState<string>("all");
   // Voyage lifecycle (Scheduled/Departed/…) from the route's next voyage.
@@ -288,7 +287,7 @@ export default function RoutesPage() {
   const dismissCancel = () => setCancelRoute(null);
 
   // Reset to page 1 whenever filters change so users don't land on an empty later page.
-  useEffect(() => { setPage(1); }, [query, originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange]);
+  useEffect(() => { setPage(1); }, [originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange]);
 
   // Origin / destination options from the catalog cities, alphabetized.
   const originOptions = useMemo(() => {
@@ -330,7 +329,6 @@ export default function RoutesPage() {
 
   const filtered = useMemo(() => {
     if (!routes) return [];
-    const q = query.trim().toLowerCase();
     return routes.filter((r) => {
       if (activeFilter !== "all" && (activeFilter === "Active") !== r.isEnabled) return false;
       if (originFilter !== "all" && (r.origin.name ?? r.origin.city) !== originFilter) return false;
@@ -343,13 +341,9 @@ export default function RoutesPage() {
         const to = new Date(dateRange.end); to.setHours(0, 0, 0, 0);
         if (day < from || day > to) return false;
       }
-      if (q) {
-        const hay = `${r.origin.city} ${r.origin.name ?? ""} ${r.destination.city} ${r.destination.name ?? ""}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
       return true;
     });
-  }, [routes, query, originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange]);
+  }, [routes, originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -374,23 +368,7 @@ export default function RoutesPage() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm focus-within:border-gray-300 focus-within:ring-2 focus-within:ring-brand-100">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-gray-400">
-                  <circle cx="11" cy="11" r="7" />
-                  <path d="m20 20-3.5-3.5" />
-                </svg>
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search origin or destination"
-                  className="w-52 bg-transparent placeholder:text-gray-400 focus:outline-none"
-                />
-              </div>
-
-              <FiltersButton onClick={() => setFiltersOpen(true)} activeCount={activeFilterCount} />
-            </div>
+            <FiltersButton onClick={() => setFiltersOpen(true)} activeCount={activeFilterCount} />
           </div>
 
           {/* Table */}

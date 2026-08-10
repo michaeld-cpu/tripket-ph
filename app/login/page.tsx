@@ -29,11 +29,11 @@ export default function LoginPage() {
         return;
       }
       setSubmitting(false);
-      setError(
-        res.error === "unknown_email"
-          ? "No account found for that email."
-          : "Incorrect password. Please try again."
-      );
+      // Deliberately generic: distinguishing "no such email" from "wrong
+      // password" lets an attacker enumerate valid accounts, which for an admin
+      // panel means confirming who holds privileged access. The specific reason
+      // stays in `res.error` for server-side logging only — never the UI.
+      setError("Invalid email or password.");
     }, 450);
   };
 
