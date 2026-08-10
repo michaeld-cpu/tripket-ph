@@ -6,12 +6,15 @@ import { useShippingLine } from "@/components/ShippingLineContext";
 import { LogoTile } from "@/components/ShippingLineSwitcher";
 import RowMenu from "@/components/RowMenu";
 import SaveBar from "@/components/SaveBar";
+import Select from "@/components/Select";
 import {
   loadSettings,
   saveSettings,
   defaultSettings,
   loadAccount,
   saveAccount,
+  PAYMENT_PROVIDERS,
+  BOOKING_PROVIDERS,
   type LineSettings,
   type LineCatalog,
   type AccountProfile,
@@ -721,6 +724,13 @@ function AccountTab({ line }: { line: Line }) {
   const inputCls =
     "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-900 placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-100";
 
+  // This line always fulfils its own bookings, so it heads the provider list.
+  // A saved value from another line stays selectable rather than silently
+  // falling back to the first option.
+  const bookingProviderOptions = Array.from(
+    new Set([profile.displayName || line.name, ...BOOKING_PROVIDERS, profile.bookingProvider].filter(Boolean)),
+  );
+
   return (
     <div className="space-y-5 pb-24">
       <Card title="Line Profile" subtitle="How this shipping line appears across Tripket. Saved to this line only.">
@@ -753,6 +763,64 @@ function AccountTab({ line }: { line: Line }) {
           </div>
         </div>
 
+      </Card>
+
+      {/* Booking behavior + providers, then the on/off booking rules. */}
+      <Card title="Settings" subtitle="Configure booking behavior and payment providers.">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <AccountField label="Schedule days ahead">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={profile.scheduleDaysAhead}
+              onChange={(e) => set("scheduleDaysAhead", e.target.value.replace(/[^\d]/g, ""))}
+              placeholder="30"
+              className={inputCls}
+            />
+          </AccountField>
+          <AccountField label="Payment provider" as="div">
+            <Select
+              value={profile.paymentProvider}
+              onChange={(v) => set("paymentProvider", v)}
+              options={PAYMENT_PROVIDERS.map((p) => ({ value: p, label: p }))}
+              ariaLabel="Payment provider"
+              className="w-full"
+            />
+          </AccountField>
+          <AccountField label="Booking provider" as="div">
+            <Select
+              value={profile.bookingProvider}
+              onChange={(v) => set("bookingProvider", v)}
+              options={bookingProviderOptions.map((p) => ({ value: p, label: p }))}
+              ariaLabel="Booking provider"
+              className="w-full"
+            />
+          </AccountField>
+        </div>
+
+        <div className="mt-6 border-t border-slate-100 pt-4">
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">Booking rules</div>
+          <div className="mt-3 space-y-2.5">
+            <RuleToggle
+              label="Require mobile number"
+              description="Customers must provide a phone number."
+              checked={profile.requireMobile}
+              onChange={(v) => set("requireMobile", v)}
+            />
+            <RuleToggle
+              label="Require address"
+              description="Customers must provide their address."
+              checked={profile.requireAddress}
+              onChange={(v) => set("requireAddress", v)}
+            />
+            <RuleToggle
+              label="Auto confirm bookings"
+              description="Bookings are confirmed immediately after payment."
+              checked={profile.autoConfirm}
+              onChange={(v) => set("autoConfirm", v)}
+            />
+          </div>
+        </div>
       </Card>
 
       {/* Danger zone — admin-only. Operators are scoped to a single line and
@@ -836,12 +904,37 @@ function LogoUploader({ line, value, onChange }: { line: Line; value: string; on
   );
 }
 
-function AccountField({ label, children }: { label: string; children: React.ReactNode }) {
+// A single booking rule — label + description on the left, switch on the right.
+function RuleToggle({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (next: boolean) => void }) {
   return (
-    <label className="block">
+    <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] font-medium tracking-tight text-slate-900">{label}</div>
+        <p className="mt-0.5 text-[11.5px] leading-snug text-slate-500">{description}</p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-[22px] w-[38px] shrink-0 items-center rounded-full transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 ${checked ? "bg-brand-600" : "bg-slate-300"}`}
+      >
+        <span className={`inline-block h-[18px] w-[18px] transform rounded-full bg-white shadow transition-transform duration-150 ${checked ? "translate-x-[18px]" : "translate-x-[2px]"}`} />
+      </button>
+    </div>
+  );
+}
+
+// `as="div"` for fields whose control is a button (our Select) — wrapping one
+// in a <label> would make every click on the label text toggle the menu.
+function AccountField({ label, children, as = "label" }: { label: string; children: React.ReactNode; as?: "label" | "div" }) {
+  const Tag = as;
+  return (
+    <Tag className="block">
       <span className="mb-1.5 block text-[12.5px] font-semibold tracking-tight text-slate-700">{label}</span>
       {children}
-    </label>
+    </Tag>
   );
 }
 

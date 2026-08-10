@@ -32,6 +32,26 @@ const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 // ── Voyage lifecycle status ──
 type VoyageStatus = "Scheduled" | "Departed" | "Arrived" | "Cancelled";
 
+// ── One itemized fare row in the voyage detail dialog. ──
+// `group` decides which section it lands in and how it renders/edits:
+// passenger rows show a discount (type + value) instead of a peso amount;
+// vehicle rows carry the per-unit companion + quantity limits.
+type FareGroup = "passenger" | "vehicle" | "addon" | "service" | "accommodation";
+type FareLine = {
+  key: string;
+  label: string;
+  sublabel?: string;
+  amount: number;
+  group: FareGroup;
+  free?: boolean;
+  /** Passenger rows — discount off the base fare. */
+  discountType?: "Fixed" | "Percentage";
+  discountValue?: number;
+  /** Vehicle rows — comped companion seats and max units per voyage. */
+  freeLimit?: number;
+  qtyLimit?: number;
+};
+
 type Voyage = {
   id: string;
   /** Calendar day this block sits on. */
@@ -56,7 +76,7 @@ type Voyage = {
   cheapestFare: number;
   priciestFare: number;
   /** Itemized fare lines for the dialog — passenger tiers + add-ons. */
-  fareLines: { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon" | "service"; free?: boolean }[];
+  fareLines: FareLine[];
   /** Confirmed bookings count — defaults to 0 until a booking system lands. */
   paxConfirmed: number;
   status: VoyageStatus;
@@ -123,33 +143,74 @@ function expandSchedulePayload(
   // Passenger tiers come from the vessel's catalog (with per-schedule price
   // overrides applied), vehicle classes from the same source, add-ons, then the
   // route-level service fee as its own line.
-  type FareLine = { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon" | "service"; free?: boolean };
   const fareLines: FareLine[] = [];
-  vessel.passengerTypes
-    .filter((p) => fares.passengerPrices[p.key]?.enabled)
-    .forEach((p) => {
-      const row = fares.passengerPrices[p.key];
-      if (p.isInfant) {
-        fareLines.push({ key: `pax-${p.key}`, label: p.label, sublabel: p.requiredDoc, amount: 0, group: "passenger", free: true });
-        return;
-      }
-      const computed = p.discountPct > 0 ? Math.round(base * (1 - p.discountPct / 100)) : base;
-      const amount = row.price ? Number(row.price) || 0 : computed;
-      const sublabel = p.discountPct > 0 ? `${p.discountPct}% off base · ${p.requiredDoc}` : p.requiredDoc;
-      fareLines.push({ key: `pax-${p.key}`, label: p.label, sublabel, amount, group: "passenger" });
+
+  // Accommodation tiers priced in the wizard, cheapest first.
+  (fares.accommodationRows ?? [])
+    .filter((r) => r.name)
+    .forEach((r) => {
+      fareLines.push({ key: `acc-${r.id}`, label: r.name, amount: Number(r.baseFare) || 0, group: "accommodation" });
     });
+
+  // Passenger types: the wizard's row list is authoritative when present;
+  // older payloads predate it and still carry the keyed catalog map.
+  const paxRows = fares.passengerRows ?? [];
+  if (paxRows.length > 0) {
+    paxRows.forEach((r) => {
+      const pct = r.discountType === "Percentage" ? Number(r.discountValue) || 0 : 0;
+      const amount = r.discountType === "Percentage"
+        ? Math.round(base * (1 - pct / 100))
+        : Math.max(0, base - (Number(r.discountValue) || 0));
+      fareLines.push({
+        key: `pax-${r.id}`,
+        label: r.name || r.cls,
+        amount,
+        group: "passenger",
+        free: r.discountType === "Percentage" && pct >= 100,
+        discountType: r.discountType,
+        discountValue: Number(r.discountValue) || 0,
+      });
+    });
+  } else {
+    vessel.passengerTypes
+      .filter((p) => fares.passengerPrices[p.key]?.enabled)
+      .forEach((p) => {
+        const row = fares.passengerPrices[p.key];
+        if (p.isInfant) {
+          fareLines.push({ key: `pax-${p.key}`, label: p.label, sublabel: p.requiredDoc, amount: 0, group: "passenger", free: true, discountType: "Percentage", discountValue: 100 });
+          return;
+        }
+        const computed = p.discountPct > 0 ? Math.round(base * (1 - p.discountPct / 100)) : base;
+        const amount = row.price ? Number(row.price) || 0 : computed;
+        fareLines.push({ key: `pax-${p.key}`, label: p.label, sublabel: p.requiredDoc, amount, group: "passenger", discountType: "Percentage", discountValue: p.discountPct });
+      });
+  }
   vessel.vehicleClasses
     .filter((c) => c.enabled && fares.vehiclePrices[c.key]?.enabled)
     .forEach((c) => {
       const row = fares.vehiclePrices[c.key];
-      fareLines.push({ key: `veh-${c.key}`, label: c.label, sublabel: c.descriptor, amount: Number(row.price) || 0, group: "vehicle" });
+      fareLines.push({
+        key: `veh-${c.key}`,
+        label: c.label,
+        amount: Number(row.price) || 0,
+        group: "vehicle",
+        freeLimit: row.includedCompanions ?? 0,
+        qtyLimit: Number(row.qtyLimit) || 0,
+      });
     });
-  vessel.addOns
-    .filter((a) => fares.addOnPrices[a.key]?.enabled)
-    .forEach((a) => {
-      const row = fares.addOnPrices[a.key];
-      fareLines.push({ key: `addon-${a.key}`, label: a.label, sublabel: a.descriptor, amount: Number(row?.price) || a.defaultPrice, group: "addon" });
+  const addOnRows = fares.addOnRows ?? [];
+  if (addOnRows.length > 0) {
+    addOnRows.filter((r) => r.name).forEach((r) => {
+      fareLines.push({ key: `addon-${r.id}`, label: r.name, amount: Number(r.price) || 0, group: "addon" });
     });
+  } else {
+    vessel.addOns
+      .filter((a) => fares.addOnPrices[a.key]?.enabled)
+      .forEach((a) => {
+        const row = fares.addOnPrices[a.key];
+        fareLines.push({ key: `addon-${a.key}`, label: a.label, amount: Number(row?.price) || a.defaultPrice, group: "addon" });
+      });
+  }
   if (serviceFee > 0) {
     fareLines.push({ key: "service-fee", label: "Service fee", sublabel: "Flat fee for this route", amount: serviceFee, group: "service" });
   }
@@ -348,6 +409,33 @@ export default function VoyagesPage() {
       return prev.filter((v) => !sameSlot(v, target));
     });
 
+  // Fares belong to the recurring slot, not one dated occurrence — apply the
+  // edit to every voyage sharing that slot, the same way Remove does.
+  const saveVoyageFares = (id: string, lines: FareLine[]) =>
+    setVoyages((prev) => {
+      const target = prev.find((v) => v.id === id);
+      if (!target) return prev;
+      // Keep the calendar card's fare range in step with the edit: passenger
+      // rows are discounts off the accommodation base, so the range comes from
+      // applying each discount to the cheapest tier.
+      const accom = lines.filter((l) => l.group === "accommodation").map((l) => l.amount).filter((n) => n > 0);
+      const newBase = accom.length ? Math.min(...accom) : 0;
+      const service = lines.find((l) => l.group === "service")?.amount ?? 0;
+      const paxFares = lines
+        .filter((l) => l.group === "passenger")
+        .map((l) =>
+          l.discountType === "Fixed"
+            ? Math.max(0, newBase - (l.discountValue ?? 0))
+            : Math.round(newBase * (1 - (l.discountValue ?? 0) / 100)),
+        )
+        .filter((n) => n > 0);
+      const lo = (paxFares.length ? Math.min(...paxFares) : newBase) + service;
+      const hi = (paxFares.length ? Math.max(...paxFares) : newBase) + service;
+      return prev.map((v) =>
+        sameSlot(v, target) ? { ...v, fareLines: lines, cheapestFare: lo, priciestFare: hi } : v,
+      );
+    });
+
   // ── Edit a schedule series ──
   // Opening pulls the originating wizard payload (kept in the series store).
   // Saving re-applies the new config from the edited voyage's date FORWARD,
@@ -401,6 +489,9 @@ export default function VoyagesPage() {
   // the detail dialog. Deleting clears every occurrence of the chosen slots.
   const [selectMode, setSelectMode] = useState(false);
   const [selectedSlots, setSelectedSlots] = useState<Set<string>>(new Set());
+  // Removing is destructive and hits every occurrence of the chosen slots, so
+  // it routes through a confirm dialog rather than firing on click.
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
 
   const toggleSlot = (key: string) =>
     setSelectedSlots((prev) => {
@@ -412,8 +503,11 @@ export default function VoyagesPage() {
   const exitSelectMode = () => { setSelectMode(false); setSelectedSlots(new Set()); };
 
   const deleteSelectedSlots = () => {
+    const n = selectedSlots.size;
     setVoyages((prev) => prev.filter((v) => !selectedSlots.has(slotKey(v))));
+    setBulkConfirmOpen(false);
     exitSelectMode();
+    showToast(`Removed ${n} ${n === 1 ? "voyage" : "voyages"} successfully`);
   };
 
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
@@ -556,14 +650,14 @@ export default function VoyagesPage() {
               </span>
               <button
                 type="button"
-                onClick={deleteSelectedSlots}
+                onClick={() => setBulkConfirmOpen(true)}
                 disabled={selectedSlots.size === 0}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors duration-150 hover:bg-rose-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-rose-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
                   <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
                 </svg>
-                Delete{selectedSlots.size > 0 ? ` (${selectedSlots.size})` : ""}
+                Remove{selectedSlots.size > 0 ? ` (${selectedSlots.size})` : ""}
               </button>
               <button
                 type="button"
@@ -788,7 +882,46 @@ export default function VoyagesPage() {
         open={!!openVoyage}
         onClose={() => setOpenVoyageId(null)}
         onRemove={(id) => { removeVoyage(id); setOpenVoyageId(null); }}
+        onSaveFares={saveVoyageFares}
       />
+
+      {/* Bulk-remove confirm — the count names exactly what's about to go. */}
+      <Modal open={bulkConfirmOpen} onClose={() => setBulkConfirmOpen(false)} maxWidth="max-w-md">
+        <div className="px-6 py-5">
+          <div className="flex items-start gap-3.5">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-rose-50 text-rose-600">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4.5 w-4.5">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M9 9l6 6M15 9l-6 6" />
+              </svg>
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">
+                Remove {selectedSlots.size} {selectedSlots.size === 1 ? "voyage" : "voyages"}?
+              </h2>
+              <p className="mt-1 text-[12.5px] leading-relaxed text-slate-500">
+                This will remove the selected voyages. This action cannot be undone.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 px-6 py-3.5">
+          <button
+            type="button"
+            onClick={() => setBulkConfirmOpen(false)}
+            className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={deleteSelectedSlots}
+            className="rounded-lg bg-rose-600 px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-rose-700"
+          >
+            Remove
+          </button>
+        </div>
+      </Modal>
 
       {/* Edit-schedule wizard — pre-filled from the series payload; saving
           re-applies the config from this voyage's date forward. */}
@@ -1000,9 +1133,9 @@ function VoyageCard({
 }
 
 // ─────────── VoyageDetailDialog ───────────
-// Read-only detail surface for an existing voyage. The only lifecycle control
-// is Enable/Disable in the footer — a voyage is either active or disabled;
-// there's no free-form status picker.
+// Detail surface for an existing voyage. Reads top-down by default; "Edit
+// fares" swaps the breakdown into inputs and the footer into Cancel / Save
+// changes. Saving applies to every voyage sharing the recurring slot.
 //
 // Anatomy:
 //   ┌──────────────────────────────────────────────────────┐
@@ -1027,9 +1160,18 @@ function VoyageCard({
 function VoyageFooter({
   voyage,
   onRemove,
+  editing,
+  onEditFares,
+  onCancelEdit,
+  onSaveEdit,
 }: {
   voyage: Voyage;
   onRemove: (id: string) => void;
+  /** While editing fares the footer becomes Cancel / Save changes. */
+  editing: boolean;
+  onEditFares: () => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
 
@@ -1046,6 +1188,29 @@ function VoyageFooter({
   const period = voyage.hour < 12 ? "AM" : "PM";
   const h12 = ((voyage.hour + 11) % 12) + 1;
   const slotLabel = `${weekday}, ${h12}:${String(voyage.minute).padStart(2, "0")} ${period}`;
+
+  // Editing fares owns the footer — Remove stays out of reach until the draft
+  // is saved or discarded.
+  if (editing) {
+    return (
+      <div className="flex items-center justify-between gap-3 px-5 py-4">
+        <button
+          type="button"
+          onClick={onCancelEdit}
+          className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onSaveEdit}
+          className="rounded-lg bg-brand-500 px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-brand-600"
+        >
+          Save changes
+        </button>
+      </div>
+    );
+  }
 
   if (confirming) {
     return (
@@ -1082,7 +1247,14 @@ function VoyageFooter({
   }
 
   return (
-    <div className="flex items-center justify-end gap-3 px-5 py-4">
+    <div className="flex items-center justify-between gap-3 px-5 py-4">
+      <button
+        type="button"
+        onClick={onEditFares}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-brand-700 transition-colors duration-150 hover:bg-brand-50"
+      >
+        Edit fares
+      </button>
       <button
         type="button"
         onClick={() => setConfirming(true)}
@@ -1102,12 +1274,20 @@ function VoyageDetailDialog({
   open,
   onClose,
   onRemove,
+  onSaveFares,
 }: {
   voyage: Voyage | null;
   open: boolean;
   onClose: () => void;
   onRemove: (id: string) => void;
+  /** Persist edited fare lines back onto this voyage. */
+  onSaveFares: (id: string, lines: FareLine[]) => void;
 }) {
+  // Fares edit mode — `draft` holds the in-progress copy; null = read mode.
+  // Reset whenever the dialog switches voyages or closes so a stale draft never
+  // leaks onto the next voyage.
+  const [draft, setDraft] = useState<FareLine[] | null>(null);
+  useEffect(() => { setDraft(null); }, [voyage?.id, open]);
   // The dialog mirrors whichever line is currently active in the top-bar
   // switcher — voyages always read from the live context, never the stored
   // lineId. Keeps the org identity in sync with the rest of the app.
@@ -1263,7 +1443,13 @@ function VoyageDetailDialog({
         {/* Itemized fares — passenger tiers, vehicle classes, add-ons. Each
             group separated by a small slate eyebrow so the breakdown reads
             top-down without crowding the rows above. */}
-        <FareBreakdown lines={voyage.fareLines} />
+        <FareBreakdown
+          lines={draft ?? voyage.fareLines}
+          editing={draft !== null}
+          onChange={(key, patch) =>
+            setDraft((d) => (d ?? []).map((l) => (l.key === key ? { ...l, ...patch } : l)))
+          }
+        />
         </div>
 
         <div className="border-t border-slate-100" />
@@ -1271,6 +1457,10 @@ function VoyageDetailDialog({
         <VoyageFooter
           voyage={voyage}
           onRemove={onRemove}
+          editing={draft !== null}
+          onEditFares={() => setDraft(voyage.fareLines.map((l) => ({ ...l })))}
+          onCancelEdit={() => setDraft(null)}
+          onSaveEdit={() => { if (draft) onSaveFares(voyage.id, draft); setDraft(null); }}
         />
       </div>
     </Modal>
@@ -1321,11 +1511,28 @@ function DashedArrow() {
 // Itemized fare lines for the voyage dialog. Replaces the cheapest→priciest
 // summary with a top-down list grouped by Passenger / Vehicle / Add-ons.
 // Each group only renders when it has at least one line.
+const FARE_GROUPS: { key: FareGroup; title: string }[] = [
+  { key: "accommodation", title: "Accommodation fares" },
+  { key: "passenger",     title: "Passenger types" },
+  { key: "vehicle",       title: "Vehicle types" },
+  { key: "addon",         title: "Add ons" },
+  { key: "service",       title: "Service fee" },
+];
+
 function FareBreakdown({
   lines,
+  editing,
+  onChange,
 }: {
-  lines: { key: string; label: string; sublabel?: string; amount: number; group: "passenger" | "vehicle" | "addon" | "service"; free?: boolean }[] | undefined;
+  lines: FareLine[] | undefined;
+  /** Edit mode swaps every value into an input. */
+  editing?: boolean;
+  onChange?: (key: string, patch: Partial<FareLine>) => void;
 }) {
+  // Groups collapse independently; all open by default so the breakdown reads
+  // top-down the moment the dialog opens.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
   // Older voyages persisted before fareLines existed won't have this field.
   // Treat missing/empty the same way.
   if (!lines || lines.length === 0) {
@@ -1338,49 +1545,149 @@ function FareBreakdown({
     );
   }
 
-  const groups: { key: "passenger" | "vehicle" | "addon" | "service"; title: string }[] = [
-    { key: "passenger", title: "Passenger fares" },
-    { key: "vehicle",   title: "Vehicle fares" },
-    { key: "addon",     title: "Add-ons" },
-    { key: "service",   title: "Service fee" },
-  ];
+  const set = (key: string, patch: Partial<FareLine>) => onChange?.(key, patch);
 
   return (
     <div className="px-5 pb-1">
-      {groups.map((g) => {
+      {FARE_GROUPS.map((g) => {
         const items = lines.filter((l) => l.group === g.key);
         if (items.length === 0) return null;
+        const isOpen = !collapsed[g.key];
         return (
           <div key={g.key} className="mt-3 first:mt-1">
-            <div className="mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-              {g.title}
-            </div>
-            <div className="divide-y divide-slate-100">
-              {items.map((l) => (
-                <div key={l.key} className="flex items-center justify-between gap-3 py-1.5">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[12px] font-medium tracking-tight text-slate-800">
-                      {l.label}
-                    </div>
-                    {l.sublabel && (
-                      <div className="truncate text-[10.5px] text-slate-500">{l.sublabel}</div>
-                    )}
-                  </div>
-                  <div className="shrink-0">
-                    {l.free ? (
-                      <span className="text-[11.5px] font-semibold text-emerald-600">Free</span>
-                    ) : (
-                      <span className="font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">
-                        ₱{l.amount.toLocaleString()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <button
+              type="button"
+              onClick={() => setCollapsed((c) => ({ ...c, [g.key]: !c[g.key] }))}
+              aria-expanded={isOpen}
+              className="flex w-full items-center justify-between gap-2 py-1 text-left"
+            >
+              <span className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-400">{g.title}</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform duration-150 ${isOpen ? "" : "-rotate-180"}`}>
+                <path d="M18 15l-6-6-6 6" />
+              </svg>
+            </button>
+            {isOpen && (
+              <div className={editing ? "space-y-2 pb-1" : "divide-y divide-slate-100"}>
+                {items.map((l) =>
+                  editing ? (
+                    <FareEditRow key={l.key} line={l} onChange={(patch) => set(l.key, patch)} />
+                  ) : (
+                    <FareReadRow key={l.key} line={l} />
+                  ),
+                )}
+              </div>
+            )}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Read-only row. Passenger lines show their discount (0% / 100% / 20%);
+// everything else shows a peso amount. Vehicle lines carry their limits on a
+// second line, split left/right.
+function FareReadRow({ line: l }: { line: FareLine }) {
+  const isPassenger = l.group === "passenger";
+  return (
+    <div className="py-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[12px] font-medium tracking-tight text-slate-800">{l.label}</div>
+          {l.sublabel && <div className="truncate text-[10.5px] text-slate-500">{l.sublabel}</div>}
+        </div>
+        <div className="shrink-0 font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">
+          {isPassenger
+            ? l.discountType === "Fixed"
+              ? `₱${(l.discountValue ?? 0).toLocaleString()} off`
+              : `${l.discountValue ?? 0}%`
+            : l.free
+              ? <span className="font-sans text-[11.5px] text-emerald-600">Free</span>
+              : `₱${l.amount.toLocaleString()}`}
+        </div>
+      </div>
+      {l.group === "vehicle" && (
+        <div className="mt-0.5 flex items-center justify-between gap-3 text-[10.5px] text-slate-500">
+          <span>Free passenger limit: {l.freeLimit ?? 0}</span>
+          <span>Qty limit: {l.qtyLimit ?? 0}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Editable row — the same anatomy as the read row, with each value swapped for
+// an input. Labels stay editable so an operator can rename a tier per voyage.
+function FareEditRow({ line: l, onChange }: { line: FareLine; onChange: (patch: Partial<FareLine>) => void }) {
+  const isPassenger = l.group === "passenger";
+  return (
+    <div className="rounded-lg">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={l.label}
+          onChange={(e) => onChange({ label: e.target.value })}
+          aria-label="Fare label"
+          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] text-slate-900 transition-[border-color,box-shadow] duration-150 focus:border-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-100"
+        />
+        {isPassenger ? (
+          <>
+            <Select
+              value={l.discountType ?? "Percentage"}
+              onChange={(v) => onChange({ discountType: v as "Fixed" | "Percentage" })}
+              options={[{ value: "Percentage", label: "Percentage" }, { value: "Fixed", label: "Fixed" }]}
+              ariaLabel="Discount type"
+              size="sm"
+              className="w-[118px] shrink-0"
+              inline
+            />
+            <NumBox value={l.discountValue ?? 0} onChange={(n) => onChange({ discountValue: n })} ariaLabel="Discount value" width="w-[72px]" />
+          </>
+        ) : (
+          <PesoBox value={l.amount} onChange={(n) => onChange({ amount: n })} ariaLabel="Amount" />
+        )}
+      </div>
+      {l.group === "vehicle" && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <label className="flex flex-1 items-center gap-2 text-[10.5px] text-slate-500">
+            <span className="shrink-0">Free passenger limit:</span>
+            <NumBox value={l.freeLimit ?? 0} onChange={(n) => onChange({ freeLimit: n })} ariaLabel="Free passenger limit" width="w-[64px]" />
+          </label>
+          <label className="flex items-center gap-2 text-[10.5px] text-slate-500">
+            <span className="shrink-0">Qty limit:</span>
+            <NumBox value={l.qtyLimit ?? 0} onChange={(n) => onChange({ qtyLimit: n })} ariaLabel="Qty limit" width="w-[72px]" />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NumBox({ value, onChange, ariaLabel, width }: { value: number; onChange: (n: number) => void; ariaLabel: string; width: string }) {
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={String(value)}
+      onChange={(e) => onChange(Number(e.target.value.replace(/[^\d]/g, "")) || 0)}
+      aria-label={ariaLabel}
+      className={`${width} shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-right font-mono text-[12px] tabular-nums text-slate-900 transition-[border-color,box-shadow] duration-150 focus:border-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-100`}
+    />
+  );
+}
+
+function PesoBox({ value, onChange, ariaLabel }: { value: number; onChange: (n: number) => void; ariaLabel: string }) {
+  return (
+    <div className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 transition-[border-color,box-shadow] duration-150 focus-within:border-brand-200 focus-within:ring-2 focus-within:ring-brand-100">
+      <span className="text-[11px] text-slate-400">₱</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={String(value)}
+        onChange={(e) => onChange(Number(e.target.value.replace(/[^\d]/g, "")) || 0)}
+        aria-label={ariaLabel}
+        className="w-[76px] bg-transparent text-right font-mono text-[12px] tabular-nums text-slate-900 focus:outline-none"
+      />
     </div>
   );
 }

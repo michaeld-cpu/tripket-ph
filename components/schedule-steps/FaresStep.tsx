@@ -24,11 +24,14 @@ export type FareRow = { enabled: boolean; price: string };
 export type VehicleFareRow = FareRow & { includedCompanions: number; qtyLimit?: string; description?: string };
 
 export type DiscountType = "Fixed" | "Percentage";
-/** A passenger-type row. `name` is the fixed catalog label the operator picks;
- *  discount is edited inline. `locked` rows (the two seeded defaults) can't be
- *  deleted but can still be renamed. */
+/** A passenger-type row. `cls` is the fixed catalog class the operator picks;
+ *  `name` is the editable display label (defaults to the class) and the
+ *  discount is edited inline. `locked` rows (the two seeded defaults) keep
+ *  their class fixed and can't be deleted, but can still be renamed. */
 export type PassengerFareRow = {
   id: string;
+  /** Catalog class (one of PASSENGER_OPTIONS). */
+  cls: string;
   name: string;
   discountType: DiscountType;
   discountValue: string;
@@ -72,8 +75,9 @@ const PASSENGER_OPTIONS = ["Regular", "Free", "Student", "Senior Citizen", "PWD"
 // The seeded default rows — always present, undeletable.
 function defaultPassengerRows(): PassengerFareRow[] {
   return [
-    { id: "pax-regular", name: "Regular", discountType: "Fixed", discountValue: "0", locked: true },
-    { id: "pax-free", name: "Free", discountType: "Percentage", discountValue: "100", locked: true },
+    { id: "pax-regular", cls: "Regular", name: "Regular", discountType: "Percentage", discountValue: "0", locked: true },
+    { id: "pax-free", cls: "Free", name: "Free", discountType: "Percentage", discountValue: "100", locked: true },
+    { id: "pax-child", cls: "Child", name: "Child (2-11)", discountType: "Percentage", discountValue: "50" },
   ];
 }
 
@@ -135,7 +139,9 @@ export default function FaresStep({
 
   // Back-compat for stores created before the list fields existed.
   const accommodationRows = value.accommodationRows ?? [];
-  const passengerRows = value.passengerRows ?? defaultPassengerRows();
+  // Rows stored before the class column existed carry only `name` — fall back
+  // to it so the class select still resolves.
+  const passengerRows = (value.passengerRows ?? defaultPassengerRows()).map((r) => (r.cls ? r : { ...r, cls: r.name }));
   const addOnRows = value.addOnRows ?? [];
 
   const vehicleCatalog = vessel.vehicleClasses;
@@ -170,12 +176,19 @@ export default function FaresStep({
   const canAddAccom = !hasBlankAccom && accommodationRows.filter((r) => r.name).length < accomTierNames.length;
 
   // ── Passenger types ──
-  const passengerOptionsFor = (currentName: string) =>
-    PASSENGER_OPTIONS.filter((o) => o === currentName || !passengerRows.some((r) => r.name === o)).map((o) => ({ value: o, label: o }));
+  const passengerOptionsFor = (currentCls: string) =>
+    PASSENGER_OPTIONS.filter((o) => o === currentCls || !passengerRows.some((r) => r.cls === o)).map((o) => ({ value: o, label: o }));
   const addPassenger = () => {
-    const next = PASSENGER_OPTIONS.find((o) => !passengerRows.some((r) => r.name === o));
-    commit({ ...value, passengerRows: [...passengerRows, { id: rowId("pax"), name: next ?? "", discountType: "Fixed", discountValue: "0" }] });
+    const next = PASSENGER_OPTIONS.find((o) => !passengerRows.some((r) => r.cls === o));
+    commit({ ...value, passengerRows: [...passengerRows, { id: rowId("pax"), cls: next ?? "", name: next ?? "", discountType: "Fixed", discountValue: "0" }] });
   };
+  // Switching class renames the row too, unless the operator already typed a
+  // custom label.
+  const setPassengerClass = (id: string, cls: string) =>
+    commit({
+      ...value,
+      passengerRows: passengerRows.map((r) => (r.id === id ? { ...r, cls, name: !r.name || r.name === r.cls ? cls : r.name } : r)),
+    });
   const setPassenger = (id: string, patch: Partial<PassengerFareRow>) =>
     commit({ ...value, passengerRows: passengerRows.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
   const removePassenger = (id: string) =>
@@ -271,10 +284,11 @@ export default function FaresStep({
 
       {/* ── Passenger types ── */}
       <Section eyebrow="Passenger types" helper="Define which fare categories this vessel offers and discounts." onAdd={addPassenger} canAdd={canAddPassenger}>
-        <Table columns={["NAME", "DISCOUNT TYPE", "DISCOUNT VALUE", ""]} grid="minmax(0,1fr)_180px_150px_36px">
+        <Table columns={["CLASS", "NAME", "DISCOUNT TYPE", "DISCOUNT VALUE", ""]} grid="150px_minmax(0,1fr)_180px_150px_36px">
           {passengerRows.map((r) => (
-            <Row key={r.id} grid="minmax(0,1fr)_180px_150px_36px">
-              <Select value={r.name} onChange={(v) => setPassenger(r.id, { name: v })} options={passengerOptionsFor(r.name)} ariaLabel="Passenger type" className="w-full" size="sm" disabled={r.locked} />
+            <Row key={r.id} grid="150px_minmax(0,1fr)_180px_150px_36px">
+              <Select value={r.cls} onChange={(v) => setPassengerClass(r.id, v)} options={passengerOptionsFor(r.cls)} ariaLabel="Passenger class" className="w-full" size="sm" disabled={r.locked} />
+              <TextField value={r.name} onChange={(v) => setPassenger(r.id, { name: v })} ariaLabel="Passenger type name" />
               <Select value={r.discountType} onChange={(v) => setPassenger(r.id, { discountType: v as DiscountType })} options={[{ value: "Fixed", label: "Fixed" }, { value: "Percentage", label: "Percentage" }]} ariaLabel="Discount type" className="w-full" size="sm" />
               <NumberField value={r.discountValue} onChange={(v) => setPassenger(r.id, { discountValue: v })} ariaLabel="Discount value" />
               <TrashButton onClick={() => removePassenger(r.id)} ariaLabel="Remove passenger type" disabled={r.locked} />

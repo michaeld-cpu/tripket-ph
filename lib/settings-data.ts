@@ -203,7 +203,22 @@ export type AccountProfile = {
   website: string;
   /** Custom logo as a data URL. Empty = fall back to the line's default logo. */
   logoUrl: string;
+  /** How far ahead schedules are generated & bookable, in days. */
+  scheduleDaysAhead: string;
+  /** Payment gateway handling this line's transactions. */
+  paymentProvider: string;
+  /** Who fulfils bookings for this line (self or a partner line). */
+  bookingProvider: string;
+  /** Booking rules — customers must supply a phone number. */
+  requireMobile: boolean;
+  /** Booking rules — customers must supply an address. */
+  requireAddress: boolean;
+  /** Bookings confirm immediately after payment, with no manual review. */
+  autoConfirm: boolean;
 };
+
+export const PAYMENT_PROVIDERS = ["Maayo Pay", "PayMongo", "Xendit", "Manual / Over-the-counter"];
+export const BOOKING_PROVIDERS = ["Maayo Shipping", "Tripket Direct", "Partner Agency"];
 
 export function defaultAccount(name: string, id: string): AccountProfile {
   return {
@@ -213,6 +228,12 @@ export function defaultAccount(name: string, id: string): AccountProfile {
     address: "Pier 4, North Harbor, Manila",
     website: `https://www.${id}.ph`,
     logoUrl: "",
+    scheduleDaysAhead: "30",
+    paymentProvider: PAYMENT_PROVIDERS[0],
+    bookingProvider: name,
+    requireMobile: true,
+    requireAddress: true,
+    autoConfirm: false,
   };
 }
 
