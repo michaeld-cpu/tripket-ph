@@ -674,7 +674,7 @@ export default function BookingsPage() {
       />
 
       <CancelConfirmDialog
-        booking={cancelTarget ? bookings?.find((b) => b.ref === cancelTarget) ?? null : null}
+        bookingRef={cancelTarget}
         onClose={() => setCancelTarget(null)}
         onConfirm={() => {
           if (!cancelTarget) return;
@@ -915,33 +915,24 @@ function ApproveBookingDialog({
   );
 }
 
-// ─────────── Refund confirm dialog ───────────
-// Marking a booking Refunded is money leaving the platform, so it's gated
-// behind an explicit confirmation that also captures a required remark (the
-// reason / payout reference) for the activity log. Confirm stays disabled
-// until a remark is entered.
 // ─────────── CancelConfirmDialog ───────────
-// Cancelling isn't just a status flip — it cascades to every non-terminal
-// ticket in the booking and queues the amount for return. The copy names that
-// consequence (tickets + peso amount) instead of asking "are you sure", and the
-// dismiss button says "Keep booking" so it can't be misread as the destructive
-// action next to it.
+// Cancelling cascades to every non-terminal ticket in the booking and queues
+// the amount for return, so the copy states that consequence instead of asking
+// "are you sure". It deliberately avoids naming seats or counts — a booking on
+// an already-departed voyage releases nothing, so any such claim would be wrong
+// for that case. The dismiss button says "Keep booking" so it can't be misread
+// as the destructive action sitting next to it.
 function CancelConfirmDialog({
-  booking,
+  bookingRef,
   onClose,
   onConfirm,
 }: {
-  booking: Booking | null;
+  bookingRef: string | null;
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  // Already-terminal tickets don't move, so only count the ones that will.
-  const affected = booking
-    ? booking.tickets.filter((t) => t.status !== "Cancelled" && t.status !== "Refunded").length
-    : 0;
-
   return (
-    <Modal open={!!booking} onClose={onClose} maxWidth="max-w-md">
+    <Modal open={!!bookingRef} onClose={onClose} maxWidth="max-w-md">
       <div className="p-6">
         <div className="flex items-start gap-3">
           <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-rose-50 text-rose-600 ring-1 ring-rose-200/70">
@@ -952,12 +943,10 @@ function CancelConfirmDialog({
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">
-              Cancel booking &lsquo;{booking?.ref}&rsquo;?
+              Cancel booking &lsquo;{bookingRef}&rsquo;?
             </h2>
             <p className="mt-1 text-[12.5px] leading-relaxed text-slate-500">
-              {affected > 0
-                ? `This releases ${affected} ${affected === 1 ? "seat" : "seats"} and marks the booking For Refund. The payout is processed separately.`
-                : "This marks the booking For Refund. Its tickets are already settled, so no seats change."}
+              This marks the booking For Refund. The payout is processed separately.
             </p>
           </div>
         </div>
@@ -983,6 +972,11 @@ function CancelConfirmDialog({
   );
 }
 
+// ─────────── Refund confirm dialog ───────────
+// Marking a booking Refunded is money leaving the platform, so it's gated
+// behind an explicit confirmation that also captures a required remark (the
+// reason / payout reference) for the activity log. Confirm stays disabled
+// until a remark is entered.
 function RefundConfirmDialog({
   bookingRef,
   onClose,

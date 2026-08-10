@@ -40,7 +40,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     scheduleDismiss(id);
   }, [scheduleDismiss]);  
 
-  // Clean up timers on unmount
   useEffect(() => {
     const map = timers.current;
     return () => {
