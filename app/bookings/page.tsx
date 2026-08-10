@@ -955,21 +955,10 @@ function CancelConfirmDialog({
               Cancel booking &lsquo;{booking?.ref}&rsquo;?
             </h2>
             <p className="mt-1 text-[12.5px] leading-relaxed text-slate-500">
-              {affected > 0 ? (
-                <>
-                  This releases {affected} {affected === 1 ? "seat" : "seats"} and marks the booking{" "}
-                  <span className="font-semibold text-brand-600">For Refund</span> — queueing{" "}
-                  <span className="font-semibold text-slate-700">₱{(booking?.amount ?? 0).toLocaleString()}</span> for
-                  return to the passenger. The payout is processed separately.
-                </>
-              ) : (
-                <>
-                  This marks the booking <span className="font-semibold text-brand-600">For Refund</span>. Its tickets
-                  are already settled, so no seats change.
-                </>
-              )}
+              {affected > 0
+                ? `This releases ${affected} ${affected === 1 ? "seat" : "seats"} and marks the booking For Refund. The payout is processed separately.`
+                : "This marks the booking For Refund. Its tickets are already settled, so no seats change."}
             </p>
-            <p className="mt-2 text-[12px] font-medium text-slate-600">This can&apos;t be undone.</p>
           </div>
         </div>
 
