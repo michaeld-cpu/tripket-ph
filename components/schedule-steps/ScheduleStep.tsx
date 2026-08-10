@@ -805,7 +805,7 @@ function BrandTimeDialog({
           <div className="px-4 pb-1 text-[10.5px] font-medium text-rose-500">
             {!hourOk ? "Hour must be 1–12."
               : !minOk ? "Minutes must be 00–59."
-              : outOfWindow ? "Pick a time between 4:00 AM and 11:59 PM."
+              : outOfWindow ? "Pick a time between 12:00 AM and 11:59 PM."
               : "That time is already selected."}
           </div>
         )}

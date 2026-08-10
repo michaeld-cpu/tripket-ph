@@ -96,7 +96,7 @@ function ToastItem({ toast }: { toast: Toast }) {
     },
     info: {
       bg: "bg-gray-900",
-      iconBg: "bg-white/15",
+      iconBg: "bg-white/15",  
       iconColor: "text-white",
       path: "M12 8v5M12 16v.5",
     },

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import { useToast } from "@/components/ToastContext";
@@ -23,7 +23,9 @@ const TODAY = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
 const NOW_HOUR = new Date().getHours();
 
 // 24h × 7-day calendar. Hours run 04:00 → 23:00 (operating window for ferries).
-const HOURS = Array.from({ length: 20 }, (_, i) => i + 4); // 4..23
+// Full 24-hour axis — overnight departures (midnight to 4 AM) are real, so the
+// grid covers every hour and scrolls rather than clipping the early morning.
+const HOURS = Array.from({ length: 24 }, (_, i) => i); // 0..23
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 // ── Single voyage occurrence rendered on the calendar grid. ──
@@ -539,6 +541,23 @@ export default function VoyagesPage() {
     [voyages, portFilter, vesselFilter]
   );
 
+  // The axis now starts at midnight, so a schedule that only runs mornings
+  // would open on empty rows. On first load, scroll to the earliest hour that
+  // actually has a departure (falling back to the current hour).
+  const gridScrollRef = useRef<HTMLDivElement>(null);
+  const didAutoScroll = useRef(false);
+  useEffect(() => {
+    const el = gridScrollRef.current;
+    if (!el || didAutoScroll.current || filteredVoyages.length === 0) return;
+    didAutoScroll.current = true;
+    const earliest = Math.min(...filteredVoyages.map((v) => v.hour));
+    const target = Number.isFinite(earliest) ? earliest : NOW_HOUR;
+    // Rows grow to fit stacked cards, so measure the actual row rather than
+    // assuming a uniform height.
+    const row = el.querySelector<HTMLElement>(`[data-hour="${target}"]`);
+    if (row) el.scrollTop = row.offsetTop;
+  }, [filteredVoyages]);
+
   // Group voyages into one representative card per recurring slot, bucketed by
   // weekday + hour. A "slot" is a distinct route + vessel + time — the SAME
   // weekday+hour can hold several (different routes/vessels), which is exactly
@@ -730,10 +749,11 @@ export default function VoyagesPage() {
                 their voyage cards inline and grow to fit, so multiple
                 routes/vessels at the same weekday+hour stack instead of
                 overlapping. */}
-            <div className="relative min-h-0 flex-1 overflow-y-auto">
+            <div ref={gridScrollRef} className="relative min-h-0 flex-1 overflow-y-auto">
               {HOURS.map((h, rowIdx) => (
                 <div
                   key={h}
+                  data-hour={h}
                   className={
                     "grid grid-cols-[120px_repeat(7,minmax(0,1fr))] " +
                     (rowIdx !== 0 ? "shadow-[inset_0_1px_0_rgba(226,232,240,0.7)]" : "")

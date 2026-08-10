@@ -10,10 +10,10 @@
  * saved series keep working after this change. Values ≥ 24 are already minutes.
  */
 
-// Operating window — 4:00 AM through 11:59 PM. Any time in this range is valid
-// via the Add-time picker; the quick-add grid below only surfaces the common
-// hours so it stays short.
-export const MIN_MINUTES = 4 * 60; // 240
+// Operating window — the full day. Overnight crossings depart after midnight,
+// so the picker accepts any time from 12:00 AM through 11:59 PM; the quick-add
+// grid below only surfaces the common hours so it stays short.
+export const MIN_MINUTES = 0; // 12:00 AM
 export const MAX_MINUTES = 23 * 60 + 59; // 1439
 
 /**
