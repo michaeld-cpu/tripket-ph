@@ -518,14 +518,25 @@ export default function BookingsPage() {
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
-                      <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[b.status]}`}>
-                        {statusLabel[b.status]}
-                      </span>
-                      {b.status === "Pending" && b.paymentExpiresAt && (
-                        <div className={`mt-1 flex items-center gap-1 text-[10.5px] font-medium ${isExpired(b.paymentExpiresAt, now) ? "text-rose-500" : "text-slate-400"}`}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
-                          {formatExpiry(b.paymentExpiresAt, now)}
-                        </div>
+                      {/* A lapsed Pending booking reads as its own terminal
+                          state: one gray "Expired" chip, no countdown — the
+                          remaining time is meaningless once it's zero. */}
+                      {b.status === "Pending" && isExpired(b.paymentExpiresAt, now) ? (
+                        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                          Expired
+                        </span>
+                      ) : (
+                        <>
+                          <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[b.status]}`}>
+                            {statusLabel[b.status]}
+                          </span>
+                          {b.status === "Pending" && b.paymentExpiresAt && (
+                            <div className="mt-1 flex items-center gap-1 text-[10.5px] font-medium text-slate-400">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                              {formatExpiry(b.paymentExpiresAt, now)}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
@@ -1161,14 +1172,24 @@ function BookingDetailDialog({
                       </svg>
                     </button>
                   )}
-                  <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[booking.status]}`}>
-                    {statusLabel[booking.status]}
-                  </span>
-                  {booking.status === "Pending" && booking.paymentExpiresAt && (
-                    <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${isExpired(booking.paymentExpiresAt) ? "bg-rose-50 text-rose-600" : "bg-slate-100 text-slate-500"}`}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
-                      {formatExpiry(booking.paymentExpiresAt)}
+                  {/* Lapsed Pending → a single gray "Expired" chip (see the
+                      table cell above for the same treatment). */}
+                  {booking.status === "Pending" && isExpired(booking.paymentExpiresAt) ? (
+                    <span className="inline-flex items-center whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                      Expired
                     </span>
+                  ) : (
+                    <>
+                      <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[booking.status]}`}>
+                        {statusLabel[booking.status]}
+                      </span>
+                      {booking.status === "Pending" && booking.paymentExpiresAt && (
+                        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                          {formatExpiry(booking.paymentExpiresAt)}
+                        </span>
+                      )}
+                    </>
                   )}
                 </div>
                 <h2 className="mt-1.5 truncate text-[17px] font-semibold tracking-tight text-slate-900">{booking.ticketholder}</h2>
