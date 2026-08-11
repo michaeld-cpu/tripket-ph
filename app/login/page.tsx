@@ -14,16 +14,22 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // TESTING BYPASS — remove before this ships. Submitting with both fields
+  // blank signs in as the seeded admin so the app can be walked through without
+  // credentials. Typed credentials are still verified normally.
+  const blank = !email.trim() && !password;
   const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && password.length >= 1;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!valid || submitting) return;
+    if ((!valid && !blank) || submitting) return;
     setSubmitting(true);
     // Simulate a round-trip, then verify against the seeded credentials.
     setTimeout(() => {
-      const res = signIn(email, password);
+      const res = blank
+        ? signIn("admin@tripket.ph", "admin123")
+        : signIn(email, password);
       if (res.ok) {
         router.replace("/");
         return;
@@ -120,7 +126,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={!valid || submitting}
+            disabled={(!valid && !blank) || submitting}
             className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors duration-150 hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting && (
@@ -131,6 +137,13 @@ export default function LoginPage() {
             )}
             {submitting ? "Signing in…" : "Sign in"}
           </button>
+
+          {/* TESTING ONLY — remove alongside the bypass in `submit`. */}
+          {blank && !submitting && (
+            <p className="mt-2.5 text-center text-[11.5px] text-slate-400">
+              Testing: leave both fields empty to sign in as admin.
+            </p>
+          )}
         </form>
 
       </div>
