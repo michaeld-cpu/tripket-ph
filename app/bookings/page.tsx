@@ -387,7 +387,7 @@ export default function BookingsPage() {
 
   return (
     <div>
-      <PageHeader title="Bookings" subtitle={active.name} showDateFilter={false} />
+      <PageHeader title="Bookings" showDateFilter={false} />
 
       {!bookings ? (
         <TableSkeleton rows={8} />
@@ -1431,10 +1431,7 @@ function EditBookingButton({ booking, disabled, onEdit }: {
                 <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-50 text-brand-500">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><circle cx="12" cy="8" r="3.2" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" /></svg>
                 </span>
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="font-semibold">{t.name}</span>
-                  <span className="ml-1 text-slate-400">· {PAX_TYPE_LABELS[t.paxType]}</span>
-                </span>
+                <span className="min-w-0 flex-1 truncate font-semibold">{t.name}</span>
               </button>
             ))}
             {booking.vehicle && (
@@ -1452,9 +1449,8 @@ function EditBookingButton({ booking, disabled, onEdit }: {
                   <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-indigo-50 text-indigo-500">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M3 13l2-5a2 2 0 0 1 1.9-1.3h10.2A2 2 0 0 1 19 8l2 5" /><path d="M5 17h14" /><circle cx="7.5" cy="17.5" r="1.5" /><circle cx="16.5" cy="17.5" r="1.5" /></svg>
                   </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    <span className="font-semibold">{[booking.vehicle.make, booking.vehicle.model].filter(Boolean).join(" ") || booking.vehicle.class}</span>
-                    <span className="ml-1 text-slate-400">· {booking.vehicle.plateNumber}</span>
+                  <span className="min-w-0 flex-1 truncate font-semibold">
+                    {[booking.vehicle.make, booking.vehicle.model].filter(Boolean).join(" ") || booking.vehicle.class}
                   </span>
                 </button>
               </>

@@ -351,7 +351,7 @@ export default function RoutesPage() {
     <div>
       <PageHeader
         title="Routes"
-        subtitle={active.name}
+       
         showDateFilter={false}
       />
 

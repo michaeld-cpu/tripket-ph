@@ -46,7 +46,7 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <PageHeader title="Dashboard" subtitle={active.name} />
+      <PageHeader title="Dashboard" />
 
       {!loading && isEmpty && (
         <div className="mb-5 flex items-center gap-3 border-b border-slate-200/70 pb-4 text-[13px]">

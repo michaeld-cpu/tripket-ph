@@ -593,7 +593,7 @@ export default function VoyagesPage() {
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
         title="Voyages"
-        subtitle={active.name}
+       
         showDateFilter={false}
         showExport={false}
         right={

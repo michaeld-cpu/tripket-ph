@@ -169,7 +169,7 @@ export default function VehicleTicketsPage() {
 
   return (
     <div>
-      <PageHeader title="Vehicle Tickets" subtitle={active.name} showDateFilter={false} />
+      <PageHeader title="Vehicle Tickets" showDateFilter={false} />
 
       {!bookings ? (
         <TableSkeleton rows={8} />

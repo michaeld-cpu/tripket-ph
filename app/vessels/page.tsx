@@ -188,7 +188,7 @@ export default function VesselsPage() {
     <div>
       <PageHeader
         title="Vessels"
-        subtitle={active.name}
+       
         showDateFilter={false}
         right={
           <button className="btn-primary" onClick={() => setAddOpen(true)}>

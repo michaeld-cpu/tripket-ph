@@ -70,7 +70,7 @@ export default function ReportsPage() {
 
   return (
     <div>
-      <PageHeader title="Reports" subtitle={active.name} showDateFilter={false} />
+      <PageHeader title="Reports" showDateFilter={false} />
 
       {/* Toolbar — underline tabs on the left (ElevenLabs-style: flat, no
           pill chrome), date-range filter on the right. The active tab carries

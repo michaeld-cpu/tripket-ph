@@ -40,7 +40,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Settings" subtitle={active.name} showDateFilter={false} />
+      <PageHeader title="Settings" showDateFilter={false} />
 
       {/* Tab bar */}
       <div className="mb-5 flex items-center gap-1 border-b border-slate-200">
