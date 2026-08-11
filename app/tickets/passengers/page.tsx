@@ -302,7 +302,7 @@ export default function TicketsPage() {
           {/* Toolbar */}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-t-2xl border-b border-slate-100 px-5 py-4">
             <div>
-              <h2 className="text-base font-semibold tracking-tight text-slate-900">All tickets</h2>
+              <h2 className="text-base font-semibold tracking-tight text-slate-900">All passenger tickets</h2>
               <p className="mt-0.5 text-xs text-slate-500">
                 Showing <span className="font-medium text-slate-900">{filtered.length}</span> of {rows.length} tickets
               </p>
