@@ -903,7 +903,7 @@ function TicketDetailDialog({
 
 // ─────────── TicketPaymentInformation ───────────
 // Per-ticket payment breakdown mirroring the booking dialog's section: header
-// + status pill, a method/issued strip, the fare line (or a comped marker),
+// + status pill, the booked-on strip, the fare line (or a comped marker),
 // and a total strip. Scoped to this single passenger.
 function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
   const payTone =
@@ -926,17 +926,9 @@ function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100">
-        <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Method</div>
-          <div className="mt-1 text-[12.5px] font-semibold tracking-tight text-slate-900">
-            {ticket.comped ? "Vehicle fare" : "Tripket Wallet"}
-          </div>
-        </div>
-        <div className="px-4 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Booked on</div>
-          <div className="mt-1 text-[12.5px] font-semibold tracking-tight text-slate-900">{fmtDepartureDate(ticket.bookingDate)}</div>
-        </div>
+      <div className="border-b border-slate-100 px-4 py-3">
+        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Booked on</div>
+        <div className="mt-1 text-[12.5px] font-semibold tracking-tight text-slate-900">{fmtDepartureDate(ticket.bookingDate)}</div>
       </div>
 
       {(() => {
