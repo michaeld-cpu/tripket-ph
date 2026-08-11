@@ -90,7 +90,8 @@ export default function BookingsPage() {
   const { active, locked } = useShippingLine();
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [query, setQuery] = useState("");
-  const [routeFilter, setRouteFilter] = useState<string>("all");
+  const [originFilter, setOriginFilter] = useState<string>("all");
+  const [destinationFilter, setDestinationFilter] = useState<string>("all");
   const [vesselFilter, setVesselFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | BookingStatus>("all");
   const [page, setPage] = useState(1);
@@ -281,7 +282,8 @@ export default function BookingsPage() {
     r.start.getTime() === defaultDateRange.start.getTime() &&
     r.end.getTime() === defaultDateRange.end.getTime();
   const bookingActiveCount =
-    (routeFilter !== "all" ? 1 : 0) +
+    (originFilter !== "all" ? 1 : 0) +
+    (destinationFilter !== "all" ? 1 : 0) +
     (vesselFilter !== "all" ? 1 : 0) +
     (statusFilter !== "all" ? 1 : 0) +
     (isDefaultDateRange(dateRange) ? 0 : 1);
@@ -329,7 +331,7 @@ export default function BookingsPage() {
     });
   };
 
-  useEffect(() => { setPage(1); }, [query, routeFilter, vesselFilter, statusFilter, dateRange]);
+  useEffect(() => { setPage(1); }, [query, originFilter, destinationFilter, vesselFilter, statusFilter, dateRange]);
 
   // ?ref=TKT-#### deep link — opens the matching booking dialog once data
   // hydrates. `?action=approve` (used by the dashboard's pending list)
@@ -351,10 +353,23 @@ export default function BookingsPage() {
   }, [bookings]);
 
   // Filter dropdown options derived from the data.
-  const routeOptions = useMemo(() => {
-    const seen = new Set<string>();
-    (bookings ?? []).forEach((b) => seen.add(`${b.routeOriginCode}→${b.routeDestinationCode}`));
-    return [{ value: "all", label: "All routes" }, ...Array.from(seen).sort().map((r) => ({ value: r, label: r.replace("→", " → ") }))];
+  // Origin / destination options — keyed by port code (stable) but labelled with
+  // the city, so the list reads like the Routes page filter.
+  const originOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    (bookings ?? []).forEach((b) => seen.set(b.routeOriginCode, b.routeOriginCity || b.routeOriginCode));
+    return [
+      { value: "all", label: "All origins" },
+      ...Array.from(seen, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)),
+    ];
+  }, [bookings]);
+  const destinationOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    (bookings ?? []).forEach((b) => seen.set(b.routeDestinationCode, b.routeDestinationCity || b.routeDestinationCode));
+    return [
+      { value: "all", label: "All destinations" },
+      ...Array.from(seen, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)),
+    ];
   }, [bookings]);
   const vesselOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -366,7 +381,8 @@ export default function BookingsPage() {
     if (!bookings) return [];
     const q = query.trim().toLowerCase();
     return bookings.filter((b) => {
-      if (routeFilter !== "all" && `${b.routeOriginCode}→${b.routeDestinationCode}` !== routeFilter) return false;
+      if (originFilter !== "all" && b.routeOriginCode !== originFilter) return false;
+      if (destinationFilter !== "all" && b.routeDestinationCode !== destinationFilter) return false;
       if (vesselFilter !== "all" && b.vesselName !== vesselFilter) return false;
       if (statusFilter !== "all" && b.status !== statusFilter) return false;
       if (q) {
@@ -380,7 +396,7 @@ export default function BookingsPage() {
       if (b.bookingDate < dateRange.start || b.bookingDate > dateRange.end) return false;
       return true;
     });
-  }, [bookings, query, routeFilter, vesselFilter, statusFilter, dateRange]);
+  }, [bookings, query, originFilter, destinationFilter, vesselFilter, statusFilter, dateRange]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const isEmpty = bookings !== null && bookings.length === 0;
@@ -704,7 +720,8 @@ export default function BookingsPage() {
         onClose={() => setFiltersOpen(false)}
         activeCount={bookingActiveCount}
         fields={[
-          { kind: "select", key: "route",  label: "Route",  value: routeFilter,  options: routeOptions,  onChange: setRouteFilter,  defaultValue: "all" },
+          { kind: "select", key: "origin", label: "Origin", value: originFilter, options: originOptions, onChange: setOriginFilter, defaultValue: "all" },
+          { kind: "select", key: "destination", label: "Destination", value: destinationFilter, options: destinationOptions, onChange: setDestinationFilter, defaultValue: "all" },
           { kind: "select", key: "vessel", label: "Vessel", value: vesselFilter, options: vesselOptions, onChange: setVesselFilter, defaultValue: "all" },
           { kind: "select", key: "status", label: "Status", value: statusFilter, onChange: (v) => setStatusFilter(v as "all" | BookingStatus), defaultValue: "all",
             options: [

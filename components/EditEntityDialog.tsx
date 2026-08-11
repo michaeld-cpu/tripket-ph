@@ -1,11 +1,8 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Modal from "@/components/Modal";
 import Select from "@/components/Select";
 import {
-  PAX_TYPE_LABELS,
-  type PaxType,
-  type FareClass,
   type PassengerSex,
   type Ticket,
   type Vehicle,
@@ -205,16 +202,29 @@ const inputCls = (bad?: boolean) =>
   "w-full rounded-lg border px-3 py-2 text-[13px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 disabled:bg-slate-50 disabled:text-slate-400 " +
   (bad ? "border-rose-300 focus:ring-rose-200" : "border-slate-200 focus:border-brand-400 focus:ring-brand-200");
 
+// Split a stored full name into first + last. The last whitespace-separated
+// token is the surname; everything before it is the given name, so "Maria
+// Clara Torres" round-trips as "Maria Clara" + "Torres". A single-word name
+// becomes the first name with an empty surname.
+function splitName(full: string): { first: string; last: string } {
+  const parts = full.trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return { first: parts[0] ?? "", last: "" };
+  return { first: parts.slice(0, -1).join(" "), last: parts[parts.length - 1] };
+}
+
 // ─────────── Passenger form ───────────
 function PassengerForm({ ticket, locked, lockedReason, onClose, onSave }: {
   ticket: Ticket; locked: boolean; lockedReason?: string; onClose: () => void; onSave: (p: PassengerPatch) => void;
 }) {
-  const [name, setName] = useState(ticket.name);
+  // The ticket stores a single `name`; the form edits it as first + last and
+  // recombines on save, so the stored shape (and every consumer of it) is
+  // unchanged. Everything before the last space is the first name, so multi-word
+  // given names survive the round-trip.
+  const [firstName, setFirstName] = useState(splitName(ticket.name).first);
+  const [lastName, setLastName] = useState(splitName(ticket.name).last);
   const [ageStr, setAgeStr] = useState(String(ticket.age));
   const [sex, setSex] = useState<PassengerSex>(ticket.sex);
   const [nationality, setNationality] = useState(ticket.nationality);
-  const [paxType, setPaxType] = useState<PaxType>(ticket.paxType);
-  const [fareClass, setFareClass] = useState<FareClass>(ticket.fareClass);
   const [documentType, setDocumentType] = useState(ticket.documentType);
   const [documentRef, setDocumentRef] = useState(ticket.documentRef);
   const [phone, setPhone] = useState(ticket.phone ?? "");
@@ -224,8 +234,10 @@ function PassengerForm({ ticket, locked, lockedReason, onClose, onSave }: {
   const [touched, setTouched] = useState(false);
 
   const age = Number(ageStr);
+  const name = [firstName.trim(), lastName.trim()].filter(Boolean).join(" ");
   const errs = {
-    name: name.trim() ? "" : "Name is required.",
+    firstName: firstName.trim() ? "" : "First name is required.",
+    lastName: lastName.trim() ? "" : "Last name is required.",
     age: /^\d{1,3}$/.test(ageStr) && age >= 0 && age <= 120 ? "" : "Enter an age 0–120.",
     documentType: documentType.trim() ? "" : "ID type is required.",
     documentRef: documentRef.trim() ? "" : "ID number is required.",
@@ -235,7 +247,7 @@ function PassengerForm({ ticket, locked, lockedReason, onClose, onSave }: {
 
   const dirty =
     name !== ticket.name || age !== ticket.age || sex !== ticket.sex ||
-    nationality !== ticket.nationality || paxType !== ticket.paxType || fareClass !== ticket.fareClass ||
+    nationality !== ticket.nationality ||
     documentType !== ticket.documentType || documentRef !== ticket.documentRef ||
     phone !== (ticket.phone ?? "") || email !== (ticket.email ?? "") ||
     idFrontUrl !== ticket.idFrontUrl || idBackUrl !== ticket.idBackUrl;
@@ -246,12 +258,14 @@ function PassengerForm({ ticket, locked, lockedReason, onClose, onSave }: {
     setTouched(true);
     if (!valid || !dirty || locked) return;
     onSave({
-      name: name.trim(),
+      name,
       age,
       sex,
       nationality: nationality.trim(),
-      paxType,
-      fareClass,
+      // Not editable here — fare category and class are set at booking time and
+      // carried through untouched so the patch doesn't clear them.
+      paxType: ticket.paxType,
+      fareClass: ticket.fareClass,
       documentType: documentType.trim(),
       documentRef: documentRef.trim(),
       phone: phone.trim() || undefined,
@@ -261,32 +275,22 @@ function PassengerForm({ ticket, locked, lockedReason, onClose, onSave }: {
     });
   };
 
-  const paxOptions = useMemo(
-    () => (Object.keys(PAX_TYPE_LABELS) as PaxType[]).map((k) => ({ value: k, label: PAX_TYPE_LABELS[k] })),
-    []
-  );
-
   return (
     <div className="flex max-h-[90vh] flex-col">
       <Header kind="passenger" title="Edit passenger" subtitle={`Ticket ${ticket.ticketNumber ?? ticket.id}`} />
       {locked && <LockedBanner reason={lockedReason} />}
       <div className="grid grid-cols-1 gap-3.5 overflow-y-auto px-6 py-4 sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <Field label="Full name" error={show("name")}>
-            <input disabled={locked} value={name} onChange={(e) => setName(e.target.value)} className={inputCls(!!show("name"))} placeholder="Passenger name" />
-          </Field>
-        </div>
+        <Field label="First name" error={show("firstName")}>
+          <input disabled={locked} value={firstName} onChange={(e) => setFirstName(e.target.value)} className={inputCls(!!show("firstName"))} placeholder="e.g. Ana" />
+        </Field>
+        <Field label="Last name" error={show("lastName")}>
+          <input disabled={locked} value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputCls(!!show("lastName"))} placeholder="e.g. Torres" />
+        </Field>
         <Field label="Age" error={show("age")}>
           <input disabled={locked} inputMode="numeric" value={ageStr} onChange={(e) => setAgeStr(e.target.value.replace(/\D/g, "").slice(0, 3))} className={inputCls(!!show("age"))} />
         </Field>
         <Field label="Sex">
           <Select<PassengerSex> disabled={locked} value={sex} onChange={setSex} options={[{ value: "Male", label: "Male" }, { value: "Female", label: "Female" }]} />
-        </Field>
-        <Field label="Passenger type">
-          <Select<PaxType> disabled={locked} value={paxType} onChange={setPaxType} options={paxOptions} />
-        </Field>
-        <Field label="Fare class">
-          <Select<FareClass> disabled={locked} value={fareClass} onChange={setFareClass} options={[{ value: "Economy", label: "Economy" }, { value: "Tourist", label: "Tourist" }, { value: "Business", label: "Business" }]} />
         </Field>
         <Field label="Nationality">
           <input disabled={locked} value={nationality} onChange={(e) => setNationality(e.target.value)} className={inputCls()} placeholder="e.g. Filipino" />
