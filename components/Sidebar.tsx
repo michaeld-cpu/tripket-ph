@@ -149,7 +149,7 @@ type NavEntry = NavLeaf | NavGroup;
 // Flat list — section title labels removed for compactness. A single hairline
 // divider separates the top "Overview" cluster from everything else, and a
 // second divider before Settings, matching reference apps like Linear / Vercel.
-// Nav is role-aware: the Accounts group (Users + Operators) and Audit logs are
+// Nav is role-aware: the Accounts group (Users + Operators) and Activity logs are
 // platform-level governance and show only for admins. Operators get the
 // line-scoped set.
 function buildNavEntries(role: "admin" | "operator"): (NavEntry | { kind: "divider" })[] {
@@ -187,7 +187,7 @@ function buildNavEntries(role: "admin" | "operator"): (NavEntry | { kind: "divid
     ticketsGroup,
     { kind: "leaf", href: "/reports",  label: "Reports",   Icon: ReportsIcon },
 
-    ...(role === "admin" ? [accountsGroup, { kind: "leaf", href: "/audit-logs", label: "Audit logs", Icon: AuditIcon } as NavEntry] : []),
+    ...(role === "admin" ? [accountsGroup, { kind: "leaf", href: "/activity-logs", label: "Activity logs", Icon: AuditIcon } as NavEntry] : []),
 
     { kind: "divider" },
 

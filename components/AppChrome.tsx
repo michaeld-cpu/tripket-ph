@@ -11,7 +11,7 @@ const PUBLIC_ROUTES = ["/login"];
 
 // Platform-governance routes — admins only. Operators who type these URLs are
 // silently bounced to the dashboard (nav never exposes them in the first place).
-const ADMIN_ROUTES = ["/users", "/audit-logs"];
+const ADMIN_ROUTES = ["/users", "/activity-logs"];
 
 export default function AppChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
