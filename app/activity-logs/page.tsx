@@ -86,9 +86,9 @@ export default function ActivityLogsPage() {
                 size="sm"
                 value={areaFilter}
                 onChange={setAreaFilter}
-                ariaLabel="Filter by area"
-                className="w-32"
-                options={[{ value: "all", label: "All areas" }, ...AREAS.map((a) => ({ value: a, label: a }))]}
+                ariaLabel="Filter by subject"
+                className="w-36"
+                options={[{ value: "all", label: "All subjects" }, ...AREAS.map((a) => ({ value: a, label: a }))]}
               />
             </div>
           </div>
@@ -202,7 +202,7 @@ function LogDetailsModal({ entry, onClose }: { entry: AuditEntry | null; onClose
               <DetailField label="Target">
                 <span className="text-[13px] text-slate-800">{entry.target}</span>
               </DetailField>
-              <DetailField label="Area">
+              <DetailField label="Subject type">
                 <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10.5px] font-medium tracking-tight ${areaTone[entry.area]}`}>
                   {entry.area}
                 </span>
