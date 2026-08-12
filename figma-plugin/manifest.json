@@ -1,0 +1,9 @@
+{
+  "name": "Tripket — Build Tickets Section",
+  "id": "tripket-tickets-allstates",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": { "allowedDomains": ["none"] }
+}

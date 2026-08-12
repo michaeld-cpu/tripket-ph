@@ -955,9 +955,17 @@ function ApproveBookingDialog({
 // an already-departed voyage releases nothing, so any such claim would be wrong
 // for that case. The dismiss button says "Keep booking" so it can't be misread
 // as the destructive action sitting next to it.
-// Predefined cancellation reasons. "Others" unlocks a free-text field so the
-// admin can spell out anything the fixed list doesn't cover.
-const CANCEL_REASONS = ["Bad weather", "No available vessel", "Others"] as const;
+//
+// A reason is required. The fixed options are deliberately non-overlapping —
+// weather/port, fleet, and duplicate-record each answer a different question —
+// so the same cancellation can't be logged two different ways. Anything else
+// goes under "Others", which unlocks a free-text field.
+const CANCEL_REASONS = [
+  "Bad weather / port closure",
+  "No available vessel",
+  "Duplicate booking",
+  "Others",
+] as const;
 type CancelReason = (typeof CANCEL_REASONS)[number];
 
 function CancelConfirmDialog({
