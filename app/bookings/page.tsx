@@ -39,6 +39,7 @@ import { reviveBookings, mergeSeededBookings } from "@/lib/bookings-data";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 import ActivityLog from "@/components/ActivityLog";
 import Modal from "@/components/Modal";
+import Select from "@/components/Select";
 import EditEntityDialog, { type EditEntityInit } from "@/components/EditEntityDialog";
 
 
@@ -157,7 +158,9 @@ export default function BookingsPage() {
   // Cancelling a booking flags it — and every non-terminal ticket under it —
   // as "For Refund" (internal "To Refund") so the money is queued for return.
   // Already-refunded tickets stay put; the payout runs separately from here.
-  const handleCancel = (ref: string) => {
+  // The admin must pick a cancellation reason; it rides along into the
+  // activity entry so the audit trail says *why* the money was queued back.
+  const handleCancel = (ref: string, reason: string) => {
     updateBookings((prev) => prev.map((x) => {
       if (x.ref !== ref) return x;
       const tickets = x.tickets.map((t) =>
@@ -166,7 +169,7 @@ export default function BookingsPage() {
           : { ...t, status: "To Refund" as const });
       return logTo(
         { ...x, status: "To Refund", tickets },
-        makeActivity("to_refund", "Booking cancelled — marked for refund", ACTOR, `₱${x.amount.toLocaleString()} eligible for return`),
+        makeActivity("to_refund", "Booking cancelled — marked for refund", ACTOR, `Reason: ${reason} · ₱${x.amount.toLocaleString()} eligible for return`),
       );
     }));
     showToast(`Booking ${ref} cancelled — marked For Refund`);
@@ -631,11 +634,13 @@ export default function BookingsPage() {
                             ),
                           },
                           // Cancel — flags the booking (and its tickets) For Refund.
-                          // Locked once already For Refund or refunded.
+                          // Locked once already For Refund or refunded, and
+                          // while Under Review (Submitted) — an unapproved
+                          // booking must be approved before it can be cancelled.
                           {
                             label: "Cancel booking",
                             danger: true,
-                            disabled: b.status === "To Refund" || b.status === "Refunded",
+                            disabled: b.status === "To Refund" || b.status === "Refunded" || b.status === "Submitted",
                             onClick: () => setCancelTarget(b.ref),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -668,7 +673,7 @@ export default function BookingsPage() {
         booking={openBooking}
         line={active}
         onClose={() => setOpenRef(null)}
-        onCancel={(ref) => { handleCancel(ref); }}
+        onCancel={(ref) => { setOpenRef(null); setCancelTarget(ref); }}
         onApprove={(ref) => { handleApprove(ref); }}
         onRefund={(ref) => { setOpenRef(null); setRefundTarget(ref); }}
         onMarkPaid={(ref) => { handleMarkPaid(ref); }}
@@ -703,9 +708,9 @@ export default function BookingsPage() {
       <CancelConfirmDialog
         bookingRef={cancelTarget}
         onClose={() => setCancelTarget(null)}
-        onConfirm={() => {
+        onConfirm={(reason) => {
           if (!cancelTarget) return;
-          handleCancel(cancelTarget);
+          handleCancel(cancelTarget, reason);
           setCancelTarget(null);
         }}
       />
@@ -950,6 +955,11 @@ function ApproveBookingDialog({
 // an already-departed voyage releases nothing, so any such claim would be wrong
 // for that case. The dismiss button says "Keep booking" so it can't be misread
 // as the destructive action sitting next to it.
+// Predefined cancellation reasons. "Others" unlocks a free-text field so the
+// admin can spell out anything the fixed list doesn't cover.
+const CANCEL_REASONS = ["Bad weather", "No available vessel", "Others"] as const;
+type CancelReason = (typeof CANCEL_REASONS)[number];
+
 function CancelConfirmDialog({
   bookingRef,
   onClose,
@@ -957,8 +967,23 @@ function CancelConfirmDialog({
 }: {
   bookingRef: string | null;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (reason: string) => void;
 }) {
+  const [reason, setReason] = useState<CancelReason | "">("");
+  const [other, setOther] = useState("");
+  const [touched, setTouched] = useState(false);
+
+  // Reset whenever a new booking is targeted.
+  useEffect(() => {
+    if (bookingRef) { setReason(""); setOther(""); setTouched(false); }
+  }, [bookingRef]);
+
+  const valid = reason !== "" && (reason !== "Others" || other.trim().length > 0);
+  const submit = () => {
+    if (!valid) { setTouched(true); return; }
+    onConfirm(reason === "Others" ? other.trim() : reason);
+  };
+
   return (
     <Modal open={!!bookingRef} onClose={onClose} maxWidth="max-w-md">
       <div className="p-6">
@@ -979,6 +1004,46 @@ function CancelConfirmDialog({
           </div>
         </div>
 
+        <div className="mt-4">
+          <label className="text-[12px] font-semibold text-slate-700">
+            Cancellation reason <span className="text-rose-500">*</span>
+          </label>
+          <div className="mt-1.5">
+            <Select
+              value={reason}
+              options={CANCEL_REASONS.map((r) => ({ value: r, label: r }))}
+              onChange={(v) => { setReason(v as CancelReason); setTouched(true); }}
+              ariaLabel="Cancellation reason"
+              placeholder="Select a reason…"
+              className="w-full"
+            />
+          </div>
+
+          {reason === "Others" && (
+            <textarea
+              rows={3}
+              value={other}
+              onChange={(e) => setOther(e.target.value)}
+              onBlur={() => setTouched(true)}
+              placeholder="Describe the reason…"
+              className={
+                "mt-2 w-full resize-none rounded-lg border px-3 py-2 text-[13px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 " +
+                (touched && other.trim() === ""
+                  ? "border-rose-300 focus:ring-rose-200"
+                  : "border-slate-200 focus:border-brand-400 focus:ring-brand-200")
+              }
+            />
+          )}
+
+          {touched && !valid && (
+            <p className="mt-1 text-[11.5px] font-medium text-rose-500">
+              {reason === "Others"
+                ? "Enter the reason before confirming."
+                : "Select a cancellation reason before confirming."}
+            </p>
+          )}
+        </div>
+
         <div className="mt-5 flex items-center justify-end gap-2.5">
           <button
             type="button"
@@ -989,8 +1054,12 @@ function CancelConfirmDialog({
           </button>
           <button
             type="button"
-            onClick={onConfirm}
-            className="rounded-lg bg-rose-600 px-4 py-2 text-[12.5px] font-semibold text-white transition-colors hover:bg-rose-700"
+            disabled={!valid}
+            onClick={submit}
+            className={
+              "rounded-lg px-4 py-2 text-[12.5px] font-semibold text-white transition-colors " +
+              (valid ? "bg-rose-600 hover:bg-rose-700" : "cursor-not-allowed bg-rose-300")
+            }
           >
             Cancel booking
           </button>
@@ -1541,6 +1610,8 @@ function BookingStatusPicker({
     if (s === "Refunded") return current === "To Refund";
     // A booking already flagged To Refund can only proceed to the actual refund.
     if (current === "To Refund") return false;
+    // A booking still Under Review can't be cancelled — approve it first.
+    if (s === "Cancelled" && current === "Submitted") return false;
     // "Mark as Paid" moves an unpaid Pending booking into Under Review — only
     // valid from Pending.
     if (s === "Submitted") return current === "Pending";
