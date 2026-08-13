@@ -31,7 +31,9 @@ export const roleLabel: Record<UserRole, string> = {
 };
 
 export const roleTone: Record<UserRole, string> = {
-  Superadmin: "bg-violet-50 text-violet-700 ring-1 ring-violet-100",
+  // Same green as a Confirmed booking, so "elevated / cleared" reads the same
+  // way across the app.
+  Superadmin: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200/70",
   Admin:      "bg-brand-50 text-brand-700 ring-1 ring-brand-100",
   Operator:   "bg-slate-100 text-slate-600 ring-1 ring-slate-200/70",
 };
@@ -58,8 +60,32 @@ function hashStr(s: string): number {
   return h >>> 0;
 }
 
+// Two fixed platform Super Admins. Unlike the per-line staff below, these are
+// governance accounts that always exist — stable ids so they're never
+// duplicated when the seed is merged into an existing directory.
+export const PLATFORM_SUPERADMINS: User[] = [
+  {
+    id: "usr-superadmin-1",
+    name: "Super Admin",
+    email: "super_admin@tripket.com",
+    role: "Superadmin",
+    lineId: lines[0]?.id ?? "",
+    status: "Active",
+    lastActive: new Date(),
+  },
+  {
+    id: "usr-superadmin-2",
+    name: "Platform Owner",
+    email: "platform_owner@tripket.com",
+    role: "Superadmin",
+    lineId: lines[0]?.id ?? "",
+    status: "Active",
+    lastActive: new Date(),
+  },
+];
+
 export function buildUsers(): User[] {
-  const out: User[] = [];
+  const out: User[] = [...PLATFORM_SUPERADMINS];
   let n = 0;
   lines.forEach((line) => {
     // 3–6 users per line, derived deterministically from the line id.

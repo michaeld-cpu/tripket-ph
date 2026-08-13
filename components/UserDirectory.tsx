@@ -14,6 +14,7 @@ import UserStatusDialog from "@/components/UserStatusDialog";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 import {
   buildUsers,
+  PLATFORM_SUPERADMINS,
   roleLabel,
   roleTone,
   userStatusTone,
@@ -161,7 +162,18 @@ export default function UserDirectory({
       const persisted = loadStore<unknown>("users", "all");
       if (persisted) {
         const revived = reviveUsers(persisted);
-        if (revived.length > 0) { setUsers(revived); return; }
+        if (revived.length > 0) {
+          // Platform Super Admins are part of the seed, so a directory saved
+          // before they existed needs them added rather than re-seeding (which
+          // would discard the operator's own edits). Matched by id, so this
+          // never duplicates and never overwrites a local rename.
+          const seen = new Set(revived.map((u) => u.id));
+          const missing = PLATFORM_SUPERADMINS.filter((u) => !seen.has(u.id));
+          const merged = missing.length > 0 ? [...missing, ...revived] : revived;
+          if (missing.length > 0) saveStore("users", "all", merged);
+          setUsers(merged);
+          return;
+        }
       }
     } catch { /* fall through to mock */ }
     const t = setTimeout(() => {
