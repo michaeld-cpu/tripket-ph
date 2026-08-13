@@ -8,6 +8,7 @@ import { fetchDashboardData, type Vessel } from "@/lib/dashboard-data";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 import { TableSkeleton } from "@/components/Skeleton";
 import RowMenu from "@/components/RowMenu";
+import Pagination from "@/components/Pagination";
 import Select from "@/components/Select";
 import AddVesselModal from "@/components/AddVesselModal";
 import EmptyState from "@/components/EmptyState";
@@ -116,11 +117,15 @@ function SortIcon() {
   );
 }
 
+const DEFAULT_PAGE_SIZE = 10;
+
 export default function VesselsPage() {
   const { active } = useShippingLine();
   const { showToast } = useToast();
   const [vessels, setVessels] = useState<Vessel[] | null>(null);
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [typeFilter, setTypeFilter] = useState<"all" | Vessel["type"]>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | Vessel["status"]>("all");
   const [addOpen, setAddOpen] = useState(false);
@@ -181,6 +186,10 @@ export default function VesselsPage() {
       return true;
     });
   }, [vessels, query, typeFilter, statusFilter]);
+
+  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
+  // Filtering can strand the user on a page that no longer exists.
+  useEffect(() => { setPage(1); }, [query, typeFilter, statusFilter]);
 
   const isEmpty = vessels !== null && vessels.length === 0;
 
@@ -253,9 +262,6 @@ export default function VesselsPage() {
           <div className="flex items-center justify-between rounded-t-2xl border-b border-slate-100 px-5 py-4">
             <div>
               <h2 className="text-base font-semibold tracking-tight text-slate-900">Registered vessels</h2>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Showing <span className="font-medium text-slate-900">{filtered.length}</span> of {vessels.length} vessels
-              </p>
             </div>
 
             <div className="flex items-center gap-2">
@@ -283,7 +289,6 @@ export default function VesselsPage() {
                   { value: "all", label: "All types" },
                   { value: "RoRo", label: "RoRo" },
                   { value: "Fast Craft", label: "Fast Craft" },
-                  { value: "Passenger Ship", label: "Passenger Ship" },
                 ]}
               />
 
@@ -324,7 +329,7 @@ export default function VesselsPage() {
                     </td>
                   </tr>
                 )}
-                {filtered.map((v, i) => {
+                {pageRows.map((v, i) => {
                   const tone = statusTone[v.status];
                   return (
                     <motion.tr
@@ -440,6 +445,15 @@ export default function VesselsPage() {
               </tbody>
             </table>
           </div>
+
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={filtered.length}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            noun="vessels"
+          />
         </section>
       )}
     </div>

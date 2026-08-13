@@ -32,6 +32,8 @@ export type DatePickerProps = {
   min?: string;
   max?: string;
   placeholder?: string;
+  /** Read-only trigger — can't be opened (e.g. a locked booking). */
+  disabled?: boolean;
   /** Aria-label for the trigger button. */
   ariaLabel?: string;
   className?: string;
@@ -54,6 +56,7 @@ export default function DatePicker({
   min,
   max,
   placeholder = "Pick a date",
+  disabled = false,
   ariaLabel = "Choose a date",
   className = "",
   direction = "down",
@@ -126,11 +129,14 @@ export default function DatePicker({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={ariaLabel}
+        disabled={disabled}
         className={
-          "inline-flex w-full items-center gap-2 rounded-lg border bg-white px-3 py-2 text-[13px] tracking-tight transition-[border-color,box-shadow] duration-150 ease-out " +
-          (open
-            ? "border-brand-200 ring-2 ring-brand-100"
-            : "border-slate-200 hover:border-slate-300")
+          "inline-flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-[13px] tracking-tight transition-[border-color,box-shadow] duration-150 ease-out " +
+          (disabled
+            ? "cursor-not-allowed border-slate-200 bg-slate-50 opacity-70"
+            : open
+              ? "border-brand-200 bg-white ring-2 ring-brand-100"
+              : "border-slate-200 bg-white hover:border-slate-300")
         }
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-400">

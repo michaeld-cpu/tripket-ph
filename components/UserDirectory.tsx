@@ -31,7 +31,7 @@ function reviveUsers(raw: unknown): User[] {
   }));
 }
 
-const PAGE_SIZE = 12;
+const DEFAULT_PAGE_SIZE = 12;
 
 // Stable per-user shipping line so the Users table shows a believable mix of
 // lines (the line each admin is currently on) rather than all the same.
@@ -114,6 +114,7 @@ export default function UserDirectory({
   const [statusFilter, setStatusFilter] = useState<"all" | UserStatus>("all");
   const [roleFilter, setRoleFilter] = useState<"all" | UserRole>("all");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   // Form dialog: open=create when editUser is null, edit when set.
   const [formOpen, setFormOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
@@ -174,7 +175,7 @@ export default function UserDirectory({
     });
   }, [scoped, query, statusFilter, roleFilter]);
 
-  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <div>
@@ -200,9 +201,6 @@ export default function UserDirectory({
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-t-2xl border-b border-slate-100 px-5 py-4">
             <div>
               <h2 className="text-base font-semibold tracking-tight text-slate-900">{tableHeading}</h2>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Showing <span className="font-medium text-slate-900">{filtered.length}</span> of {scoped.length} {noun}
-              </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -374,7 +372,7 @@ export default function UserDirectory({
             </table>
           </div>
 
-          <Pagination page={page} pageSize={PAGE_SIZE} total={filtered.length} onPageChange={setPage} noun={noun} />
+          <Pagination page={page} pageSize={pageSize} total={filtered.length} onPageChange={setPage} onPageSizeChange={setPageSize} noun={noun} />
         </section>
       )}
 

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Modal from "@/components/Modal";
 import Select from "@/components/Select";
 
@@ -24,20 +24,45 @@ export const CANCEL_REASONS = [
 ] as const;
 export type CancelReason = (typeof CANCEL_REASONS)[number];
 
+// A whole route/leg can't be cancelled for a duplicate booking — that's a
+// per-booking concern — so route cancellation offers the operational reasons
+// only.
+export const ROUTE_CANCEL_REASONS = [
+  "Bad weather / port closure",
+  "No available vessel",
+  "Others",
+] as const;
+
 export default function CancelConfirmDialog({
   targetRef,
   noun = "booking",
+  title,
+  body,
+  confirmLabel,
+  dismissLabel,
+  reasons = CANCEL_REASONS,
   onClose,
   onConfirm,
 }: {
   /** Ref of the record being cancelled; null closes the dialog. */
   targetRef: string | null;
-  /** What's being cancelled — drives the title, body and dismiss copy. */
-  noun?: "booking" | "ticket";
+  /** What's being cancelled — drives the default title, body and dismiss copy. */
+  noun?: "booking" | "ticket" | "route";
+  /** Override the default "Cancel {noun} '{ref}'?" heading. */
+  title?: string;
+  /** Override the default consequence line under the heading. */
+  body?: ReactNode;
+  /** Override the confirm button's "Cancel {noun}" label. */
+  confirmLabel?: string;
+  /** Override the dismiss button's "Keep {noun}" label. */
+  dismissLabel?: string;
+  /** Selectable reasons. Defaults to the booking-level set; routes pass the
+   *  narrowed ROUTE_CANCEL_REASONS. */
+  reasons?: readonly string[];
   onClose: () => void;
   onConfirm: (reason: string) => void;
 }) {
-  const [reason, setReason] = useState<CancelReason | "">("");
+  const [reason, setReason] = useState<string>("");
   const [other, setOther] = useState("");
   const [touched, setTouched] = useState(false);
 
@@ -64,10 +89,10 @@ export default function CancelConfirmDialog({
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">
-              Cancel {noun} &lsquo;{targetRef}&rsquo;?
+              {title ?? <>Cancel {noun} &lsquo;{targetRef}&rsquo;?</>}
             </h2>
             <p className="mt-1 text-[12.5px] leading-relaxed text-slate-500">
-              This marks the {noun} For Refund. The payout is processed separately.
+              {body ?? <>This marks the {noun} For Refund. The payout is processed separately.</>}
             </p>
           </div>
         </div>
@@ -79,8 +104,8 @@ export default function CancelConfirmDialog({
           <div className="mt-1.5">
             <Select
               value={reason}
-              options={CANCEL_REASONS.map((r) => ({ value: r, label: r }))}
-              onChange={(v) => { setReason(v as CancelReason); setTouched(true); }}
+              options={reasons.map((r) => ({ value: r, label: r }))}
+              onChange={(v) => { setReason(v); setTouched(true); }}
               ariaLabel="Cancellation reason"
               placeholder="Select a reason…"
               className="w-full"
@@ -133,7 +158,7 @@ export default function CancelConfirmDialog({
             onClick={onClose}
             className="rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-slate-600 ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
           >
-            Keep {noun}
+            {dismissLabel ?? `Keep ${noun}`}
           </button>
           <button
             type="button"
@@ -144,7 +169,7 @@ export default function CancelConfirmDialog({
               (valid ? "bg-rose-600 hover:bg-rose-700" : "cursor-not-allowed bg-rose-300")
             }
           >
-            Cancel {noun}
+            {confirmLabel ?? `Cancel ${noun}`}
           </button>
         </div>
       </div>

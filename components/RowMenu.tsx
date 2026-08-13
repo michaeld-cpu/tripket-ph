@@ -5,8 +5,13 @@ import { createPortal } from "react-dom";
 export type RowMenuItem = {
   label: string;
   onClick: () => void;
-  /** Marks the item as destructive — rose text, rose-tinted hover. */
+  /** Marks the item as destructive — rose text, rose-tinted hover.
+   *  Shorthand for `tone: "danger"`; that field wins if both are set. */
   danger?: boolean;
+  /** Semantic colour for the label + icon. Use to signal what an action does:
+   *  "success" for state-advancing (Mark Departed, Enable), "warning" for
+   *  reversing one (Mark Scheduled), "danger" for destructive. */
+  tone?: "default" | "success" | "warning" | "danger";
   /** Disables the item (greyed out, non-clickable). */
   disabled?: boolean;
   /** Optional 16×16 icon rendered before the label. */
@@ -16,6 +21,33 @@ export type RowMenuItem = {
   /** Render a thin hairline divider *above* this item — useful before destructive groups. */
   divider?: boolean;
 };
+
+// Label + icon colours per tone. Kept as a lookup so adding a tone doesn't
+// mean threading another ternary through two class strings.
+const TONE = {
+  default: {
+    label: "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900",
+    icon: "text-slate-400 group-hover:text-slate-700",
+  },
+  success: {
+    label: "text-emerald-600 hover:bg-emerald-50",
+    icon: "text-emerald-500",
+  },
+  warning: {
+    label: "text-amber-600 hover:bg-amber-50",
+    icon: "text-amber-500",
+  },
+  danger: {
+    label: "text-rose-600 hover:bg-rose-50",
+    icon: "text-rose-500",
+  },
+} as const;
+
+// `danger` predates `tone`, so honour it as a shorthand for callers that
+// haven't migrated.
+function resolveTone(item: RowMenuItem): keyof typeof TONE {
+  return item.tone ?? (item.danger ? "danger" : "default");
+}
 
 /**
  * RowMenu — the shared kebab dropdown for table rows.
@@ -150,22 +182,14 @@ export default function RowMenu({
                 className={
                   "group flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] " +
                   "transition-colors duration-100 ease-out " +
-                  (item.disabled
-                    ? "cursor-not-allowed text-slate-400"
-                    : item.danger
-                      ? "text-rose-600 hover:bg-rose-50"
-                      : "text-slate-700 hover:bg-slate-100/80 hover:text-slate-900")
+                  (item.disabled ? "cursor-not-allowed text-slate-400" : TONE[resolveTone(item)].label)
                 }
               >
                 {item.icon && (
                   <span
                     className={
                       "shrink-0 transition-colors duration-100 " +
-                      (item.disabled
-                        ? "text-slate-300"
-                        : item.danger
-                          ? "text-rose-500"
-                          : "text-slate-400 group-hover:text-slate-700")
+                      (item.disabled ? "text-slate-300" : TONE[resolveTone(item)].icon)
                     }
                   >
                     {item.icon}

@@ -2,7 +2,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Modal from "@/components/Modal";
 import Select from "@/components/Select";
-import DateRangePicker, { type DateRange } from "@/components/DateRangePicker";
+import DateRangePicker, { type DateRange, type OptionalDateRange } from "@/components/DateRangePicker";
 
 /**
  * FiltersDialog — single entry point for every page-level filter.
@@ -35,7 +35,21 @@ export type DateRangeFieldDef = {
   defaultValue?: DateRange;
 };
 
-export type FilterFieldDef = SelectFieldDef | DateRangeFieldDef;
+// Like DateRangeFieldDef but the window can be unset (null) — the field then
+// reads as a placeholder and imposes no constraint. Use for windows that are
+// genuinely optional, e.g. an actual-departure date that most rows lack.
+export type OptionalDateRangeFieldDef = {
+  kind: "optionalDateRange";
+  key: string;
+  label: string;
+  value: OptionalDateRange;
+  onChange: (v: OptionalDateRange) => void;
+  defaultValue?: OptionalDateRange;
+  /** Trigger text while unset. */
+  placeholder?: string;
+};
+
+export type FilterFieldDef = SelectFieldDef | DateRangeFieldDef | OptionalDateRangeFieldDef;
 
 export default function FiltersDialog({
   open,
@@ -69,13 +83,22 @@ export default function FiltersDialog({
       const next = draft[f.key];
       if (f.kind === "select" && typeof next === "string") f.onChange(next);
       if (f.kind === "dateRange" && next && typeof next === "object") f.onChange(next as DateRange);
+      // Unlike dateRange, null is a meaningful value here (window cleared), so
+      // it must pass through rather than being treated as "no draft change".
+      if (f.kind === "optionalDateRange") f.onChange((next ?? null) as OptionalDateRange);
     });
     onClose();
   };
 
   const reset = () => {
     const seed: Record<string, unknown> = {};
-    fields.forEach((f) => { seed[f.key] = f.defaultValue ?? (f.kind === "select" ? "all" : f.value); });
+    fields.forEach((f) => {
+      // `??` would skip a deliberate null default (an optional window resets to
+      // "unset"), so that kind resolves its default explicitly.
+      seed[f.key] = f.kind === "optionalDateRange"
+        ? (f.defaultValue ?? null)
+        : (f.defaultValue ?? (f.kind === "select" ? "all" : f.value));
+    });
     setDraft(seed);
   };
 
@@ -115,6 +138,12 @@ export default function FiltersDialog({
                   options={f.options}
                   inline
                 />
+              ) : f.kind === "optionalDateRange" ? (
+                <OptionalRangeField
+                  value={(draft[f.key] as OptionalDateRange) ?? null}
+                  placeholder={f.placeholder ?? "Select date range"}
+                  onChange={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
+                />
               ) : (
                 <DateRangePicker
                   value={(draft[f.key] as DateRange) ?? f.value}
@@ -152,6 +181,56 @@ export default function FiltersDialog({
         </div>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * An optional date window. While unset it renders a placeholder trigger that
+ * seeds today's date on click; once set it hands off to the real picker with a
+ * clear button so the window can be dropped again.
+ */
+function OptionalRangeField({
+  value,
+  placeholder,
+  onChange,
+}: {
+  value: OptionalDateRange;
+  placeholder: string;
+  onChange: (v: OptionalDateRange) => void;
+}) {
+  if (!value) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          const d = new Date(); d.setHours(0, 0, 0, 0);
+          onChange({ start: d, end: d });
+        }}
+        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-400 transition-colors duration-150 ease-out hover:bg-slate-50 focus:outline-none focus-visible:border-brand-200 focus-visible:ring-2 focus-visible:ring-brand-100"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-brand-500">
+          <rect x="3.5" y="5" width="17" height="16" rx="2" />
+          <path d="M8 3v4M16 3v4M3.5 10h17" />
+        </svg>
+        <span>{placeholder}</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-slate-400">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <DateRangePicker value={value} onChange={onChange} />
+      <button
+        type="button"
+        onClick={() => onChange(null)}
+        aria-label="Clear date range"
+        className="rounded-lg px-2 py-1.5 text-[12px] font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700"
+      >
+        Clear
+      </button>
+    </div>
   );
 }
 

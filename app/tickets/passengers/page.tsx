@@ -75,7 +75,7 @@ function flattenTickets(bookings: Booking[]): TicketRow[] {
   return rows.sort((a, b) => b.bookingDate.getTime() - a.bookingDate.getTime());
 }
 
-const PAGE_SIZE = 15;
+const DEFAULT_PAGE_SIZE = 15;
 
 function fmtDepartureDate(d: Date): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -126,6 +126,7 @@ export default function TicketsPage() {
   // (Senior / PWD / Student / Infant) plus Regular.
   const [paxTypeFilter, setPaxTypeFilter] = useState<"all" | PaxType>("all");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Row whose "Mark Paid" was triggered from the row menu — opens the
   // ticket-number prompt before committing the Paid status.
@@ -251,7 +252,7 @@ export default function TicketsPage() {
     });
   }, [rows, query, routeFilter, vesselFilter, statusFilter, classFilter, paxTypeFilter, dateRange]);
 
-  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
   const isEmpty = bookings !== null && rows.length === 0;
 
   // Status mutations operate on the booking's ticket list so the bookings
@@ -301,9 +302,6 @@ export default function TicketsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-t-2xl border-b border-slate-100 px-5 py-4">
             <div>
               <h2 className="text-base font-semibold tracking-tight text-slate-900">All passenger tickets</h2>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Showing <span className="font-medium text-slate-900">{filtered.length}</span> of {rows.length} tickets
-              </p>
             </div>
 
             <div className="ml-auto flex flex-1 flex-wrap items-center justify-end gap-2">
@@ -545,9 +543,9 @@ export default function TicketsPage() {
 
           <Pagination
             page={page}
-            pageSize={PAGE_SIZE}
+            pageSize={pageSize}
             total={filtered.length}
-            onPageChange={setPage}
+            onPageChange={setPage} onPageSizeChange={setPageSize}
             noun="tickets"
           />
         </section>
@@ -785,6 +783,18 @@ function TicketDetailDialog({
                 <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Passenger</div>
                 <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 text-[12.5px]">
                   <div>
+                    <dt className="text-[10.5px] text-slate-500">Ticket number</dt>
+                    <dd className="mt-0.5 font-mono font-semibold tabular-nums tracking-[0.04em] text-slate-900">
+                      {ticket.ticketNumber ?? <span className="text-slate-300">—</span>}
+                    </dd>
+                  </div>
+                  <div>
+                    {/* Issued by the shipping line when they run their own
+                        numbering — absent until they hand one back. */}
+                    <dt className="text-[10.5px] text-slate-500">Operator ticket</dt>
+                    <dd className="mt-0.5 font-mono font-semibold tabular-nums tracking-[0.04em] text-slate-300">—</dd>
+                  </div>
+                  <div>
                     <dt className="text-[10.5px] text-slate-500">Gender</dt>
                     <dd className="mt-0.5 font-medium text-slate-900">{ticket.sex}</dd>
                   </div>
@@ -893,8 +903,8 @@ function TicketDetailDialog({
 function TicketPaymentInformation({ ticket }: { ticket: TicketRow }) {
   const payTone =
     ticket.status === "Issued" ? "bg-emerald-100 text-emerald-800"
-    : ticket.status === "Refunded" ? "bg-sky-50 text-sky-700"
-    : ticket.status === "To Refund" ? "bg-amber-100 text-amber-800"
+    : ticket.status === "Refunded" ? "bg-slate-100 text-slate-500"
+    : ticket.status === "To Refund" ? "bg-amber-50 text-amber-800"
     : "bg-slate-100 text-slate-500";
   const payLabel =
     ticket.status === "Issued" ? "Issued"
@@ -1073,8 +1083,19 @@ function StatusPicker({
                     }`}
                   >
                     <span className="truncate font-medium">{o.label}</span>
-                    <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${ticketStatusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
-                      {ticketStatusLabel[o.value]}
+                    {/* The chip names the status the ticket actually lands in.
+                        "Cancel ticket" queues a refund rather than voiding, so
+                        it reads "For Refund" — in rose, matching the
+                        destructive row it sits on rather than the global amber
+                        the settled state uses elsewhere. */}
+                    <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${
+                      o.value === "Cancelled"
+                        ? "bg-rose-50 text-rose-600"
+                        : ticketStatusTone[o.value]
+                    } ${disabled ? "opacity-50" : ""}`}>
+                      {o.value === "Cancelled"
+                        ? ticketStatusLabel["To Refund"]
+                        : ticketStatusLabel[o.value]}
                     </span>
                   </button>
                 );

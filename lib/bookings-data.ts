@@ -25,6 +25,9 @@ export type Ticket = {
   name: string;
   fareClass: FareClass;
   age: number;
+  /** Date of birth as captured at booking. Optional — `age` remains the
+      authoritative field, so tickets predating this still render. */
+  birthDate?: Date;
   sex: PassengerSex;
   nationality: string;
   /** Type of valid ID presented at check-in (e.g. "PhilSys ID", "Driver's License"). */
@@ -158,6 +161,9 @@ export type PaymentDetails = {
   method: string;
   /** The provider's own transaction reference (from their webhook). */
   providerReference: string;
+  /** When the charge settled. Absent while a payment is still Initial/Pending
+      — an unsettled payment has no completion time. */
+  completedAt?: Date;
   /** Provider-reported transaction state. */
   status: PaymentProviderStatus;
   /** Platform service fee bundled into the booking total. */
@@ -178,6 +184,18 @@ function refRng(ref: string): () => number {
   return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 100000) / 100000; };
 }
 
+// Mint a birth date consistent with a seeded age. Deterministic per rng draw
+// so the date is stable across reloads, and the derived age always matches the
+// `age` field rather than drifting a year either side of it.
+function birthDateForAge(age: number, rand: () => number): Date {
+  const now = new Date();
+  // Land the birthday earlier in the current year so `now - birthDate` floors
+  // to exactly `age`, never `age - 1`.
+  const month = Math.floor(rand() * Math.max(1, now.getMonth() + 1));
+  const day = 1 + Math.floor(rand() * 28);
+  return new Date(now.getFullYear() - age, month, day);
+}
+
 // Build a deterministic PaymentDetails from a booking's rng so the seeded data
 // is stable across reloads. `total` is the booking amount; the service fee is
 // carved out of it so subTotal + serviceFee reconciles to the total.
@@ -186,6 +204,9 @@ export function makePaymentDetails(
   rand: () => number,
   total: number,
   paymentStatus: Booking["paymentStatus"],
+  /** Booking timestamp — the charge settles a few minutes after it. Omit for
+      callers with no date to hand; the completion time is then left unset. */
+  bookingDate?: Date,
 ): PaymentDetails {
   const provider = PAYMENT_PROVIDERS[Math.floor(rand() * PAYMENT_PROVIDERS.length)];
   const method = PAYMENT_METHODS[Math.floor(rand() * PAYMENT_METHODS.length)];
@@ -200,11 +221,17 @@ export function makePaymentDetails(
   const serviceFee = 25 + Math.floor(rand() * 6) * 5; // ₱25–₱50 in ₱5 steps
   const subTotal = Math.max(0, total - serviceFee);
   const provRef = `${provider.slice(0, 3).toUpperCase()}-${String(100000 + Math.floor(rand() * 899999))}`;
+  // Only a settled charge has a completion time; Initial/Pending have none.
+  const settled = status === "Completed" || status === "Refunded";
+  const completedAt = settled && bookingDate
+    ? new Date(bookingDate.getTime() + (1 + Math.floor(rand() * 9)) * 60_000)
+    : undefined;
   return {
     reference: `PAY-${ref}`,
     provider,
     method,
     providerReference: provRef,
+    completedAt,
     status,
     serviceFee,
     subTotal,
@@ -238,6 +265,17 @@ const FARE_CLASS_MULTIPLIER: Record<FareClass, number> = {
 // Philippine valid-ID catalogue. Each entry knows how to mint a realistic-
 // looking number so the mock data reads like a real check-in roster rather
 // than a placeholder sequence.
+// Accepted valid-ID types, offered as a dropdown wherever an admin edits a
+// passenger's ID so the values stay consistent across bookings.
+export const ID_TYPE_LABELS = [
+  "PhilSys ID",
+  "Professional Driver's License",
+  "UMID",
+  "Passport",
+  "PRC ID",
+  "Voter's ID",
+] as const;
+
 const ID_TYPES: { label: string; format: (rand: () => number) => string }[] = [
   // PhilSys (national ID) — 16-digit PCN, displayed in 4-4-4-4 blocks.
   { label: "PhilSys ID", format: (r) => {
@@ -277,6 +315,10 @@ export type Booking = {
   routeOriginCity: string;
   routeDestinationCity: string;
   vesselName: string;
+  /** Vessel class (RoRo / Fast Craft / …), shown under the name in tables.
+      Optional — voyages don't carry it, so it's resolved by name lookup and
+      may be absent for a vessel that isn't in the fleet roster. */
+  vesselType?: string;
   /** Departure timestamp. */
   departureDate: Date;
   amount: number;
@@ -326,7 +368,7 @@ export function makeActivity(
 // payment totals and provider record, so they stay read-only to avoid
 // desyncing money. Identity + contact + logistics only.
 export type PassengerPatch = Partial<
-  Pick<Ticket, "name" | "age" | "sex" | "nationality" | "paxType" | "fareClass" | "documentType" | "documentRef" | "phone" | "email" | "idFrontUrl" | "idBackUrl">
+  Pick<Ticket, "name" | "age" | "birthDate" | "sex" | "nationality" | "paxType" | "fareClass" | "documentType" | "documentRef" | "phone" | "email" | "idFrontUrl" | "idBackUrl">
 >;
 export type VehiclePatch = Partial<
   Pick<Vehicle, "class" | "plateNumber" | "make" | "model" | "year" | "label" | "includedSeats" | "orUrl" | "crUrl" | "photoUrl">
@@ -368,6 +410,15 @@ export function formatExpiry(expiresAt: Date | undefined, now: Date = new Date()
 // True once the hold has lapsed (past-due, unpaid).
 export function isExpired(expiresAt: Date | undefined, now: Date = new Date()): boolean {
   return !!expiresAt && expiresAt.getTime() <= now.getTime();
+}
+
+// True once an approved booking's voyage has sailed. Derived rather than
+// stored — the same way Expired is — so a booking rolls into "Completed" on
+// its own without anything having to write the transition. Only Confirmed
+// bookings complete: a refunded or cancelled one stays in its own state even
+// after the departure passes.
+export function isCompleted(b: Pick<Booking, "status" | "departureDate">, now: Date = new Date()): boolean {
+  return b.status === "Confirmed" && b.departureDate.getTime() <= now.getTime();
 }
 
 // Apply a passenger patch to one ticket inside its booking, append an "edited"
@@ -528,13 +579,30 @@ export function reviveBookings(raw: unknown): Booking[] {
       ...migrated,
       departureDate: new Date(migrated.departureDate as unknown as string),
       bookingDate: new Date(migrated.bookingDate as unknown as string),
+      // Per-ticket birth dates survive JSON as strings — revive them, and
+      // backfill for tickets persisted before the field existed.
+      tickets: migrated.tickets.map((t) => ({
+        ...t,
+        birthDate: t.birthDate
+          ? new Date(t.birthDate as unknown as string)
+          : birthDateForAge(t.age, refRng(t.id)),
+      })),
       // Revive the payment-hold expiry (Pending bookings only).
       paymentExpiresAt: migrated.paymentExpiresAt
         ? new Date(migrated.paymentExpiresAt as unknown as string)
         : undefined,
       // Backfill the payment record for bookings persisted before this field
       // existed, so the dialog never reads through an undefined `payment`.
-      payment: migrated.payment ?? makePaymentDetails(migrated.ref, refRng(migrated.ref), migrated.amount, migrated.paymentStatus),
+      payment: migrated.payment
+        // completedAt survives JSON as a string — revive it, or the dialog
+        // would call date methods on a plain string.
+        ? {
+            ...migrated.payment,
+            completedAt: migrated.payment.completedAt
+              ? new Date(migrated.payment.completedAt as unknown as string)
+              : undefined,
+          }
+        : makePaymentDetails(migrated.ref, refRng(migrated.ref), migrated.amount, migrated.paymentStatus, new Date(migrated.bookingDate as unknown as string)),
       activity: (migrated.activity ?? []).map((e) => ({
         ...e,
         at: new Date(e.at as unknown as string),
@@ -870,6 +938,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           paxType,
           ticketNumber,
           age,
+          birthDate: birthDateForAge(age, rand),
           sex,
           nationality: "Filipino",
           documentType: idType.label,
@@ -958,7 +1027,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         contactEmail,
         paymentMethod,
         paymentStatus,
-        payment: makePaymentDetails(ref, rand, amount, paymentStatus),
+        payment: makePaymentDetails(ref, rand, amount, paymentStatus, bookingDate),
         tickets,
       });
       counter++;
@@ -1051,6 +1120,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           // with a ticket number assigned.
           ticketNumber: `${ref}-${String.fromCharCode(65 + p)}`,
           age,
+          birthDate: birthDateForAge(age, rand),
           sex,
           nationality: "Filipino",
           documentType: idType.label,
@@ -1098,7 +1168,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         contactEmail,
         paymentMethod: "Tripket Wallet",
         paymentStatus: "Submitted",
-        payment: makePaymentDetails(ref, rand, submittedAmount, "Submitted"),
+        payment: makePaymentDetails(ref, rand, submittedAmount, "Submitted", bookingDate),
         tickets,
       });
       counter++;
@@ -1182,6 +1252,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
           // even though the booking is still Under Review (status Submitted).
           ticketNumber: `${ref}-${String.fromCharCode(65 + p)}`,
           age,
+          birthDate: birthDateForAge(age, rand),
           sex,
           nationality: "Filipino",
           documentType: idType.label,
@@ -1231,7 +1302,7 @@ export function deriveBookings(voyages: StoredVoyage[]): Booking[] {
         paymentMethod: "Tripket Wallet",
         // Payment has settled, unlike the not-yet-paid Submitted samples above.
         paymentStatus: "Issued",
-        payment: makePaymentDetails(ref, rand, paidAmount, "Issued"),
+        payment: makePaymentDetails(ref, rand, paidAmount, "Issued", bookingDate),
         tickets,
       });
       counter++;
@@ -1253,8 +1324,8 @@ export const statusTone: Record<BookingStatus, string> = {
   Confirmed:   "bg-emerald-100 text-emerald-800",
   Submitted:   "bg-brand-50 text-brand-700",
   Cancelled:   "bg-slate-100 text-slate-500",
-  "To Refund": "bg-amber-100 text-amber-800",
-  Refunded:    "bg-sky-50 text-sky-700",
+  "To Refund": "bg-amber-50 text-amber-800",
+  Refunded:    "bg-slate-100 text-slate-500",
 };
 
 // Display label per status — keeps the internal "Confirmed" value (so all
@@ -1270,13 +1341,14 @@ export const statusLabel: Record<BookingStatus, string> = {
 
 // Per-ticket palette — Pending is a waiting (yellow) state, Issued is the
 // healthy default (emerald), Cancelled is quietly muted slate, To Refund is
-// amber (payout pending), Refunded matches the booking-level refund tone.
+// amber (payout pending), and Refunded matches the booking-level refund tone —
+// muted slate, since a settled refund is a closed state, not an active one.
 export const ticketStatusTone: Record<TicketStatus, string> = {
   Pending:     "bg-yellow-50 text-yellow-700",
   Issued:      "bg-emerald-100 text-emerald-800",
   Cancelled:   "bg-slate-100 text-slate-500",
-  "To Refund": "bg-amber-100 text-amber-800",
-  Refunded:    "bg-sky-50 text-sky-700",
+  "To Refund": "bg-amber-50 text-amber-800",
+  Refunded:    "bg-slate-100 text-slate-500",
 };
 
 // Per-ticket display label — "To Refund" surfaces as "For Refund".

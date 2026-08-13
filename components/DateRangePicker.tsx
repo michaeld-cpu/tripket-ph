@@ -5,6 +5,11 @@ import { motion, AnimatePresence } from "motion/react";
 
 export type DateRange = { start: Date; end: Date };
 
+// An optional window: `null` means "not set", so the filter is inactive and
+// matches every row. Kept separate from DateRange so the many callers that
+// always carry a window don't have to null-check.
+export type OptionalDateRange = DateRange | null;
+
 type Props = {
   value: DateRange;
   onChange: (range: DateRange) => void;

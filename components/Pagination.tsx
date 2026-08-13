@@ -5,31 +5,37 @@
  *
  * Anatomy:
  *  ┌──────────────────────────────────────────────────────────────────────────┐
- *  │  Showing 1–10 of 42 routes               ‹ Previous  1 2 … 5  Next ›    │
+ *  │  Showing 1–10 of 42 routes    Per page 10 ▾    ‹ Previous 1 2 … 5 Next › │
  *  └──────────────────────────────────────────────────────────────────────────┘
  *
  * The left side shows a "Showing N–M of T <noun>" summary in mono-tabular nums so
- * the digits stay aligned as the user moves through pages. The right side shows
- * Previous / numbered page chips (with ellipses for long ranges) / Next.
+ * the digits stay aligned as the user moves through pages. The centre holds an
+ * optional rows-per-page selector, the right Previous / numbered page chips
+ * (with ellipses for long ranges) / Next.
  *
  * Usage:
  *   <Pagination
  *     page={page}
- *     pageSize={10}
+ *     pageSize={pageSize}
  *     total={filtered.length}
  *     onPageChange={setPage}
+ *     onPageSizeChange={setPageSize}
  *     noun="routes"
  *   />
  *
  * Visual language matches the rest of the page — bordered slate-200 chips, brand
- * orange for the active page, hairline-divided footer. The component renders
- * `null` when there is only one page so simple tables stay uncluttered.
+ * orange for the active page, hairline-divided footer. This footer carries the
+ * only running count on a table view, so it always renders; only the paging
+ * controls collapse when everything fits on one page.
  */
+export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
 export default function Pagination({
   page,
   pageSize,
   total,
   onPageChange,
+  onPageSizeChange,
   noun = "items",
   className = "",
 }: {
@@ -37,13 +43,18 @@ export default function Pagination({
   pageSize: number;
   total: number;
   onPageChange: (next: number) => void;
+  /** Supply to render the "Per page" selector. Omit to keep the pager as-is. */
+  onPageSizeChange?: (next: number) => void;
   /** Singular/plural noun rendered after the count — e.g. "routes", "vessels". */
   noun?: string;
   /** Extra classes (e.g. to override the default rounded-b-2xl border-t). */
   className?: string;
 }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  if (totalPages <= 1) return null;
+  // The footer now carries the only running count on the page, so it renders
+  // even at one page — hiding it would drop the count entirely. The paging
+  // controls still collapse, since there is nowhere to navigate.
+  const showPager = totalPages > 1;
 
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
@@ -69,7 +80,29 @@ export default function Pagination({
         of <span className="font-mono tabular-nums text-slate-700">{total}</span> {noun}
       </span>
 
+      {/* Centre — rows per page */}
+      {onPageSizeChange && (
+        <label className="flex items-center gap-2 text-[12px] text-slate-500">
+          <span>Per page</span>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              // Jump back to page 1 — the current page may not exist at the
+              // new size, and the first rows are what the user expects to see.
+              onPageSizeChange(Number(e.target.value));
+              onPageChange(1);
+            }}
+            className="h-7 rounded-lg border border-slate-200 bg-white px-2 font-mono text-[12px] tabular-nums text-slate-700 transition-colors hover:bg-slate-50 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-100"
+          >
+            {PAGE_SIZE_OPTIONS.map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </label>
+      )}
+
       {/* Right — paging controls */}
+      {showPager && (
       <nav aria-label="Pagination" className="flex items-center gap-1">
         <PageButton
           onClick={() => go(page - 1)}
@@ -120,6 +153,7 @@ export default function Pagination({
           </svg>
         </PageButton>
       </nav>
+      )}
     </div>
   );
 }

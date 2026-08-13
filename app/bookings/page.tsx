@@ -27,6 +27,7 @@ import {
   updateVehicle,
   formatExpiry,
   isExpired,
+  isCompleted,
   type Booking,
   type BookingStatus,
   type FareClass,
@@ -37,13 +38,14 @@ import {
 import { loadScopedVoyages } from "@/lib/line-scope";
 import { reviveBookings, mergeSeededBookings } from "@/lib/bookings-data";
 import { loadStore, saveStore } from "@/lib/persisted-store";
+import { getDashboardData } from "@/lib/dashboard-data";
 import ActivityLog from "@/components/ActivityLog";
 import Modal from "@/components/Modal";
 import CancelConfirmDialog from "@/components/CancelConfirmDialog";
 import EditEntityDialog, { type EditEntityInit } from "@/components/EditEntityDialog";
 
 
-const PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 10;
 
 function fmtDepartureDate(d: Date): string {
   // "May 18, 2026" — single-row pairing with the time inline.
@@ -79,11 +81,92 @@ function fmtDate(d: Date): string {
 }
 
 
+// Neutral "sortable, not currently sorted" affordance.
 function SortIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3 text-gray-300">
       <path d="M7 10l5-5 5 5M7 14l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+// Direction arrow for the column currently sorted by — only the active column
+// renders one, so the arrow doubles as the sort indicator.
+function SortArrow({ dir }: { dir: SortDir }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform ${dir === "asc" ? "rotate-180" : ""}`}
+    >
+      <path d="M12 5v14" />
+      <path d="m19 12-7 7-7-7" />
+    </svg>
+  );
+}
+
+// Columns the table can order by. Status sorts by the lifecycle order below
+// rather than alphabetically, so the pills group the way an admin reads them.
+type SortKey = "status" | "ticketholder" | "pax" | "departure" | "amount" | "bookingDate";
+type SortDir = "asc" | "desc";
+
+const STATUS_ORDER: Record<BookingStatus, number> = {
+  Pending: 0,
+  Submitted: 1,
+  Confirmed: 2,
+  "To Refund": 3,
+  Refunded: 4,
+  Cancelled: 5,
+};
+
+// Ascending comparison for one sort key; the caller negates for descending.
+function compareBy(a: Booking, b: Booking, key: SortKey): number {
+  switch (key) {
+    case "status":       return STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+    case "ticketholder": return a.contactEmail.localeCompare(b.contactEmail);
+    case "pax":          return a.pax - b.pax;
+    case "departure":    return a.departureDate.getTime() - b.departureDate.getTime();
+    case "amount":       return a.amount - b.amount;
+    case "bookingDate":  return a.bookingDate.getTime() - b.bookingDate.getTime();
+  }
+}
+
+// A header cell that toggles sorting. Shows the direction arrow when it owns
+// the current sort, the neutral double-chevron otherwise.
+function SortHeader({
+  label,
+  sortKey,
+  active,
+  dir,
+  onSort,
+}: {
+  label: string;
+  sortKey: SortKey;
+  active: SortKey;
+  dir: SortDir;
+  onSort: (k: SortKey) => void;
+}) {
+  const isActive = active === sortKey;
+  return (
+    <th className="whitespace-nowrap px-6 py-3 font-medium">
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        aria-label={`Sort by ${label.toLowerCase()}`}
+        className={
+          "inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900 " +
+          (isActive ? "text-slate-900" : "")
+        }
+      >
+        {label}
+        {isActive ? <SortArrow dir={dir} /> : <SortIcon />}
+      </button>
+    </th>
   );
 }
 
@@ -96,6 +179,18 @@ export default function BookingsPage() {
   const [vesselFilter, setVesselFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | BookingStatus>("all");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  // Newest bookings first by default — the most recent activity is what an
+  // admin opens this page for.
+  const [sortKey, setSortKey] = useState<SortKey>("bookingDate");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // Clicking the active column flips direction; a new column starts descending
+  // (newest / largest first), which is the useful default for every column here.
+  const handleSort = (k: SortKey) => {
+    if (k === sortKey) { setSortDir((d) => (d === "desc" ? "asc" : "desc")); return; }
+    setSortKey(k);
+    setSortDir("desc");
+  };
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   // ── Ref copy state (matches PendingAgingList on the dashboard) ──
@@ -334,7 +429,7 @@ export default function BookingsPage() {
     });
   };
 
-  useEffect(() => { setPage(1); }, [query, originFilter, destinationFilter, vesselFilter, statusFilter, dateRange]);
+  useEffect(() => { setPage(1); }, [query, originFilter, destinationFilter, vesselFilter, statusFilter, dateRange, sortKey, sortDir]);
 
   // ?ref=TKT-#### deep link — opens the matching booking dialog once data
   // hydrates. `?action=approve` (used by the dashboard's pending list)
@@ -380,6 +475,22 @@ export default function BookingsPage() {
     return [{ value: "all", label: "All vessels" }, ...Array.from(seen).sort().map((v) => ({ value: v, label: v }))];
   }, [bookings]);
 
+  // Vessel name → class, read off the fleet roster. Voyages carry only the
+  // vessel's name, so the class is resolved here rather than stored on each
+  // booking — that also keeps it correct if a vessel is later reclassified.
+  const vesselTypeByName = useMemo(() => {
+    const map = new Map<string, string>();
+    try {
+      // The vessels store is only written once the Vessels page has been
+      // visited, so fall back to the seeded fleet — otherwise the subline
+      // would be missing for anyone who lands here first.
+      const fleet = loadStore<Array<{ name: string; type: string }>>("vessels", active.id)
+        ?? getDashboardData(active.id).vessels;
+      for (const v of fleet) if (v?.name) map.set(v.name, v.type);
+    } catch { /* unreadable store — the subline just won't render */ }
+    return map;
+  }, [active.id]);
+
   const filtered = useMemo(() => {
     if (!bookings) return [];
     const q = query.trim().toLowerCase();
@@ -389,7 +500,7 @@ export default function BookingsPage() {
       if (vesselFilter !== "all" && b.vesselName !== vesselFilter) return false;
       if (statusFilter !== "all" && b.status !== statusFilter) return false;
       if (q) {
-        const hay = `${b.ref} ${b.ticketholder} ${b.routeOriginCode} ${b.routeDestinationCode} ${b.vesselName}`.toLowerCase();
+        const hay = `${b.ref} ${b.ticketholder} ${b.contactEmail} ${b.routeOriginCode} ${b.routeDestinationCode} ${b.vesselName}`.toLowerCase();
         if (!hay.includes(q)) return false;
         // An explicit text search targets a specific booking, so it isn't
         // constrained by the date-range picker — otherwise an exact ref match
@@ -398,10 +509,16 @@ export default function BookingsPage() {
       }
       if (b.bookingDate < dateRange.start || b.bookingDate > dateRange.end) return false;
       return true;
-    });
-  }, [bookings, query, originFilter, destinationFilter, vesselFilter, statusFilter, dateRange]);
+    })
+      // .filter() already returned a fresh array, so sorting in place here
+      // doesn't mutate `bookings`.
+      .sort((a, b) => {
+        const delta = compareBy(a, b, sortKey);
+        return sortDir === "asc" ? delta : -delta;
+      });
+  }, [bookings, query, originFilter, destinationFilter, vesselFilter, statusFilter, dateRange, sortKey, sortDir]);
 
-  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
   const isEmpty = bookings !== null && bookings.length === 0;
 
   return (
@@ -422,9 +539,6 @@ export default function BookingsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-t-2xl border-b border-slate-100 px-5 py-4">
             <div>
               <h2 className="text-base font-semibold tracking-tight text-slate-900">Recent bookings</h2>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Showing <span className="font-medium text-slate-900">{filtered.length}</span> of {bookings.length} bookings
-              </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -456,24 +570,14 @@ export default function BookingsPage() {
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Booking ref</th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">Status</th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Ticketholder <SortIcon /></button>
-                  </th>
+                  <SortHeader label="Status" sortKey="status" active={sortKey} dir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Ticketholder" sortKey="ticketholder" active={sortKey} dir={sortDir} onSort={handleSort} />
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Route</th>
                   <th className="whitespace-nowrap px-6 py-3 font-medium">Vessel</th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Pax <SortIcon /></button>
-                  </th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Departure <SortIcon /></button>
-                  </th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Amount <SortIcon /></button>
-                  </th>
-                  <th className="whitespace-nowrap px-6 py-3 font-medium">
-                    <button className="inline-flex items-center gap-1.5 font-medium uppercase tracking-[0.08em] transition-colors hover:text-slate-900">Booking date <SortIcon /></button>
-                  </th>
+                  <SortHeader label="Pax" sortKey="pax" active={sortKey} dir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Departure" sortKey="departure" active={sortKey} dir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Amount" sortKey="amount" active={sortKey} dir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Booking date" sortKey="bookingDate" active={sortKey} dir={sortDir} onSort={handleSort} />
                   <th className="sticky right-0 z-10 w-10 bg-slate-50/70 px-6 py-3 font-medium shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.08)] backdrop-blur-md" />
                 </tr>
               </thead>
@@ -528,6 +632,12 @@ export default function BookingsPage() {
                         <span className="inline-flex items-center whitespace-nowrap rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
                           Expired
                         </span>
+                      ) : isCompleted(b, now) ? (
+                        /* An approved booking whose voyage has sailed reads as
+                           Completed — nothing is left to act on. */
+                        <span className="inline-flex items-center whitespace-nowrap rounded-md bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-sky-700">
+                          Completed
+                        </span>
                       ) : (
                         <>
                           <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${statusTone[b.status]}`}>
@@ -542,8 +652,10 @@ export default function BookingsPage() {
                         </>
                       )}
                     </td>
+                    {/* The booking contact's email, not the passenger name —
+                        it's the identifier admins search and follow up on. */}
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
-                      <div className="text-[13.5px] font-semibold tracking-tight text-slate-900">{b.ticketholder}</div>
+                      <div className="text-[13.5px] font-semibold tracking-tight text-slate-900">{b.contactEmail}</div>
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
                       <div className="flex items-center gap-2.5">
@@ -561,7 +673,12 @@ export default function BookingsPage() {
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
-                      <span className="truncate text-[13px] font-medium tracking-tight text-slate-900">{b.vesselName}</span>
+                      <div className="truncate text-[13px] font-medium tracking-tight text-slate-900">{b.vesselName}</div>
+                      {(b.vesselType ?? vesselTypeByName.get(b.vesselName)) && (
+                        <div className="mt-0.5 truncate text-[11px] text-slate-400">
+                          {b.vesselType ?? vesselTypeByName.get(b.vesselName)}
+                        </div>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 align-middle">
                       <span className="font-mono text-[13px] font-semibold tabular-nums text-slate-900">{b.pax}</span>
@@ -588,7 +705,7 @@ export default function BookingsPage() {
                           // booking's ref pre-loaded as the search query so the
                           // table filters to just that booking's passenger tickets.
                           {
-                            label: "View tickets",
+                            label: "View Passenger tickets",
                             onClick: () => { window.location.href = `/tickets?booking=${b.ref}`; },
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -597,22 +714,11 @@ export default function BookingsPage() {
                               </svg>
                             ),
                           },
-                          // Mark as Paid — only for unpaid Pending bookings.
-                          // Moves them into Under Review (Submitted).
-                          {
-                            label: "Mark as Paid",
-                            disabled: b.status !== "Pending",
-                            onClick: () => handleMarkPaid(b.ref),
-                            icon: (
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                <rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" />
-                              </svg>
-                            ),
-                          },
                           // Approve — only meaningful on Submitted bookings
                           // (paid, awaiting approval).
                           {
                             label: "Approve",
+                            tone: "success" as const,
                             disabled: b.status !== "Submitted",
                             onClick: () => handleApprove(b.ref),
                             icon: (
@@ -633,14 +739,19 @@ export default function BookingsPage() {
                               </svg>
                             ),
                           },
-                          // Cancel — flags the booking (and its tickets) For Refund.
-                          // Locked once already For Refund or refunded, and
-                          // while Under Review (Submitted) — an unapproved
-                          // booking must be approved before it can be cancelled.
+                          // Cancel — flags the booking (and its tickets) For
+                          // Refund. Locked once already For Refund or refunded;
+                          // while Under Review (an unapproved booking must be
+                          // approved first); and on an expired hold, which was
+                          // never paid so there is nothing to return.
                           {
                             label: "Cancel booking",
                             danger: true,
-                            disabled: b.status === "To Refund" || b.status === "Refunded" || b.status === "Submitted",
+                            disabled:
+                              b.status === "To Refund" ||
+                              b.status === "Refunded" ||
+                              b.status === "Submitted" ||
+                              (b.status === "Pending" && isExpired(b.paymentExpiresAt, now)),
                             onClick: () => setCancelTarget(b.ref),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -661,9 +772,9 @@ export default function BookingsPage() {
 
           <Pagination
             page={page}
-            pageSize={PAGE_SIZE}
+            pageSize={pageSize}
             total={filtered.length}
-            onPageChange={setPage}
+            onPageChange={setPage} onPageSizeChange={setPageSize}
             noun="bookings"
           />
         </section>
@@ -1267,7 +1378,7 @@ function BookingDetailDialog({
               {/* Vehicle Information — only present when the booking includes
                   a vehicle slot. Shows class, plate, driver, and the comped
                   companions tied to the vehicle fee. */}
-              {booking.vehicle && <VehicleInformation booking={booking} />}
+              {booking.vehicle && <VehicleInformation booking={booking} copiedTicket={copiedTicket} onCopyTicket={onCopyTicket} />}
 
               {/* Dedicated Payment Information section — itemized breakdown
                   of tickets, vehicle charge, and booking fee, totalled at
@@ -1555,8 +1666,18 @@ function BookingStatusPicker({
                     }`}
                   >
                     <span className="truncate font-medium">{o.label}</span>
-                    <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${statusTone[o.value]} ${disabled ? "opacity-50" : ""}`}>
-                      {statusLabel[o.value]}
+                    {/* The chip names the status the booking actually lands
+                        in. "Cancel booking" queues a refund rather than
+                        voiding, so it reads "For Refund" — in rose, matching
+                        the destructive row it sits on. */}
+                    <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${
+                      o.value === "Cancelled"
+                        ? "bg-rose-50 text-rose-600"
+                        : statusTone[o.value]
+                    } ${disabled ? "opacity-50" : ""}`}>
+                      {o.value === "Cancelled"
+                        ? statusLabel["To Refund"]
+                        : statusLabel[o.value]}
                     </span>
                   </button>
                 );
@@ -1641,8 +1762,8 @@ function PassengerTable({
                     transition={{ duration: 0.18, ease: "easeOut" }}
                     className="overflow-hidden bg-slate-50/60"
                   >
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-t border-dashed border-slate-200 px-4 py-3 text-[12px]">
-                      <div>
+                    <div className="grid grid-cols-6 gap-x-6 gap-y-3 border-t border-dashed border-slate-200 px-4 py-3 text-[12px]">
+                      <div className="col-span-3">
                         <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Ticket number</div>
                         <div className="mt-0.5 flex items-center gap-1.5">
                           {t.ticketNumber ? (
@@ -1673,30 +1794,30 @@ function PassengerTable({
                           )}
                         </div>
                       </div>
-                      <div>
-                        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">ID</div>
+                      <div className="col-span-3">
+                        {/* Issued by the shipping line when they run their own
+                            numbering — absent until they hand one back. */}
+                        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Operator ticket</div>
+                        <div className="mt-0.5 font-mono text-[13px] font-bold tabular-nums tracking-[0.04em] text-slate-300">—</div>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Valid ID</div>
                         <div className="mt-0.5 text-[12.5px] font-semibold tracking-tight text-slate-900">{t.documentType}</div>
                         <div className="mt-0.5 font-mono text-[11.5px] font-medium tabular-nums text-slate-500">{t.documentRef}</div>
                       </div>
-                      <div>
+                      <div className="col-span-2">
+                        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Birth date</div>
+                        <div className="mt-0.5 text-[12px] text-slate-700">
+                          {t.birthDate ? fmtDepartureDate(t.birthDate) : "—"}
+                        </div>
+                      </div>
+                      <div className="col-span-2">
                         <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Nationality</div>
                         <div className="mt-0.5 text-[12px] text-slate-700">{t.nationality}</div>
                       </div>
-                      <div>
-                        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">
-                          Phone <span className="text-slate-400 normal-case tracking-normal">(Optional)</span>
-                        </div>
-                        <div className="mt-0.5 font-mono text-[12px] font-medium tabular-nums text-slate-700">{t.phone ?? "—"}</div>
-                      </div>
-                      <div className="col-span-2">
-                        <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">
-                          Email <span className="text-slate-400 normal-case tracking-normal">(Optional)</span>
-                        </div>
-                        <div className="mt-0.5 truncate text-[12px] text-slate-700">{t.email ?? "—"}</div>
-                      </div>
 
                       {t.note && (
-                        <div className="col-span-2">
+                        <div className="col-span-6">
                           <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Note</div>
                           <div className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-700">{t.note}</div>
                         </div>
@@ -1704,7 +1825,7 @@ function PassengerTable({
 
                       {/* ID photo requirements — front + back. Both are
                           captured at booking; each pill opens a preview. */}
-                      <div className="col-span-2">
+                      <div className="col-span-6">
                         <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Valid ID Photos</div>
                         <ul className="mt-1.5 space-y-1.5 text-[12px]">
                           <RequirementRow
@@ -1740,7 +1861,15 @@ function PassengerTable({
 // Vehicle details + the companion roster bundled under the vehicle fee.
 // Mirrors the visual vocabulary of the Payment Information section: header
 // strip, divided meta row, then a small list of comped companions.
-function VehicleInformation({ booking }: { booking: Booking }) {
+function VehicleInformation({
+  booking,
+  copiedTicket,
+  onCopyTicket,
+}: {
+  booking: Booking;
+  copiedTicket: string | null;
+  onCopyTicket: (n: string) => void;
+}) {
   const v = booking.vehicle;
   const [preview, setPreview] = useState<{ title: string; url: string } | null>(null);
   const [open, setOpen] = useState(false);
@@ -1780,37 +1909,75 @@ function VehicleInformation({ booking }: { booking: Booking }) {
       <AnimatePresence initial={false}>
         {open && (
           <motion.div key="veh-expand" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18, ease: "easeOut" }} className="overflow-hidden bg-slate-50/60">
-            <div className="grid grid-cols-3 gap-x-6 gap-y-4 border-t border-dashed border-slate-200 px-4 py-4 text-[12px]">
-              <div>
+            <div className="grid grid-cols-6 gap-x-6 gap-y-4 border-t border-dashed border-slate-200 px-4 py-4 text-[12px]">
+              {/* Ticket identifiers — Tripket's own number, plus the
+                  operator's if the shipping line issues its own. */}
+              <div className="col-span-3">
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Ticket number</div>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  {v.ticketNumber ? (
+                    <>
+                      <span className="font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] text-slate-900">{v.ticketNumber}</span>
+                      {copiedTicket === v.ticketNumber ? (
+                        <span className="grid h-4 w-4 place-items-center rounded text-emerald-600">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                            <path d="M5 12l5 5 9-11" />
+                          </svg>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onCopyTicket(v.ticketNumber!)}
+                          aria-label={`Copy ${v.ticketNumber}`}
+                          className="grid h-4 w-4 place-items-center rounded text-slate-400 transition-[background-color,color,transform] duration-150 ease-out hover:bg-slate-200 hover:text-slate-700 active:scale-90"
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                            <rect x="9" y="9" width="11" height="11" rx="2" />
+                            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                          </svg>
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <span className="font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] text-slate-300" title="Assigned when the booking is approved">—</span>
+                  )}
+                </div>
+              </div>
+              <div className="col-span-3">
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Operator ticket</div>
+                <div className="mt-0.5 font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] text-slate-300" title="Issued by the shipping line, when they use their own numbering">—</div>
+              </div>
+              <div className="col-span-2">
                 <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Type</div>
                 <div className="mt-0.5 text-[12.5px] font-semibold tracking-tight text-slate-900">{v.class}</div>
               </div>
-              <div>
+              <div className="col-span-2">
                 <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Plate No.</div>
                 <div className="mt-0.5 font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] text-slate-900">{v.plateNumber || "—"}</div>
               </div>
-              <div>
+              <div className="col-span-2">
                 <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Free seat/s</div>
                 <div className="mt-0.5 font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">
                   {compedCount} <span className="text-slate-400">/ {v.includedSeats}</span>
                 </div>
               </div>
-              <div>
+              <div className="col-span-2">
                 <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Make / Model</div>
                 <div className="mt-0.5 text-[12.5px] font-semibold tracking-tight text-slate-900">{v.make} {v.model}</div>
               </div>
-              <div>
+              <div className="col-span-2">
                 <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Year</div>
                 <div className="mt-0.5 font-mono text-[12.5px] font-semibold tabular-nums text-slate-900">{v.year}</div>
               </div>
-              <div>
+              <div className="col-span-2">
                 <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Label</div>
                 <div className="mt-0.5 truncate text-[12.5px] font-semibold tracking-tight text-slate-900">{v.label || "—"}</div>
               </div>
 
+
               {/* Requirements — OR / CR / Vehicle Photo. */}
-              <div className="col-span-3">
-                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Valid ID Photos</div>
+              <div className="col-span-6">
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Requirements</div>
                 <ul className="mt-1.5 space-y-1.5 text-[12px]">
                   <RequirementRow label="Official Receipt (OR)" required uploaded={!!v.orUrl} previewUrl={v.orUrl} onPreview={() => v.orUrl && setPreview({ title: "Official Receipt (OR)", url: v.orUrl })} />
                   <RequirementRow label="Certificate of Registration (CR)" required uploaded={!!v.crUrl} previewUrl={v.crUrl} onPreview={() => v.crUrl && setPreview({ title: "Certificate of Registration (CR)", url: v.crUrl })} />
@@ -2020,13 +2187,16 @@ function PaymentInformation({ booking }: { booking: Booking }) {
         </span>
       </div>
 
-      {/* Provider trail — reference, gateway, method, and the provider's own
-          transaction reference. */}
+      {/* Provider trail — reference, gateway, method, and when the charge
+          settled. */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-b border-slate-100 px-4 py-3">
         <PayMeta label="Payment reference" value={pay.reference} mono />
         <PayMeta label="Payment provider" value={pay.provider} />
         <PayMeta label="Payment method" value={pay.method} />
-        <PayMeta label="Provider reference" value={pay.providerReference} mono />
+        <PayMeta
+          label="Completed on"
+          value={pay.completedAt ? `${fmtDepartureDate(pay.completedAt)} ${fmtDepartureTime(pay.completedAt)}` : "—"}
+        />
       </div>
 
       <div className="px-4 py-3">

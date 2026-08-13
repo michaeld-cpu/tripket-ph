@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
@@ -28,7 +28,7 @@ import { loadStore, saveStore } from "@/lib/persisted-store";
 import EditEntityDialog from "@/components/EditEntityDialog";
 import CancelConfirmDialog from "@/components/CancelConfirmDialog";
 
-const PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 10;
 
 // One row per vehicle booked — flattened off each booking that carries a
 // vehicle, carrying enough of the booking's identity to stand alone.
@@ -97,6 +97,7 @@ export default function VehicleTicketsPage() {
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [editRef, setEditRef] = useState<string | null>(null);
@@ -198,7 +199,7 @@ export default function VehicleTicketsPage() {
       `${r.ticketNumber ?? ""} ${r.bookingRef} ${r.ticketholder} ${r.plateNumber} ${r.vehicleClass}`.toLowerCase().includes(q),
     );
   }, [rows, query]);
-  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   const handleCopy = async (v: string) => {
     try {
@@ -224,9 +225,6 @@ export default function VehicleTicketsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-t-2xl border-b border-slate-100 px-5 py-4">
             <div>
               <h2 className="text-base font-semibold tracking-tight text-slate-900">All vehicle tickets</h2>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Showing <span className="font-medium text-slate-900">{filtered.length}</span> of {rows.length} tickets
-              </p>
             </div>
             <div className="flex w-72 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm focus-within:border-slate-300 focus-within:ring-2 focus-within:ring-brand-100">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-slate-400">
@@ -350,11 +348,17 @@ export default function VehicleTicketsPage() {
             </table>
           </div>
 
-          <Pagination page={page} pageSize={PAGE_SIZE} total={filtered.length} onPageChange={setPage} noun="vehicle tickets" />
+          <Pagination page={page} pageSize={pageSize} total={filtered.length} onPageChange={setPage} onPageSizeChange={setPageSize} noun="vehicle tickets" />
         </section>
       )}
 
-      <VehicleDetailDialog row={openRow} lineName={active.name} onClose={() => setOpenId(null)} />
+      <VehicleDetailDialog
+        row={openRow}
+        lineName={active.name}
+        onClose={() => setOpenId(null)}
+        onCancel={(ref) => { setOpenId(null); setCancelRef(ref); }}
+        onRefund={(ref) => { setOpenId(null); handleRefund(ref); }}
+      />
 
       <CancelConfirmDialog
         targetRef={cancelRef}
@@ -380,8 +384,33 @@ export default function VehicleTicketsPage() {
 }
 
 // ─────────── Vehicle detail dialog ───────────
-function VehicleDetailDialog({ row, lineName, onClose }: { row: VehicleRow | null; lineName: string; onClose: () => void }) {
+function VehicleDetailDialog({ row, lineName, onClose, onCancel, onRefund }: {
+  row: VehicleRow | null;
+  lineName: string;
+  onClose: () => void;
+  /** Opens the cancellation-reason dialog for this row's booking. */
+  onCancel: (bookingRef: string) => void;
+  onRefund: (bookingRef: string) => void;
+}) {
   const { active } = useShippingLine();
+  const [statusOpen, setStatusOpen] = useState(false);
+  const statusRef = useRef<HTMLDivElement>(null);
+
+  // Outside click / Escape closes the status menu.
+  useEffect(() => {
+    if (!statusOpen) return;
+    const onPointer = (e: MouseEvent) => {
+      if (!statusRef.current?.contains(e.target as Node)) setStatusOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setStatusOpen(false); };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [statusOpen]);
+
   if (!row) return null;
   return (
     <Modal open={!!row} onClose={onClose} maxWidth="max-w-xl">
@@ -440,6 +469,18 @@ function VehicleDetailDialog({ row, lineName, onClose }: { row: VehicleRow | nul
             <div className="border-b border-slate-100 bg-slate-50/60 px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Vehicle</div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-4 px-4 py-4 text-[13px]">
               <div>
+                <div className="text-[10.5px] text-slate-500">Ticket number</div>
+                <div className="mt-0.5 font-mono font-semibold tabular-nums tracking-[0.04em] text-slate-900">
+                  {row.ticketNumber ?? <span className="text-slate-300">—</span>}
+                </div>
+              </div>
+              <div>
+                {/* Issued by the shipping line when they run their own
+                    numbering — absent until they hand one back. */}
+                <div className="text-[10.5px] text-slate-500">Operator ticket</div>
+                <div className="mt-0.5 font-mono font-semibold tabular-nums tracking-[0.04em] text-slate-300">—</div>
+              </div>
+              <div>
                 <div className="text-[10.5px] text-slate-500">Make &amp; Model</div>
                 <div className="mt-0.5 font-semibold tracking-tight text-slate-900">{row.make} {row.model}</div>
               </div>
@@ -474,10 +515,57 @@ function VehicleDetailDialog({ row, lineName, onClose }: { row: VehicleRow | nul
           <button type="button" onClick={onClose} className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors hover:bg-slate-100">Close</button>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => { window.location.href = `/bookings?ref=${row.bookingRef}`; }} className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-slate-700 transition-colors hover:bg-slate-50">Go to booking</button>
-            <button type="button" onClick={() => { window.location.href = `/bookings?ref=${row.bookingRef}`; }} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold uppercase tracking-[0.04em] text-white transition-colors hover:bg-brand-700">
-              Update status
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="m6 9 6 6 6-6" /></svg>
-            </button>
+            {/* Status menu — mirrors the row menu's gating. A vehicle is
+                one-per-booking, so these move the whole booking. */}
+            <div className="relative" ref={statusRef}>
+              <button
+                type="button"
+                onClick={() => setStatusOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={statusOpen}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold uppercase tracking-[0.04em] text-white transition-colors hover:bg-brand-700"
+              >
+                Update status
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-3.5 w-3.5 transition-transform duration-150 ${statusOpen ? "rotate-180" : ""}`}><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              {statusOpen && (
+                <div role="menu" className="absolute bottom-full right-0 z-30 mb-2 w-56 overflow-hidden rounded-xl bg-white p-1 shadow-[0_18px_44px_-16px_rgba(15,23,42,0.25)] ring-1 ring-slate-200/70">
+                  <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">Update status</div>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={row.status !== "To Refund"}
+                    onClick={() => { setStatusOpen(false); onRefund(row.bookingRef); }}
+                    className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors ${
+                      row.status !== "To Refund" ? "cursor-not-allowed text-slate-300" : "text-slate-700 hover:bg-slate-100/80"
+                    }`}
+                  >
+                    <span className="truncate font-medium">Refund</span>
+                    <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] ${statusTone.Refunded} ${row.status !== "To Refund" ? "opacity-50" : ""}`}>
+                      {statusLabel.Refunded}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={row.status === "To Refund" || row.status === "Refunded" || row.status === "Submitted"}
+                    onClick={() => { setStatusOpen(false); onCancel(row.bookingRef); }}
+                    className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors ${
+                      row.status === "To Refund" || row.status === "Refunded" || row.status === "Submitted"
+                        ? "cursor-not-allowed text-slate-300"
+                        : "text-rose-600 hover:bg-rose-50"
+                    }`}
+                  >
+                    <span className="truncate font-medium">Cancel ticket</span>
+                    <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.08em] bg-rose-50 text-rose-600 ${
+                      row.status === "To Refund" || row.status === "Refunded" || row.status === "Submitted" ? "opacity-50" : ""
+                    }`}>
+                      {statusLabel["To Refund"]}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

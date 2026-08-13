@@ -522,7 +522,7 @@ function VesselSummaryPill({ vessel, draft = false }: { vessel: FleetVessel; dra
   );
 }
 
-function vesselTypeLabel(t: VesselType): string {
+export function vesselTypeLabel(t: VesselType): string {
   // Mirrors VesselFormBody's typeOptions verbatim.
   if (t === "RoRo") return "RoRo (Roll-on / Roll-off)";
   if (t === "Fast Craft") return "Fast Craft (Passenger only)";

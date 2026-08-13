@@ -6,13 +6,15 @@ import PageHeader from "@/components/PageHeader";
 import { useShippingLine } from "@/components/ShippingLineContext";
 import { TableSkeleton } from "@/components/Skeleton";
 import FiltersDialog, { FiltersButton } from "@/components/FiltersDialog";
-import { type DateRange } from "@/components/DateRangePicker";
+import { type DateRange, type OptionalDateRange } from "@/components/DateRangePicker";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import CreateRouteModal from "@/components/CreateRouteModal";
 import { loadStore, saveStore } from "@/lib/persisted-store";
-import AssignVesselsEditor from "@/components/AssignVesselsEditor";
+import AssignVesselDialog from "@/components/AssignVesselDialog";
+import CancelConfirmDialog, { ROUTE_CANCEL_REASONS } from "@/components/CancelConfirmDialog";
 import Modal from "@/components/Modal";
+import { useToast } from "@/components/ToastContext";
 import RouteStatusDialog from "@/components/RouteStatusDialog";
 import { PORTS, portId, findPort, DEFAULT_ROUTE_ACCOMMODATION_FARES, type RoutesValue } from "@/components/schedule-steps/RoutesStep";
 import { getCustomPorts } from "@/lib/custom-ports";
@@ -43,6 +45,9 @@ type Route = {
   departedAt?: Date;
   /** Trip lifecycle: Scheduled → Departed (or Cancelled). */
   status: RouteStatus;
+  /** Why the leg was cancelled, captured at cancellation. Cleared when the
+      leg is reinstated via "Mark Scheduled". */
+  cancelReason?: string;
   /** Enabled flag (the Active/Inactive toggle), independent of lifecycle.
       Submitted to the API as is_enabled. */
   isEnabled: boolean;
@@ -101,8 +106,8 @@ const MOCK_ROUTES: Route[] = [
   { id: "r6",  ref: "RT-0006", origin: { code: "ORM", city: "Ormoc City" },      destination: { code: "CEB", city: "Cebu City" },      distanceNm: 95, durationHrs: [3.5, 4],  scheduleAt: at(16), status: "Scheduled", isEnabled: true,  vessel: "MV Reina del Cielo" },
   { id: "r7",  ref: "RT-0007", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "BAC", city: "Bacolod City" },   distanceNm: 80, durationHrs: [4, 5],    scheduleAt: at(7),  status: "Scheduled", isEnabled: true,  vessel: "MV Visayan Star" },
   { id: "r8",  ref: "RT-0008", origin: { code: "BAC", city: "Bacolod City" },    destination: { code: "CEB", city: "Cebu City" },      distanceNm: 80, durationHrs: [4, 5],    scheduleAt: at(13), status: "Scheduled", isEnabled: true,  vessel: "MV Visayan Star" },
-  { id: "r9",  ref: "RT-0009", origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "DAP", city: "Dapitan City" },   distanceNm: 38, durationHrs: [2.5, 3],  scheduleAt: at(10), status: "Scheduled", isEnabled: false, vessel: "" },
-  { id: "r10", ref: "RT-0010", origin: { code: "DAP", city: "Dapitan City" },    destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 38, durationHrs: [2.5, 3],  scheduleAt: at(15), status: "Scheduled", isEnabled: false, vessel: "" },
+  { id: "r9",  ref: "RT-0009", origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "DAP", city: "Dapitan City" },   distanceNm: 38, durationHrs: [2.5, 3],  scheduleAt: at(10), status: "Scheduled", isEnabled: false, vessel: "MV Reina del Cielo" },
+  { id: "r10", ref: "RT-0010", origin: { code: "DAP", city: "Dapitan City" },    destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 38, durationHrs: [2.5, 3],  scheduleAt: at(15), status: "Scheduled", isEnabled: false, vessel: "MV Reina del Cielo" },
   { id: "r11", ref: "RT-0011", origin: { code: "BAT", city: "Batangas City" },   destination: { code: "CAL", city: "Calapan City" },   distanceNm: 26, durationHrs: [2.5, 3],  scheduleAt: at(5),  status: "Scheduled", isEnabled: true,  vessel: "MV Maligaya" },
   { id: "r12", ref: "RT-0012", origin: { code: "CAL", city: "Calapan City" },    destination: { code: "BAT", city: "Batangas City" },  distanceNm: 26, durationHrs: [2.5, 3],  scheduleAt: at(10), status: "Scheduled", isEnabled: true,  vessel: "MV Maligaya" },
   { id: "r13", ref: "RT-0013", origin: { code: "MNL", city: "Manila" },          destination: { code: "PPS", city: "Puerto Princesa" },distanceNm: 350,durationHrs: [22, 24], scheduleAt: at(18), status: "Scheduled", isEnabled: true,  vessel: "2GO Masinloc" },
@@ -113,9 +118,35 @@ const MOCK_ROUTES: Route[] = [
   { id: "r18", ref: "RT-0018", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "ORM", city: "Ormoc City" },     distanceNm: 95, durationHrs: [3.5, 4],  scheduleAt: at(15), status: "Scheduled", isEnabled: true,  vessel: "MV Visayan Star" },
   // Same CEB→DGT leg + vessel as RT-0001, later time — its own dated row.
   { id: "r19", ref: "RT-0019", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 42, durationHrs: [3.5, 4],  scheduleAt: at(16), status: "Scheduled", isEnabled: true,  vessel: "MV Filipinas Cebu" },
+
+  // Earlier departures today — exercise the Departed state and the
+  // "Departed at" column, which one row alone barely demonstrates.
+  { id: "r20", ref: "RT-0020", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "TAG", city: "Tagbilaran City" },distanceNm: 65, durationHrs: [2, 2.5],  scheduleAt: at(5),  departedAt: at(5),  status: "Departed",  isEnabled: true,  vessel: "FC Sinulog" },
+  { id: "r21", ref: "RT-0021", origin: { code: "BAT", city: "Batangas City" },   destination: { code: "CAL", city: "Calapan City" },   distanceNm: 26, durationHrs: [2.5, 3],  scheduleAt: at(6),  departedAt: at(6),  status: "Departed",  isEnabled: true,  vessel: "MV Maligaya" },
+  { id: "r22", ref: "RT-0022", origin: { code: "BAC", city: "Bacolod City" },    destination: { code: "ILO", city: "Iloilo City" },    distanceNm: 22, durationHrs: [1, 1.5],  scheduleAt: at(7),  departedAt: at(7),  status: "Departed",  isEnabled: true,  vessel: "MV Visayan Star" },
+
+  // Cancelled legs — the tone this status carries is otherwise never rendered.
+  { id: "r23", ref: "RT-0023", origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "DAP", city: "Dapitan City" },   distanceNm: 38, durationHrs: [2.5, 3],  scheduleAt: at(12), status: "Cancelled", isEnabled: true,  vessel: "MV Reina del Cielo" },
+  { id: "r24", ref: "RT-0024", origin: { code: "ILO", city: "Iloilo City" },     destination: { code: "BAC", city: "Bacolod City" },   distanceNm: 22, durationHrs: [1, 1.5],  scheduleAt: at(17), status: "Cancelled", isEnabled: true,  vessel: "MV Visayan Star" },
+
+  // Late-evening departures today — fill out the tail of the sort order.
+  { id: "r25", ref: "RT-0025", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "BAC", city: "Bacolod City" },   distanceNm: 80, durationHrs: [4, 5],    scheduleAt: at(21), status: "Scheduled", isEnabled: true,  vessel: "MV Reina del Cielo" },
+  { id: "r26", ref: "RT-0026", origin: { code: "TAG", city: "Tagbilaran City" }, destination: { code: "CEB", city: "Cebu City" },      distanceNm: 65, durationHrs: [2, 2.5],  scheduleAt: at(22), status: "Scheduled", isEnabled: true,  vessel: "FC Sinulog" },
+
+  // Tomorrow — visible once the date filter is widened past today.
+  { id: "r27", ref: "RT-0027", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "DGT", city: "Dumaguete City" }, distanceNm: 42, durationHrs: [3.5, 4],  scheduleAt: at(8, 1),  status: "Scheduled", isEnabled: true,  vessel: "MV Filipinas Cebu" },
+  { id: "r28", ref: "RT-0028", origin: { code: "DGT", city: "Dumaguete City" },  destination: { code: "CEB", city: "Cebu City" },      distanceNm: 42, durationHrs: [3.5, 4],  scheduleAt: at(14, 1), status: "Scheduled", isEnabled: true,  vessel: "MV Filipinas Cebu" },
+  { id: "r29", ref: "RT-0029", origin: { code: "MNL", city: "Manila" },          destination: { code: "PPS", city: "Puerto Princesa" },distanceNm: 350,durationHrs: [22, 24], scheduleAt: at(18, 1), status: "Scheduled", isEnabled: true,  vessel: "2GO Masinloc" },
+  { id: "r30", ref: "RT-0030", origin: { code: "BAT", city: "Batangas City" },   destination: { code: "CAL", city: "Calapan City" },   distanceNm: 26, durationHrs: [2.5, 3],  scheduleAt: at(5, 1),  status: "Scheduled", isEnabled: false, vessel: "MV Maligaya" },
+
+  // Yesterday — completed legs, so the sort's descending default has history
+  // to fall back to.
+  { id: "r31", ref: "RT-0031", origin: { code: "CEB", city: "Cebu City" },       destination: { code: "ORM", city: "Ormoc City" },     distanceNm: 95, durationHrs: [3.5, 4],  scheduleAt: at(9, -1),  departedAt: at(9, -1),  status: "Departed",  isEnabled: true,  vessel: "MV Reina del Cielo" },
+  { id: "r32", ref: "RT-0032", origin: { code: "ORM", city: "Ormoc City" },      destination: { code: "CEB", city: "Cebu City" },      distanceNm: 95, durationHrs: [3.5, 4],  scheduleAt: at(16, -1), departedAt: at(16, -1), status: "Departed",  isEnabled: true,  vessel: "MV Reina del Cielo" },
+  { id: "r33", ref: "RT-0033", origin: { code: "MNL", city: "Manila" },          destination: { code: "ILO", city: "Iloilo City" },    distanceNm: 250,durationHrs: [18, 20], scheduleAt: at(20, -1), status: "Cancelled", isEnabled: true,  vessel: "2GO Saint Pope John Paul II" },
 ];
 
-const PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 10;
 
 function PortCell({ city, name }: { code?: string; city: string; name?: string }) {
   return (
@@ -164,12 +195,36 @@ function SortIcon() {
   );
 }
 
+// Direction arrow on the column the table is currently sorted by. Only the
+// active column renders one, so the arrow doubles as the sort indicator.
+function SortArrow({ dir }: { dir: "asc" | "desc" }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${dir === "asc" ? "rotate-180" : ""}`}
+    >
+      <path d="M12 5v14" />
+      <path d="m19 12-7 7-7-7" />
+    </svg>
+  );
+}
+
 export default function RoutesPage() {
   const { active } = useShippingLine();
+  const { showToast } = useToast();
   const [routes, setRoutes] = useState<Route[] | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [originFilter, setOriginFilter] = useState<string>("all");
   const [destinationFilter, setDestinationFilter] = useState<string>("all");
+  // Schedule sort direction — newest first by default, so the most relevant
+  // departures lead. Clicking the header toggles it.
+  const [scheduleSort, setScheduleSort] = useState<"asc" | "desc">("desc");
   // Voyage lifecycle (Scheduled/Departed/…) from the route's next voyage.
   const [lifecycleFilter, setLifecycleFilter] = useState<string>("all");
   // Enabled state — Active / Inactive.
@@ -179,15 +234,16 @@ export default function RoutesPage() {
     const d = new Date(); d.setHours(0, 0, 0, 0);
     return { start: d, end: d };
   });
+  // Actual-departure window. Unset by default — legs that haven't sailed have
+  // no departedAt, so defaulting this to today would hide every Scheduled row.
+  const [departedRange, setDepartedRange] = useState<OptionalDateRange>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   // Route whose vessel/departure schedule dialog is open (null = closed).
   const [editRoute, setEditRoute] = useState<Route | null>(null);
-  // When true, the edit dialog is opened via "Assign vessel" — the same
-  // dialog, but with the assigned-vessels editor rendered alongside the form.
-  const [assignMode, setAssignMode] = useState(false);
-  // Draft selection of vessel names while the assign editor is open.
-  const [assignDraft, setAssignDraft] = useState<string[]>([]);
+  // Route whose vessel is being reassigned via the standalone dialog.
+  const [assignRoute, setAssignRoute] = useState<Route | null>(null);
   // Route pending an enable/disable confirmation.
   const [statusRoute, setStatusRoute] = useState<Route | null>(null);
   const router = useRouter();
@@ -209,11 +265,17 @@ export default function RoutesPage() {
     setRoutes(null);
     // Bump when MOCK_ROUTES changes so an updated seed re-applies instead of a
     // stale cached copy lingering in localStorage.
-    const SEED_VERSION = "2026-06-24-dated-legs";
+    const SEED_VERSION = "2026-08-13-assigned-vessels";
+    // The seed dates every leg relative to "today", so a copy persisted on an
+    // earlier day carries stale dates — and the date filter (which defaults to
+    // today) would hide every row. Re-seed when the cached copy is from another
+    // day so the demo data always lands in the visible window.
+    const todayKey = new Date().toDateString();
     try {
       const seededVersion = window.localStorage.getItem("tripket.routes-seed-version");
+      const seededDay = window.localStorage.getItem("tripket.routes-seed-day");
       const persisted = loadStore<Route[]>("routes", active.id);
-      if (persisted && Array.isArray(persisted) && seededVersion === SEED_VERSION) {
+      if (persisted && Array.isArray(persisted) && seededVersion === SEED_VERSION && seededDay === todayKey) {
         // Revive Date fields after the JSON round-trip.
         const revived = persisted.map((r) => ({
           ...r,
@@ -227,7 +289,10 @@ export default function RoutesPage() {
       if (cancelled) return;
       setRoutes(MOCK_ROUTES);
       saveStore("routes", active.id, MOCK_ROUTES);
-      try { window.localStorage.setItem("tripket.routes-seed-version", SEED_VERSION); } catch { /* ignore */ }
+      try {
+        window.localStorage.setItem("tripket.routes-seed-version", SEED_VERSION);
+        window.localStorage.setItem("tripket.routes-seed-day", todayKey);
+      } catch { /* ignore */ }
     }, 200);
     return () => { cancelled = true; clearTimeout(t); };
   }, [active.id]);
@@ -254,40 +319,76 @@ export default function RoutesPage() {
       prev.map((r) => (r.id === id ? { ...r, status: "Departed", departedAt: when } : r)),
     );
 
+  // Undo a departure marked in error — clears the actual departure timestamp
+  // along with the status, so the leg reads as never having sailed.
+  const markScheduled = (id: string) =>
+    updateRoutes((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, status: "Scheduled", departedAt: undefined, cancelReason: undefined } : r)),
+    );
+
   // Cancel a trip/leg — opens a dialog listing the leg's bookings with a batch
   // "mark refunded" action (refunds happen manually). Completing it sets the
   // route Cancelled and flips the leg's bookings + tickets to Refunded.
   const [cancelRoute, setCancelRoute] = useState<Route | null>(null);
+  // Same dialog in refund-only mode, for an already-cancelled leg.
+  const [refundRoute, setRefundRoute] = useState<Route | null>(null);
 
-  // Batch-refund: mark this leg's bookings (and their tickets) Refunded in the
-  // bookings store, then mark the route Cancelled.
-  const completeCancel = (route: Route) => {
+  // Mark every not-yet-refunded booking on this leg (and its tickets)
+  // Refunded. Shared by the cancel flow and the standalone "Refund bookings"
+  // action, which re-runs it for anything booked after the cancellation.
+  // Returns how many bookings it moved so callers can report it.
+  const refundLegBookings = (route: Route): number => {
     const o = route.origin.code, d = route.destination.code;
+    let moved = 0;
     try {
       const bookings = loadStore<Booking[]>("bookings", active.id);
       if (bookings && Array.isArray(bookings)) {
-        const next = bookings.map((b) =>
-          b.routeOriginCode === o && b.routeDestinationCode === d
-            ? {
-                ...b,
-                status: "Refunded" as const,
-                paymentStatus: "Refunded" as const,
-                tickets: b.tickets.map((t) => ({ ...t, status: "Refunded" as const })),
-              }
-            : b,
-        );
-        saveStore("bookings", active.id, next);
+        const next = bookings.map((b) => {
+          // Already-refunded bookings are left alone so the count reflects
+          // real work rather than re-reporting settled ones.
+          if (b.routeOriginCode !== o || b.routeDestinationCode !== d) return b;
+          if (b.status === "Refunded") return b;
+          moved++;
+          return {
+            ...b,
+            status: "Refunded" as const,
+            paymentStatus: "Refunded" as const,
+            tickets: b.tickets.map((t) => ({ ...t, status: "Refunded" as const })),
+          };
+        });
+        if (moved > 0) saveStore("bookings", active.id, next);
       }
     } catch { /* ignore — store may be empty */ }
-    updateRoutes((prev) => prev.map((r) => (r.id === route.id ? { ...r, status: "Cancelled" } : r)));
-    setCancelRoute(null);
+    return moved;
   };
 
-  // Plain dismiss — closing the dialog (Close / X / backdrop) makes no change.
-  const dismissCancel = () => setCancelRoute(null);
+  // Confirming the cancel dialog marks the route Cancelled with its reason,
+  // then hands straight off to the refund dialog so the leg's bookings get
+  // settled in the same sitting — cancelling a leg strands paid passengers, so
+  // refunding shouldn't be something the admin has to remember separately.
+  const completeCancel = (route: Route, reason: string) => {
+    updateRoutes((prev) =>
+      prev.map((r) => (r.id === route.id ? { ...r, status: "Cancelled" as const, cancelReason: reason } : r)),
+    );
+    setCancelRoute(null);
+    setRefundRoute(route);
+  };
+
+  // Standalone refund for an already-cancelled leg — catches bookings that
+  // weren't refunded when it was cancelled. Confirmed through the same dialog
+  // the cancel flow uses, so the admin sees exactly what's being settled.
+  const completeRefund = (route: Route) => {
+    const moved = refundLegBookings(route);
+    showToast(
+      moved > 0
+        ? `${moved} booking${moved === 1 ? "" : "s"} marked Refunded`
+        : "No bookings left to refund on this leg",
+    );
+    setRefundRoute(null);
+  };
 
   // Reset to page 1 whenever filters change so users don't land on an empty later page.
-  useEffect(() => { setPage(1); }, [originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange]);
+  useEffect(() => { setPage(1); }, [originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange, departedRange, scheduleSort]);
 
   // Origin / destination options from the catalog cities, alphabetized.
   const originOptions = useMemo(() => {
@@ -325,6 +426,7 @@ export default function RoutesPage() {
     (destinationFilter !== "all" ? 1 : 0) +
     (lifecycleFilter !== "all" ? 1 : 0) +
     (activeFilter !== "all" ? 1 : 0) +
+    (departedRange ? 1 : 0) +
     (isDefaultDate ? 0 : 1);
 
   const filtered = useMemo(() => {
@@ -341,11 +443,26 @@ export default function RoutesPage() {
         const to = new Date(dateRange.end); to.setHours(0, 0, 0, 0);
         if (day < from || day > to) return false;
       }
+      // Actual-departure window. Only applies when set — and a leg that never
+      // sailed has no departedAt, so it can't fall inside any window.
+      if (departedRange) {
+        if (!r.departedAt) return false;
+        const day = new Date(r.departedAt); day.setHours(0, 0, 0, 0);
+        const from = new Date(departedRange.start); from.setHours(0, 0, 0, 0);
+        const to = new Date(departedRange.end); to.setHours(0, 0, 0, 0);
+        if (day < from || day > to) return false;
+      }
       return true;
-    });
-  }, [routes, originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange]);
+    })
+      // .filter() already returned a fresh array, so sorting in place here
+      // doesn't mutate `routes`.
+      .sort((a, b) => {
+        const delta = a.scheduleAt.getTime() - b.scheduleAt.getTime();
+        return scheduleSort === "asc" ? delta : -delta;
+      });
+  }, [routes, originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange, departedRange, scheduleSort]);
 
-  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <div>
@@ -363,9 +480,6 @@ export default function RoutesPage() {
           <div className="flex items-center justify-between rounded-t-2xl border-b border-slate-100 px-5 py-4">
             <div>
               <h2 className="text-base font-semibold tracking-tight text-slate-900">Configured routes</h2>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Showing <span className="font-medium text-slate-900">{filtered.length}</span> of {routes.length} routes
-              </p>
             </div>
 
             <FiltersButton onClick={() => setFiltersOpen(true)} activeCount={activeFilterCount} />
@@ -377,7 +491,17 @@ export default function RoutesPage() {
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
                   <th className="px-5 py-2.5 font-medium">Id</th>
-                  <th className="px-5 py-2.5 font-medium">Schedule</th>
+                  <th className="px-5 py-2.5 font-medium">
+                    <button
+                      type="button"
+                      onClick={() => setScheduleSort((d) => (d === "desc" ? "asc" : "desc"))}
+                      aria-label={`Sort by schedule, ${scheduleSort === "desc" ? "newest" : "oldest"} first`}
+                      className="inline-flex items-center gap-1.5 uppercase tracking-[0.08em] text-slate-500 transition-colors hover:text-slate-700"
+                    >
+                      Schedule
+                      <SortArrow dir={scheduleSort} />
+                    </button>
+                  </th>
                   <th className="px-5 py-2.5 font-medium">Origin</th>
                   <th className="px-5 py-2.5 font-medium">Destination</th>
                   <th className="px-5 py-2.5 font-medium">Vessel</th>
@@ -408,10 +532,11 @@ export default function RoutesPage() {
                   >
                     <td className="relative px-5 py-3.5 align-middle">
                       <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
-                      <span className="font-mono text-[12.5px] tabular-nums text-slate-500">{(page - 1) * PAGE_SIZE + i + 1}</span>
+                      <span className="font-mono text-[12.5px] tabular-nums text-slate-500">{(page - 1) * pageSize + i + 1}</span>
                     </td>
                     <td className="px-5 py-3.5 align-middle whitespace-nowrap">
-                      <span className="text-[12.5px] tabular-nums text-slate-900">{fmtDateTime(r.scheduleAt)}</span>
+                      <div className="text-[12.5px] tabular-nums text-slate-900">{fmtDateTime(r.scheduleAt)}</div>
+                      <div className="mt-0.5 text-[11px] text-slate-400">({fmtWeekday(r.scheduleAt)})</div>
                     </td>
                     <td className="px-5 py-3.5 whitespace-nowrap"><PortCell {...r.origin} /></td>
                     <td className="px-5 py-3.5 whitespace-nowrap">
@@ -469,22 +594,38 @@ export default function RoutesPage() {
                       <RowMenu
                         ariaLabel={`Actions for ${r.origin.name ?? r.origin.city} → ${r.destination.name ?? r.destination.city}`}
                         items={[
-                          {
-                            label: "Mark Departed",
-                            // Only meaningful while still Scheduled.
-                            disabled: r.status !== "Scheduled",
-                            onClick: () => setDepartRoute(r),
-                            icon: (
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                <path d="M5 12h13M13 6l6 6-6 6" />
-                              </svg>
-                            ),
-                          },
+                          // Departure toggles: a Scheduled leg can be marked
+                          // Departed; a Departed one walked back if it was
+                          // logged in error; and a Cancelled one reinstated —
+                          // both non-Scheduled states return the same way.
+                          r.status === "Departed" || r.status === "Cancelled"
+                            ? {
+                                label: "Mark Scheduled",
+                                tone: "warning" as const,
+                                onClick: () => markScheduled(r.id),
+                                icon: (
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                    <path d="M19 12H6M11 6l-6 6 6 6" />
+                                  </svg>
+                                ),
+                              }
+                            : {
+                                label: "Mark Departed",
+                                tone: "success" as const,
+                                // Only meaningful while still Scheduled.
+                                disabled: r.status !== "Scheduled",
+                                onClick: () => setDepartRoute(r),
+                                icon: (
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                    <path d="M5 12h13M13 6l6 6-6 6" />
+                                  </svg>
+                                ),
+                              },
                           {
                             label: "Assign vessel",
                             // Locked once the leg has confirmed bookings.
                             disabled: r.status !== "Scheduled" || hasConfirmed(r),
-                            onClick: () => { setAssignDraft(r.vessel ? [r.vessel] : []); setAssignMode(true); setEditRoute(r); },
+                            onClick: () => setAssignRoute(r),
                             icon: (
                               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                 <path d="M3 14h18l-2 5a2 2 0 0 1-1.9 1.3H6.9A2 2 0 0 1 5 19l-2-5Z" />
@@ -509,6 +650,7 @@ export default function RoutesPage() {
                               }
                             : {
                                 label: "Enable route",
+                                tone: "success" as const,
                                 onClick: () => setStatusRoute(r),
                                 icon: (
                                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -528,6 +670,22 @@ export default function RoutesPage() {
                               </svg>
                             ),
                           },
+                          // Only meaningful once a leg is cancelled — it sweeps
+                          // up bookings made before the cancellation that
+                          // haven't been refunded yet.
+                          ...(r.status === "Cancelled"
+                            ? [{
+                                label: "Refund bookings",
+                                tone: "warning" as const,
+                                onClick: () => setRefundRoute(r),
+                                icon: (
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                    <rect x="2.5" y="5.5" width="19" height="13" rx="2" />
+                                    <path d="M2.5 10h19" />
+                                  </svg>
+                                ),
+                              }]
+                            : []),
                         ]}
                       />
                     </td>
@@ -540,9 +698,9 @@ export default function RoutesPage() {
 
           <Pagination
             page={page}
-            pageSize={PAGE_SIZE}
+            pageSize={pageSize}
             total={filtered.length}
-            onPageChange={setPage}
+            onPageChange={setPage} onPageSizeChange={setPageSize}
             noun="routes"
           />
         </section>
@@ -584,7 +742,7 @@ export default function RoutesPage() {
           assigned-vessels panel rendered alongside the form. */}
       <CreateRouteModal
         open={!!editRoute}
-        onClose={() => { setEditRoute(null); setAssignMode(false); }}
+        onClose={() => setEditRoute(null)}
         editValue={editRoute ? routeToValue(editRoute) : null}
         onSave={(payload) => {
           if (!editRoute) return;
@@ -594,8 +752,7 @@ export default function RoutesPage() {
           if (!origin || !destination) return;
           const lo = Number(payload.durationLowHrs) || 0;
           const hi = Number(payload.durationHighHrs) || lo;
-          // Assign mode sets the single vessel; edit mode tweaks details.
-          const nextVessel = assignMode ? (assignDraft[0] ?? "") : editRoute.vessel;
+          const nextVessel = editRoute.vessel;
           updateRoutes((prev) =>
             prev.map((r) =>
               r.id === editRoute.id
@@ -614,10 +771,19 @@ export default function RoutesPage() {
             )
           );
         }}
-        editMode={assignMode ? "assign" : "edit"}
-        editExtra={assignMode && editRoute ? (
-          <AssignVesselsEditor value={assignDraft} onChange={setAssignDraft} />
-        ) : null}
+        editMode="edit"
+      />
+
+      <AssignVesselDialog
+        open={!!assignRoute}
+        currentVessel={assignRoute?.vessel ?? ""}
+        onClose={() => setAssignRoute(null)}
+        onAssign={(vessel) => {
+          if (!assignRoute) return;
+          updateRoutes((prev) => prev.map((r) => (r.id === assignRoute.id ? { ...r, vessel } : r)));
+          showToast(`Vessel assigned to ${assignRoute.origin.name ?? assignRoute.origin.city} → ${assignRoute.destination.name ?? assignRoute.destination.city}`);
+          setAssignRoute(null);
+        }}
       />
 
       <RouteStatusDialog
@@ -628,11 +794,33 @@ export default function RoutesPage() {
         onConfirm={() => { if (statusRoute) toggleRouteStatus(statusRoute.id); }}
       />
 
+      <CancelConfirmDialog
+        targetRef={cancelRoute ? `${cancelRoute.origin.name ?? cancelRoute.origin.city} → ${cancelRoute.destination.name ?? cancelRoute.destination.city}` : null}
+        noun="route"
+        reasons={ROUTE_CANCEL_REASONS}
+        title="Mark this route as 'Cancelled'?"
+        body={
+          <>
+            Route{" "}
+            <span className="font-semibold text-slate-700">
+              &lsquo;{cancelRoute ? `${cancelRoute.origin.name ?? cancelRoute.origin.city} → ${cancelRoute.destination.name ?? cancelRoute.destination.city}` : ""}&rsquo;
+            </span>{" "}
+            will be marked <span className="font-semibold text-rose-600">Cancelled</span>.
+            You&rsquo;ll refund its bookings next.
+          </>
+        }
+        confirmLabel="Mark Cancelled"
+        dismissLabel="Cancel"
+        onClose={() => setCancelRoute(null)}
+        onConfirm={(reason) => { if (cancelRoute) completeCancel(cancelRoute, reason); }}
+      />
+
       <CancelRouteDialog
-        route={cancelRoute}
+        route={refundRoute}
         lineId={active.id}
-        onComplete={completeCancel}
-        onClose={dismissCancel}
+        mode="refund"
+        onComplete={completeRefund}
+        onClose={() => setRefundRoute(null)}
       />
 
       <SetDepartureDialog
@@ -646,7 +834,8 @@ export default function RoutesPage() {
         onClose={() => setFiltersOpen(false)}
         activeCount={activeFilterCount}
         fields={[
-          { kind: "dateRange", key: "date", label: "Date & time", value: dateRange, onChange: setDateRange, defaultValue: { start: todayRange, end: todayRange } },
+          { kind: "dateRange", key: "date", label: "Schedule", value: dateRange, onChange: setDateRange, defaultValue: { start: todayRange, end: todayRange } },
+          { kind: "optionalDateRange", key: "departed", label: "Departed", value: departedRange, onChange: setDepartedRange, defaultValue: null, placeholder: "Select date range" },
           { kind: "select", key: "origin", label: "Origin", value: originFilter, options: originOptions, onChange: setOriginFilter, defaultValue: "all" },
           { kind: "select", key: "destination", label: "Destination", value: destinationFilter, options: destinationOptions, onChange: setDestinationFilter, defaultValue: "all" },
           { kind: "select", key: "lifecycle", label: "Status", value: lifecycleFilter, onChange: setLifecycleFilter, defaultValue: "all",
@@ -675,6 +864,12 @@ function fmtDateTime(d: Date): string {
     month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit",
   });
+}
+
+// Weekday shown under the schedule date — ferry crews and admins think in
+// "the Thursday run", so the day name saves a mental lookup off the date.
+function fmtWeekday(d: Date): string {
+  return d.toLocaleDateString("en-US", { weekday: "long" });
 }
 
 // ─────────── SetDepartureDialog ───────────
@@ -751,17 +946,21 @@ function SetDepartureDialog({
 function CancelRouteDialog({
   route,
   lineId,
+  mode = "cancel",
   onComplete,
   onClose,
 }: {
   route: Route | null;
   lineId: string;
+  /** "cancel" refunds the leg's bookings and cancels it; "refund" only settles
+   *  the bookings, leaving the leg's status alone (it's already Cancelled). */
+  mode?: "cancel" | "refund";
   /** Refund all the leg's bookings + cancel cleanly. */
   onComplete: (r: Route) => void;
   /** Plain dismiss — no change. */
   onClose: () => void;
 }) {
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [allBookings, setAllBookings] = useState<Booking[]>([]);
   const [bkPage, setBkPage] = useState(1);
 
   useEffect(() => {
@@ -773,16 +972,20 @@ function CancelRouteDialog({
       const found = all.filter((b) => b.routeOriginCode === o && b.routeDestinationCode === d);
       // Demo: if a leg has no bookings in the store, show a few sample ones so
       // the cancel/refund flow is presentable. (Remove for production data.)
-      setBookings(found.length > 0 ? found : sampleLegBookings(route));
+      setAllBookings(found.length > 0 ? found : sampleLegBookings(route));
     } catch {
-      setBookings(sampleLegBookings(route));
+      setAllBookings(sampleLegBookings(route));
     }
   }, [route, lineId]);
 
   if (!route) return null;
 
+  const isRefund = mode === "refund";
   const legLabel = `${route.origin.name ?? route.origin.city} → ${route.destination.name ?? route.destination.city}`;
-  const toRefund = bookings.filter((b) => b.status !== "Refunded");
+  const toRefund = allBookings.filter((b) => b.status !== "Refunded");
+  // Cancelling shows the whole manifest for context; refunding an already-
+  // cancelled leg shows only what it will actually change.
+  const bookings = isRefund ? toRefund : allBookings;
   const totalAmount = toRefund.reduce((s, b) => s + (b.amount || 0), 0);
   const totalPax = bookings.reduce((s, b) => s + (b.pax || 0), 0);
 
@@ -796,18 +999,45 @@ function CancelRouteDialog({
       <div className="flex h-[80vh] max-h-[80vh] flex-col">
         <div className="border-b border-slate-100 px-6 pb-4 pt-6">
           <div className="flex items-start gap-4">
-            <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-rose-50 text-rose-600 ring-1 ring-rose-200/70">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M15 9l-6 6M9 9l6 6" />
-              </svg>
+            <span
+              aria-hidden
+              className={
+                "grid h-9 w-9 shrink-0 place-items-center rounded-full ring-1 " +
+                (isRefund
+                  ? "bg-amber-50 text-amber-600 ring-amber-200/70"
+                  : "bg-rose-50 text-rose-600 ring-rose-200/70")
+              }
+            >
+              {isRefund ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+                  <rect x="2.5" y="5.5" width="19" height="13" rx="2" />
+                  <path d="M2.5 10h19" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M15 9l-6 6M9 9l6 6" />
+                </svg>
+              )}
             </span>
             <div className="min-w-0 flex-1">
-              <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">Cancel this trip?</h2>
+              <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">
+                {isRefund ? "Refund bookings on this trip?" : "Cancel this trip?"}
+              </h2>
               <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
-                <span className="font-medium text-slate-900">{legLabel}</span> will be cancelled.
-                Refund the bookings below, then confirm. Refunds are processed manually —
-                this records them as refunded in the system.
+                {isRefund ? (
+                  <>
+                    <span className="font-medium text-slate-900">{legLabel}</span> is already cancelled.
+                    The bookings below haven&rsquo;t been refunded yet. Refunds are processed manually —
+                    this records them as refunded in the system.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-medium text-slate-900">{legLabel}</span> will be cancelled.
+                    Refund the bookings below, then confirm. Refunds are processed manually —
+                    this records them as refunded in the system.
+                  </>
+                )}
               </p>
             </div>
           </div>
@@ -816,7 +1046,9 @@ function CancelRouteDialog({
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           {bookings.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/40 px-4 py-8 text-center text-[12.5px] text-slate-400">
-              No bookings on this leg. The trip can be cancelled cleanly.
+              {isRefund
+                ? "No bookings on this leg — nothing left to refund."
+                : "No bookings on this leg. The trip can be cancelled cleanly."}
             </div>
           ) : (
             <>
@@ -840,7 +1072,7 @@ function CancelRouteDialog({
                         "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide " +
                         (b.status === "Refunded" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")
                       }>
-                        {b.status === "Refunded" ? "Refunded" : "Pending refund"}
+                        {b.status === "Refunded" ? "Refunded" : "To Refund"}
                       </span>
                     </div>
                   </div>
@@ -888,10 +1120,21 @@ function CancelRouteDialog({
           </button>
           <button
             type="button"
+            // In refund mode there's nothing to do without unrefunded bookings.
+            disabled={isRefund && toRefund.length === 0}
             onClick={() => onComplete(route)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-rose-700"
+            className={
+              "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white transition-colors " +
+              (isRefund
+                ? (toRefund.length === 0
+                    ? "cursor-not-allowed bg-amber-300"
+                    : "bg-amber-600 hover:bg-amber-700")
+                : "bg-rose-600 hover:bg-rose-700")
+            }
           >
-            {bookings.length === 0 ? "Cancel trip" : "Mark all refunded & cancel"}
+            {isRefund
+              ? "Mark all refunded"
+              : bookings.length === 0 ? "Cancel trip" : "Mark all refunded & cancel"}
           </button>
         </div>
       </div>
