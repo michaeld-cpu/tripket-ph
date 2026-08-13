@@ -39,7 +39,7 @@ import { reviveBookings, mergeSeededBookings } from "@/lib/bookings-data";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 import ActivityLog from "@/components/ActivityLog";
 import Modal from "@/components/Modal";
-import Select from "@/components/Select";
+import CancelConfirmDialog from "@/components/CancelConfirmDialog";
 import EditEntityDialog, { type EditEntityInit } from "@/components/EditEntityDialog";
 
 
@@ -706,7 +706,7 @@ export default function BookingsPage() {
       />
 
       <CancelConfirmDialog
-        bookingRef={cancelTarget}
+        targetRef={cancelTarget}
         onClose={() => setCancelTarget(null)}
         onConfirm={(reason) => {
           if (!cancelTarget) return;
@@ -941,135 +941,6 @@ function ApproveBookingDialog({
             className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-emerald-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {ctaLabel}
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-// ─────────── CancelConfirmDialog ───────────
-// Cancelling cascades to every non-terminal ticket in the booking and queues
-// the amount for return, so the copy states that consequence instead of asking
-// "are you sure". It deliberately avoids naming seats or counts — a booking on
-// an already-departed voyage releases nothing, so any such claim would be wrong
-// for that case. The dismiss button says "Keep booking" so it can't be misread
-// as the destructive action sitting next to it.
-//
-// A reason is required. The fixed options are deliberately non-overlapping —
-// weather/port, fleet, and duplicate-record each answer a different question —
-// so the same cancellation can't be logged two different ways. Anything else
-// goes under "Others", which unlocks a free-text field.
-const CANCEL_REASONS = [
-  "Bad weather / port closure",
-  "No available vessel",
-  "Duplicate booking",
-  "Others",
-] as const;
-type CancelReason = (typeof CANCEL_REASONS)[number];
-
-function CancelConfirmDialog({
-  bookingRef,
-  onClose,
-  onConfirm,
-}: {
-  bookingRef: string | null;
-  onClose: () => void;
-  onConfirm: (reason: string) => void;
-}) {
-  const [reason, setReason] = useState<CancelReason | "">("");
-  const [other, setOther] = useState("");
-  const [touched, setTouched] = useState(false);
-
-  // Reset whenever a new booking is targeted.
-  useEffect(() => {
-    if (bookingRef) { setReason(""); setOther(""); setTouched(false); }
-  }, [bookingRef]);
-
-  const valid = reason !== "" && (reason !== "Others" || other.trim().length > 0);
-  const submit = () => {
-    if (!valid) { setTouched(true); return; }
-    onConfirm(reason === "Others" ? other.trim() : reason);
-  };
-
-  return (
-    <Modal open={!!bookingRef} onClose={onClose} maxWidth="max-w-md">
-      <div className="p-6">
-        <div className="flex items-start gap-3">
-          <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-rose-50 text-rose-600 ring-1 ring-rose-200/70">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M6 6l12 12" />
-            </svg>
-          </span>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">
-              Cancel booking &lsquo;{bookingRef}&rsquo;?
-            </h2>
-            <p className="mt-1 text-[12.5px] leading-relaxed text-slate-500">
-              This marks the booking For Refund. The payout is processed separately.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-4">
-          <label className="text-[12px] font-semibold text-slate-700">
-            Cancellation reason <span className="text-rose-500">*</span>
-          </label>
-          <div className="mt-1.5">
-            <Select
-              value={reason}
-              options={CANCEL_REASONS.map((r) => ({ value: r, label: r }))}
-              onChange={(v) => { setReason(v as CancelReason); setTouched(true); }}
-              ariaLabel="Cancellation reason"
-              placeholder="Select a reason…"
-              className="w-full"
-            />
-          </div>
-
-          {reason === "Others" && (
-            <textarea
-              rows={3}
-              value={other}
-              onChange={(e) => setOther(e.target.value)}
-              onBlur={() => setTouched(true)}
-              placeholder="Describe the reason…"
-              className={
-                "mt-2 w-full resize-none rounded-lg border px-3 py-2 text-[13px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 " +
-                (touched && other.trim() === ""
-                  ? "border-rose-300 focus:ring-rose-200"
-                  : "border-slate-200 focus:border-brand-400 focus:ring-brand-200")
-              }
-            />
-          )}
-
-          {touched && !valid && (
-            <p className="mt-1 text-[11.5px] font-medium text-rose-500">
-              {reason === "Others"
-                ? "Enter the reason before confirming."
-                : "Select a cancellation reason before confirming."}
-            </p>
-          )}
-        </div>
-
-        <div className="mt-5 flex items-center justify-end gap-2.5">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-slate-600 ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
-          >
-            Keep booking
-          </button>
-          <button
-            type="button"
-            disabled={!valid}
-            onClick={submit}
-            className={
-              "rounded-lg px-4 py-2 text-[12.5px] font-semibold text-white transition-colors " +
-              (valid ? "bg-rose-600 hover:bg-rose-700" : "cursor-not-allowed bg-rose-300")
-            }
-          >
-            Cancel booking
           </button>
         </div>
       </div>

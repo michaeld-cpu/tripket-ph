@@ -18,12 +18,15 @@ import {
   statusLabel,
   canEditBooking,
   updateVehicle,
+  logTo,
+  makeActivity,
   type Booking,
   type VehiclePatch,
 } from "@/lib/bookings-data";
 import { loadScopedVoyages } from "@/lib/line-scope";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 import EditEntityDialog from "@/components/EditEntityDialog";
+import CancelConfirmDialog from "@/components/CancelConfirmDialog";
 
 const PAGE_SIZE = 10;
 
@@ -97,6 +100,8 @@ export default function VehicleTicketsPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [editRef, setEditRef] = useState<string | null>(null);
+  // Booking ref queued for cancellation — the reason dialog reads it.
+  const [cancelRef, setCancelRef] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -146,6 +151,45 @@ export default function VehicleTicketsPage() {
     setEditRef(null);
     showToast("Vehicle details updated");
   };
+  // A booking carries at most one vehicle, so a vehicle ticket's status is the
+  // booking's status — cancelling/refunding here moves the whole booking, the
+  // same cascade the Bookings page runs. Both log to the shared activity trail
+  // so the action shows up wherever the booking is opened.
+  const mutateBooking = (ref: string, apply: (b: Booking) => Booking) => {
+    setBookings((prev) => {
+      if (!prev) return prev;
+      const next = prev.map((b) => (b.ref === ref ? apply(b) : b));
+      saveStore("bookings", active.id, next);
+      return next;
+    });
+  };
+
+  const handleCancel = (ref: string, reason: string) => {
+    mutateBooking(ref, (b) => {
+      const tickets = b.tickets.map((t) =>
+        t.status === "Cancelled" || t.status === "Refunded"
+          ? t
+          : { ...t, status: "To Refund" as const });
+      return logTo(
+        { ...b, status: "To Refund", tickets },
+        makeActivity("to_refund", "Booking cancelled — marked for refund", "Someone", `Reason: ${reason} · ₱${b.amount.toLocaleString()} eligible for return`),
+      );
+    });
+    showToast(`Booking ${ref} cancelled — marked For Refund`);
+  };
+
+  const handleRefund = (ref: string) => {
+    mutateBooking(ref, (b) => {
+      const tickets = b.tickets.map((t) =>
+        t.status === "Cancelled" ? t : { ...t, status: "Refunded" as const });
+      return logTo(
+        { ...b, status: "Refunded", paymentStatus: "Refunded", tickets },
+        makeActivity("refunded", "Booking refunded", "Someone", `₱${b.amount.toLocaleString()} returned`),
+      );
+    });
+    showToast(`Booking ${ref} refunded`);
+  };
+
   const openRow = useMemo(() => rows.find((r) => r.id === openId) ?? null, [rows, openId]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -280,6 +324,23 @@ export default function VehicleTicketsPage() {
                           disabled: !canEditBooking(r.status),
                           onClick: () => setEditRef(r.bookingRef),
                           icon: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>),
+                        }, {
+                          // Cancel — flags the booking (and its tickets) For
+                          // Refund, capturing a reason. Locked once already For
+                          // Refund or refunded, and while Under Review
+                          // (Submitted) — an unapproved booking must be
+                          // approved before it can be cancelled.
+                          label: "Cancel ticket",
+                          danger: true,
+                          disabled: r.status === "To Refund" || r.status === "Refunded" || r.status === "Submitted",
+                          onClick: () => setCancelRef(r.bookingRef),
+                          icon: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><circle cx="12" cy="12" r="9" /><path d="M6 6l12 12" /></svg>),
+                        }, {
+                          // Refund — only after the booking has been marked To Refund.
+                          label: "Refund",
+                          disabled: r.status !== "To Refund",
+                          onClick: () => handleRefund(r.bookingRef),
+                          icon: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>),
                         }]}
                       />
                     </td>
@@ -294,6 +355,17 @@ export default function VehicleTicketsPage() {
       )}
 
       <VehicleDetailDialog row={openRow} lineName={active.name} onClose={() => setOpenId(null)} />
+
+      <CancelConfirmDialog
+        targetRef={cancelRef}
+        noun="ticket"
+        onClose={() => setCancelRef(null)}
+        onConfirm={(reason) => {
+          if (!cancelRef) return;
+          handleCancel(cancelRef, reason);
+          setCancelRef(null);
+        }}
+      />
 
       <EditEntityDialog
         open={!!editBooking?.vehicle}

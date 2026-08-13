@@ -11,7 +11,6 @@ import EmptyState from "@/components/EmptyState";
 import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import Modal from "@/components/Modal";
-import ActivityLog from "@/components/ActivityLog";
 import DateRangePicker, { type DateRange } from "@/components/DateRangePicker";
 import { useToast } from "@/components/ToastContext";
 import {
@@ -28,7 +27,6 @@ import {
   type PassengerPatch,
   PAX_TYPE_LABELS,
   paxFareBreakdown,
-  deriveTicketActivity,
   canEditBooking,
   updatePassenger,
 } from "@/lib/bookings-data";
@@ -655,10 +653,6 @@ function TicketDetailDialog({
   onGoToBooking: () => void;
 }) {
   const [preview, setPreview] = useState<{ title: string; url: string } | null>(null);
-  const ticketActivity = useMemo(
-    () => (ticket ? deriveTicketActivity(ticket, ticket.bookingRef, ticket.bookingDate) : []),
-    [ticket]
-  );
   return (
     <AnimatePresence>
       {ticket && (
@@ -675,7 +669,7 @@ function TicketDetailDialog({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 8 }}
             transition={{ type: "spring", stiffness: 320, damping: 30, mass: 0.8 }}
-            className="flex max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] ring-1 ring-slate-200/70"
+            className="flex max-h-[90vh] w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.35)] ring-1 ring-slate-200/70"
           >
           {/* Left column — ticket content (header · scroll body · footer). */}
           <div className="flex min-w-0 flex-1 flex-col">
@@ -852,11 +846,6 @@ function TicketDetailDialog({
                   scoped to this single ticket. */}
               <TicketPaymentInformation ticket={ticket} />
 
-              {/* Activity log inline on narrow screens (the side rail hides
-                  below md; this keeps the log visible everywhere). */}
-              <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70 md:hidden">
-                <ActivityLog entries={ticketActivity} />
-              </div>
             </div>
 
             {/* Footer — status-aware ticket mutations + jump back to booking. */}
@@ -888,10 +877,6 @@ function TicketDetailDialog({
             </div>
           </div>
 
-          {/* Right rail — activity / audit log, bottom-anchored (wide screens). */}
-          <div className="hidden w-[280px] shrink-0 border-l border-slate-100 md:flex">
-            <ActivityLog entries={ticketActivity} />
-          </div>
           </motion.div>
 
           <DocumentPreviewDialog doc={preview} onClose={() => setPreview(null)} />
