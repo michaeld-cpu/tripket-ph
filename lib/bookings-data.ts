@@ -47,6 +47,9 @@ export type Ticket = {
       Distinct from `id` (the system reference). Absent while unpaid — the
       UI shows a dash until it's captured on the Pending → Paid transition. */
   ticketNumber?: string;
+  /** The shipping line's own ticket number, when they issue one. Optional —
+      many operators rely on Tripket's number alone. */
+  operatorTicketNumber?: string;
   /** Optional free-text note the admin captures when assigning the ticket
       number (during approval / mark-issued). Surfaced on the ticket detail
       and the booking's passenger roster. */
@@ -126,6 +129,9 @@ export type Vehicle = {
   /** Real-world vehicle ticket number the admin assigns at approval. Absent
       until the booking is approved. */
   ticketNumber?: string;
+  /** The shipping line's own vehicle ticket number, when they issue one.
+      Optional — many operators rely on Tripket's number alone. */
+  operatorTicketNumber?: string;
 };
 
 // ─────────── Payment provider record ───────────

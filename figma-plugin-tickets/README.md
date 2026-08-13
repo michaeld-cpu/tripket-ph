@@ -1,6 +1,6 @@
 # Tripket — Build "Tickets — All states (v2)"
 
-The fifth Figma plugin in the set. It builds **44 frames** covering **both**
+The fifth Figma plugin in the set. It builds **45 frames** covering **both**
 ticket sub-pages:
 
 - `app/tickets/passengers/page.tsx` → Passenger tickets
@@ -18,7 +18,7 @@ The original `figma-plugin/` also covers both sub-pages, but:
 | Target section | writes into the imported **"Tickets- Passenger…"** section | **creates its own** "Tickets — All states (v2)" |
 | Section grid | 3 frames per row | 4, matching Routes / Vessels / Bookings |
 | Plugin id | `tripket-tickets-allstates` | `tripket-tickets-allstates-v2` |
-| Frames | 33, no per-page pager control, no Operator ticket field | 44, current |
+| Frames | 33, no per-page pager control, no Operator ticket field | 45, current |
 
 Different `id`, so both can be installed at once and the old section is never
 touched. Once you're happy with v2, `figma-plugin/` can go.
@@ -36,7 +36,9 @@ else.
 **Re-runs are additive.** The run reads the frame names already in the section
 and skips every one it finds, so re-running adds only frame names that aren't
 there yet and leaves everything else where it is. To rebuild one frame, delete
-just that frame and run again.
+just that frame and run again. New frames are appended at the **end** of the
+builder list on purpose — grid position derives from the array index, so an
+entry inserted mid-list would be dropped on a slot an existing frame occupies.
 
 ⚠️ **Delete the old `Cancel ticket` frames before re-running.** Both sub-pages
 switched to the new `TICKET_CANCEL_REASONS`, so any Cancel-ticket frame built
@@ -54,7 +56,7 @@ store. The vocabulary (`FIRST_NAMES` / `LAST_NAMES`, `TKT-####` refs, the fleet,
 the port pairs, the fare classes, the vehicle makes) is real; the specific rows
 are not. Adjust `PAX_TICKETS` / `VEHICLE_TICKETS` under the `T1.` marker.
 
-## The 44 frames
+## The 45 frames
 
 **Passenger tickets (01–10)**
 
@@ -157,6 +159,19 @@ here.
 | 05 | Edit vehicle — Dialog open | Indigo badge + `VEHICLE` tag; plate, class, make, model, year |
 | 06 | Edit vehicle — Edited, ready to save | Save live |
 | 07 | Edit vehicle — Locked, settled booking | Dashed upload zones greyed |
+| 08 | Edit passenger — Birth date picker open | The `DatePicker` calendar, opened from the Birth date trigger |
+
+`Birth date` is a `DatePicker`, not a native date input: a calendar glyph on
+the left of the trigger, and a **260px** popover — a literal `w-[260px]`, so
+unlike every rem-based width here it does *not* scale with the 17px root.
+The grid is **Monday-first** and always 42 cells, so March 1992 (the 1st fell
+on a Sunday) leads with six February days and trails with five from April.
+Tapping the title drills days → months → years, which is how a 1955 birthday
+is two clicks away instead of 850.
+
+It is not portaled — it renders inside the form's `overflow-y-auto` body and
+overlaps the fields beneath it, so a picker on a low field is clipped by that
+container rather than floating over the dialog.
 
 **Cancel passenger ticket (04–06)** — current vs proposed
 

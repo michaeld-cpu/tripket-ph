@@ -35,6 +35,7 @@ const DEFAULT_PAGE_SIZE = 10;
 type VehicleRow = {
   id: string;
   ticketNumber?: string;
+  operatorTicketNumber?: string;
   bookingRef: string;
   ticketholder: string;
   vehicleClass: string;
@@ -64,6 +65,7 @@ function flattenVehicles(bookings: Booking[]): VehicleRow[] {
     .map((b) => ({
       id: `${b.ref}-VEH`,
       ticketNumber: b.vehicle!.ticketNumber,
+      operatorTicketNumber: b.vehicle!.operatorTicketNumber,
       bookingRef: b.ref,
       ticketholder: b.ticketholder,
       vehicleClass: b.vehicle!.class,
@@ -479,7 +481,9 @@ function VehicleDetailDialog({ row, lineName, onClose, onCancel, onRefund }: {
                 {/* Issued by the shipping line when they run their own
                     numbering — absent until they hand one back. */}
                 <div className="text-[10.5px] text-slate-500">Operator ticket</div>
-                <div className="mt-0.5 font-mono font-semibold tabular-nums tracking-[0.04em] text-slate-300">—</div>
+                <div className={"mt-0.5 font-mono font-semibold tabular-nums tracking-[0.04em] " + (row.operatorTicketNumber ? "text-slate-900" : "text-slate-300")}>
+                  {row.operatorTicketNumber ?? "—"}
+                </div>
               </div>
               <div>
                 <div className="text-[10.5px] text-slate-500">Make &amp; Model</div>

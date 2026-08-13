@@ -1026,6 +1026,10 @@ const TI = {
   inbox:       { sw: 1.5,  d: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/>' },
   selectCheck: { sw: 2.5,  d: '<path d="M5 12l5 5 9-11"/>' },
   plusSmall:   { sw: 1.8,  d: '<path d="M12 5v14M5 12h14"/>' },
+  calendar:    { sw: 1.75, d: '<rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M8 3v4M16 3v4M3.5 10h17"/>' },
+  chevLeft:    { sw: 2,    d: '<path d="M15 18l-6-6 6-6"/>' },
+  chevRight:   { sw: 2,    d: '<path d="M9 18l6-6-6-6"/>' },
+  caretDown:   { sw: 2.25, d: '<path d="m6 9 6 6 6-6"/>' },
   infoCircle:  { sw: 1.75, d: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.5h.01"/>' },
   cancelSlash: { sw: 1.75, d: '<circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/>' },
   docCheck:    { sw: 1.75, d: '<path d="M20 6 9 17l-5-5"/>' },
@@ -2227,18 +2231,31 @@ function editField(parent, x, y, w, label, value, placeholder, opts) {
   text(parent, 'Field label', label, x, y,
     { size: FS.t11_5, weight: FONT.semibold, color: C.slate600 });
   const iy = y + EDIT_LABEL_H;
-  const f = frame(parent, (o.select ? 'Select - ' : 'Input - ') + label, x, iy, w, EDIT_INPUT_H, {
-    // disabled:bg-slate-50 disabled:text-slate-400 when the form is locked.
-    bg: o.locked ? C.slate50 : C.white, radius: RAD.lg,
-    stroke: o.error ? C.rose300 : C.slate200,
-  });
+  const f = frame(parent, (o.date ? 'DatePicker - ' : o.select ? 'Select - ' : 'Input - ') + label,
+    x, iy, w, EDIT_INPUT_H, {
+      // disabled:bg-slate-50 disabled:text-slate-400 when the form is locked.
+      bg: o.locked ? C.slate50 : C.white, radius: RAD.lg,
+      stroke: o.error ? C.rose300 : (o.open ? C.brand200 : C.slate200),
+    });
+  // open → border-brand-200 + ring-2 ring-brand-100
+  if (o.open) rect(f, 'Focus ring', -2, -2, w + 4, EDIT_INPUT_H + 4,
+    { bg: C.brand100, radius: RAD.lg, opacity: 0.7 });
+  let vx = SP.s3;
+  if (o.date) {
+    icon(f, 'Icon · calendar', TI.calendar, vx, (EDIT_INPUT_H - 12.75) / 2, 12.75, C.slate400);
+    vx += 12.75 + SP.s2;
+  }
   const shown = value || placeholder;
-  text(f, value ? 'Value' : 'Placeholder', shown, SP.s3, SP.s2, {
+  text(f, value ? 'Value' : 'Placeholder', shown, vx, SP.s2, {
     size: FS.t13,
     color: o.locked ? C.slate400 : (value ? C.slate800 || C.slate900 : C.slate400),
   });
-  if (o.select) icon(f, 'Icon · chevron', TI.chevDown, w - SP.s3 - 14.875,
-    (EDIT_INPUT_H - 14.875) / 2, 14.875, C.gray400);
+  if (o.select || o.date) {
+    const gW = o.date ? 12.75 : 14.875;
+    const ch = icon(f, 'Icon · chevron', TI.chevDown, w - SP.s3 - gW,
+      (EDIT_INPUT_H - gW) / 2, gW, C.gray400);
+    if (o.open) ch.rotation = 180;
+  }
   let h = EDIT_FIELD_H;
   if (o.error) {
     text(parent, 'Field error', o.error, x, y + h + SP.s1,
@@ -2308,7 +2325,7 @@ function buildEditEntityDialog(parent, opts) {
   const rows = kind === 'passenger'
     ? [
         { pair: [['First name', 'Ana', 'e.g. Ana', {}], ['Last name', 'Torres', 'e.g. Torres', {}]] },
-        { pair: [['Birth date', 'Mar 4, 1992', 'Select birth date', { select: true }],
+        { pair: [['Birth date', 'Mar 4, 1992', 'Select birth date', { date: true }],
                  ['Gender', 'Female', '', { select: true }]] },
         { pair: [['Nationality', 'Filipino', 'e.g. Filipino', {}], null] },
         { rule: 'Valid ID' },
@@ -2387,6 +2404,7 @@ function buildEditEntityDialog(parent, opts) {
   const iw = W - SP.s6 * 2;
   const colW = (iw - EDIT_GAP) / 2;
   let fy = SP.s4;
+  let datePicker = null;
   rows.forEach((r) => {
     if (r.rule) {
       editRule(body, SP.s6, fy, iw, r.rule);
@@ -2401,12 +2419,19 @@ function buildEditEntityDialog(parent, opts) {
     } else {
       r.pair.forEach((c, k) => {
         if (!c) return;
-        editField(body, SP.s6 + k * (colW + EDIT_GAP), fy, colW, c[0], c[1], c[2],
-          { select: c[3].select, locked: locked, error: errs[c[0]] });
+        const fx = SP.s6 + k * (colW + EDIT_GAP);
+        const isOpen = !!o.datePickerOpen && c[3].date;
+        editField(body, fx, fy, colW, c[0], c[1], c[2],
+          { select: c[3].select, date: c[3].date, open: isOpen,
+            locked: locked, error: errs[c[0]] });
+        // top-full mt-1.5, left-0 — drawn after the loop so it stacks over the
+        // fields it overlaps.
+        if (isOpen) datePicker = { x: fx, y: fy + EDIT_LABEL_H + EDIT_INPUT_H + SP.s1_5 };
       });
     }
     fy += rowH(r) + EDIT_GAP;
   });
+  if (datePicker) buildDatePickerPopover(body, datePicker.x, datePicker.y);
 
   /* Footer — px-6 py-4, justify-end gap-2.5. Save needs dirty && valid && !locked. */
   const canSave = !!o.dirty && !o.invalid && !locked;
@@ -2424,6 +2449,104 @@ function buildEditEntityDialog(parent, opts) {
   text(pr, 'Label', 'Save changes', SP.s4, SP.s2,
     { size: FS.t12_5, weight: FONT.semibold, color: C.white });
   return dlg;
+}
+
+/**
+ * DatePicker's popover (components/DatePicker.tsx), as the Birth date field
+ * opens it. `w-[260px]` is a literal px value, so unlike the rem-based widths
+ * everywhere else it does NOT scale with the 17px root.
+ *
+ * Monday-first, always 42 cells (6 rows) — leading and trailing days come from
+ * the neighbouring months in slate-300. The title drills up days → months →
+ * years, which is how a 1955 birthday is two clicks away rather than 850.
+ *
+ * It is NOT portaled: it renders inside the form's `overflow-y-auto` body, so
+ * a picker on a low field gets clipped by that container rather than floating
+ * over the dialog.
+ */
+const DP_W = 260;
+
+function buildDatePickerPopover(parent, x, y) {
+  const PAD = SP.s2;                                 // p-2
+  const NAV_H = 25.5 + SP.s1;                        // h-6 + mb-1
+  const WK_H = 25.5 + SP.s05;                        // h-6 + pb-0.5
+  const CELL_H = 29.75;                              // h-7
+  const CELL_GAP = SP.s05;                           // gap-0.5
+  const GRID_H = 6 * CELL_H + 5 * CELL_GAP + SP.s05;
+  const FOOT_BTN = SP.s1_5 * 2 + lh(FS.t11);
+  const FOOT_H = SP.s1 + 1 + SP.s1 + FOOT_BTN;
+  const H = PAD * 2 + NAV_H + WK_H + GRID_H + FOOT_H;
+
+  const pop = frame(parent, 'DatePicker popover', x, y, DP_W, H, {
+    bg: C.white, radius: RAD.xl, stroke: C.slate200, clip: true, shadow: MENU_SHADOW,
+  });
+
+  /* Month nav — prev · title (drills up a level) · next */
+  const navY = PAD;
+  const prev = frame(pop, 'Button - Previous month', PAD + SP.s1, navY, 25.5, 25.5, { radius: RAD.md });
+  icon(prev, 'Icon', TI.chevLeft, (25.5 - 12.75) / 2, (25.5 - 12.75) / 2, 12.75, C.slate500);
+  const next = frame(pop, 'Button - Next month', DP_W - PAD - SP.s1 - 25.5, navY, 25.5, 25.5,
+    { radius: RAD.md });
+  icon(next, 'Icon', TI.chevRight, (25.5 - 12.75) / 2, (25.5 - 12.75) / 2, 12.75, C.slate500);
+
+  const month = 'March', year = '1992';
+  const mW = measure(month + ' ', FS.t12_5, FONT.semibold, -0.2);
+  const yW = measure(year, FS.t12_5, FONT.semibold);
+  const titleH = SP.s05 * 2 + lh(FS.t12_5);
+  const titleW = SP.s1_5 * 2 + mW + yW + SP.s1 + 10.625;
+  const title = frame(pop, 'Button - Choose a wider range', (DP_W - titleW) / 2,
+    navY + (25.5 - titleH) / 2, titleW, titleH, { radius: RAD.md });
+  text(title, 'Month', month, SP.s1_5, SP.s05,
+    { size: FS.t12_5, weight: FONT.semibold, color: C.slate900, tracking: -0.2 });
+  text(title, 'Year', year, SP.s1_5 + mW, SP.s05,
+    { size: FS.t12_5, weight: FONT.semibold, color: C.slate500 });
+  icon(title, 'Icon · caret', TI.caretDown, SP.s1_5 + mW + yW + SP.s1,
+    (titleH - 10.625) / 2, 10.625, C.slate400);
+
+  /* Weekday headers — Monday-first, so the two S columns are Sat + Sun. */
+  const gx = PAD + SP.s05;
+  const gw = DP_W - PAD * 2 - SP.s05 * 2;
+  const colW = (gw - 6 * CELL_GAP) / 7;
+  const wkY = PAD + NAV_H;
+  ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach((w, i) => {
+    const c = text(pop, 'Weekday', w, gx + i * (colW + CELL_GAP), wkY,
+      { size: FS.t10, weight: FONT.semibold, color: C.slate400, tracking: 1,
+        width: colW, align: 'CENTER' });
+    c.y = wkY + (25.5 - c.height) / 2;
+  });
+
+  /* 42 day cells for March 1992 — the 1st fell on a Sunday, so six February
+     days lead the grid and five April days trail it. Mar 4 is selected. */
+  const FIRST_WEEKDAY = 6;                           // Sunday, in a Monday-first grid
+  const DAYS_IN_MONTH = 31, PREV_MONTH_DAYS = 29;    // February 1992 — a leap year
+  const SELECTED = 4;
+  const gyTop = PAD + NAV_H + WK_H;
+  for (let i = 0; i < 42; i++) {
+    const dayNo = i - FIRST_WEEKDAY + 1;
+    const inMonth = dayNo >= 1 && dayNo <= DAYS_IN_MONTH;
+    const label = inMonth ? dayNo
+      : (dayNo < 1 ? PREV_MONTH_DAYS + dayNo : dayNo - DAYS_IN_MONTH);
+    const sel = inMonth && dayNo === SELECTED;
+    const cx = gx + (i % 7) * (colW + CELL_GAP);
+    const cy = gyTop + Math.floor(i / 7) * (CELL_H + CELL_GAP);
+    const cell = frame(pop, 'Day ' + label, cx, cy, colW, CELL_H,
+      { bg: sel ? C.brand500 : undefined, radius: RAD.md });
+    const t = text(cell, 'Number', String(label), 0, 0, {
+      size: FS.t10_5, weight: sel ? FONT.semibold : FONT.regular,
+      color: sel ? C.white : (inMonth ? C.slate700 : C.slate300),
+      width: colW, align: 'CENTER',
+    });
+    t.y = (CELL_H - t.height) / 2;
+  }
+
+  /* Footer — the Today shortcut. */
+  const fy = PAD + NAV_H + WK_H + GRID_H;
+  hairline(pop, 'Border top', PAD, fy + SP.s1, DP_W - PAD * 2, C.slate100);
+  const tb = frame(pop, 'Button - Today', PAD, fy + SP.s1 + 1 + SP.s1,
+    DP_W - PAD * 2, FOOT_BTN, { radius: RAD.md });
+  text(tb, 'Label', 'Today', SP.s2, SP.s1_5,
+    { size: FS.t11, weight: FONT.medium, color: C.brand600 });
+  return pop;
 }
 
 /* ── T13. Empty states ─────────────────────────────────────────────────── */
@@ -2729,6 +2852,16 @@ const BUILDERS = [
   { name: 'Tickets / Edit entity / 07 — Edit vehicle — Locked, settled booking',
     build: (x, y, n) => { const s = buildShell(n, x, y, VEH_TITLE, VEH_NAV); vehPage(s);
       buildEditEntityDialog(s.frame, { kind: 'vehicle', locked: true }); } },
+
+  /* ── Appended last on purpose: frames are positioned by their index in this
+        array, so a new entry inserted mid-list would be placed on a slot an
+        existing frame already occupies. New frames go at the end. ─────── */
+
+  // The Birth date field is a DatePicker, not a native date input. It opens
+  // below the trigger and overlaps the fields underneath.
+  { name: 'Tickets / Edit entity / 08 — Edit passenger — Birth date picker open',
+    build: (x, y, n) => { const s = buildShell(n, x, y, PAX_TITLE, PAX_NAV); paxPage(s);
+      buildEditEntityDialog(s.frame, { kind: 'passenger', datePickerOpen: true }); } },
 
 ];
 

@@ -47,6 +47,13 @@ import EditEntityDialog, { type EditEntityInit } from "@/components/EditEntityDi
 
 const DEFAULT_PAGE_SIZE = 10;
 
+// Tripket's per-pax ticket number. Deterministic off the booking ref and the
+// passenger's position (TKT-0272-A, -B, …), so it can be shown before approval
+// rather than typed in. Falls back to whatever is already stored.
+function ticketNoFor(t: { ticketNumber?: string }, bookingRef: string, index: number): string {
+  return t.ticketNumber ?? `${bookingRef}-${String.fromCharCode(65 + index)}`;
+}
+
 function fmtDepartureDate(d: Date): string {
   // "May 18, 2026" — single-row pairing with the time inline.
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -283,10 +290,11 @@ export default function BookingsPage() {
     result: {
       bookingRefNo: string;
       vehicleTicketNo?: string;
-      tickets: Record<string, { status: "Issued"; number?: string; note?: string }>;
+      vehicleOperatorNo?: string;
+      tickets: Record<string, { status: "Issued"; number?: string; operatorNumber?: string; note?: string }>;
     }
   ) => {
-    const { bookingRefNo, vehicleTicketNo, tickets: decisions } = result;
+    const { bookingRefNo, vehicleTicketNo, vehicleOperatorNo, tickets: decisions } = result;
     updateBookings((prev) =>
       prev.map((x) => {
             if (x.ref !== ref) return x;
@@ -294,12 +302,25 @@ export default function BookingsPage() {
             const tickets = x.tickets.map((t) => {
               const d = decisions[t.id];
               if (!d) return t;
-              entries.push(makeActivity("ticket_paid", "Ticket issued", ACTOR, `Ticket no. ${d.number} · ${t.name}`));
+              entries.push(makeActivity(
+                "ticket_paid",
+                "Ticket issued",
+                ACTOR,
+                `Ticket no. ${d.number} · ${t.name}${d.operatorNumber ? ` · Operator ${d.operatorNumber}` : ""}`,
+              ));
               if (d.note) entries.push(makeActivity("note", "Note added", ACTOR, `${t.name} · ${d.note}`));
-              return { ...t, status: "Issued" as const, ticketNumber: d.number, note: d.note };
+              return {
+                ...t,
+                status: "Issued" as const,
+                ticketNumber: d.number,
+                operatorTicketNumber: d.operatorNumber,
+                // The approve dialog no longer captures notes, so keep any
+                // note already on the ticket rather than clearing it.
+                note: d.note ?? t.note,
+              };
             });
             const vehicle = x.vehicle && vehicleTicketNo
-              ? { ...x.vehicle, ticketNumber: vehicleTicketNo }
+              ? { ...x.vehicle, ticketNumber: vehicleTicketNo, operatorTicketNumber: vehicleOperatorNo }
               : x.vehicle;
             // Approving an under-review booking confirms it and settles payment.
             entries.push(makeActivity("approved", "Booking approved", ACTOR, `Booking ref. ${bookingRefNo}`));
@@ -881,7 +902,8 @@ function ApproveBookingDialog({
   onConfirm: (result: {
     bookingRefNo: string;
     vehicleTicketNo?: string;
-    tickets: Record<string, { status: "Issued"; number?: string; note?: string }>;
+    vehicleOperatorNo?: string;
+    tickets: Record<string, { status: "Issued"; number?: string; operatorNumber?: string; note?: string }>;
   }) => void;
 }) {
   // The booking is Under Review (Submitted); its tickets awaiting approval are
@@ -898,42 +920,55 @@ function ApproveBookingDialog({
   // the whole booking, one number per passenger ticket, plus a vehicle ticket
   // number when the booking carries a vehicle. Notes stay per-passenger.
   const [bookingRefNo, setBookingRefNo] = useState("");
-  const [vehicleTicketNo, setVehicleTicketNo] = useState("");
-  const [numbers, setNumbers] = useState<Record<string, string>>({});
-  const [notes, setNotes] = useState<Record<string, string>>({});
+  // Both sections start open; collapsing keeps a long manifest manageable.
+  const [paxOpen, setPaxOpen] = useState(true);
+  const [vehOpen, setVehOpen] = useState(true);
+  // The operator's own vehicle ticket number, optional — Tripket's is derived.
+  const [vehicleOperatorNo, setVehicleOperatorNo] = useState("");
+  // Operator-issued numbers, optional per ticket.
+  const [operatorNos, setOperatorNos] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!booking) return;
     // Pre-fill anything already captured.
     setBookingRefNo(booking.bookingRefNo ?? "");
-    setVehicleTicketNo(booking.vehicle?.ticketNumber ?? "");
-    setNumbers(Object.fromEntries(pending.map((t) => [t.id, t.ticketNumber ?? ""])));
-    setNotes(Object.fromEntries(pending.map((t) => [t.id, t.note ?? ""])));
+    setVehicleOperatorNo(booking.vehicle?.operatorTicketNumber ?? "");
+    setOperatorNos(Object.fromEntries(pending.map((t) => [t.id, t.operatorTicketNumber ?? ""])));
   }, [booking]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Approval needs: the booking reference, every passenger ticket number, and
   // the vehicle ticket number when the booking has a vehicle.
-  const ready =
-    bookingRefNo.trim().length > 0 &&
-    pending.length > 0 &&
-    pending.every((t) => (numbers[t.id] ?? "").trim().length > 0) &&
-    (!hasVehicle || vehicleTicketNo.trim().length > 0);
+  // Operator numbers are optional — the shipping line may not issue their own,
+  // and Tripket's number is derived, so approval only needs the booking
+  // reference (plus the vehicle ticket when there is a vehicle).
+  // Only the operator's booking reference is required: Tripket's ticket numbers
+  // are derived, and the operator's own numbers are optional.
+  // Every input here is optional — Tripket's numbers are derived and the
+  // operator's are nice-to-have — so Confirm stays enabled. The only real
+  // precondition is having tickets left to issue.
+  const ready = pending.length > 0;
   const alreadyPaid = booking ? booking.tickets.length - pending.length : 0;
 
   const commit = () => {
     if (!ready) return;
-    const tickets: Record<string, { status: "Issued"; number?: string; note?: string }> = {};
-    pending.forEach((t) => {
-      const note = (notes[t.id] ?? "").trim();
-      tickets[t.id] = { status: "Issued", number: numbers[t.id].trim(), note: note || undefined };
+    const tickets: Record<string, { status: "Issued"; number?: string; operatorNumber?: string; note?: string }> = {};
+    pending.forEach((t, i) => {
+      const operator = (operatorNos[t.id] ?? "").trim();
+      tickets[t.id] = {
+        status: "Issued",
+        number: ticketNoFor(t, booking!.ref, i),
+        operatorNumber: operator || undefined,
+      };
     });
+    const vehOperator = vehicleOperatorNo.trim();
     onConfirm({
       bookingRefNo: bookingRefNo.trim(),
-      vehicleTicketNo: hasVehicle ? vehicleTicketNo.trim() : undefined,
+      // Tripket's vehicle number is derived; this carries the operator's.
+      vehicleTicketNo: hasVehicle ? (booking!.vehicle?.ticketNumber ?? `${booking!.ref}-V01`) : undefined,
+      vehicleOperatorNo: hasVehicle && vehOperator ? vehOperator : undefined,
       tickets,
     });
   };
 
-  const ctaLabel = pending.length > 0 ? `Confirm · ${pending.length} issued` : "Confirm";
 
   return (
     <Modal open={!!booking} onClose={onClose} maxWidth="max-w-lg">
@@ -962,40 +997,29 @@ function ApproveBookingDialog({
             <>
               {/* Single booking reference for the whole booking. */}
               <div className="mb-4">
-                <label className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Booking reference #</label>
+                <label className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Operator&apos;s booking reference #</label>
                 <input
                   type="text"
                   value={bookingRefNo}
                   onChange={(e) => setBookingRefNo(e.target.value)}
-                  placeholder="e.g. BREF001"
-                  aria-label="Booking reference number"
+                  placeholder="e.g. BREF001 (optional)"
+                  aria-label="Operator's booking reference number"
                   className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
                 />
               </div>
 
-              {/* Vehicle ticket number — sits right after the booking reference,
-                  before the passenger tickets. Only when there's a vehicle. */}
-              {hasVehicle && (
-                <div className="mb-4">
-                  <label className="block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
-                    Vehicle ticket #
-                    <span className="ml-1.5 font-normal normal-case tracking-normal text-slate-400">
-                      {booking?.vehicle?.label ?? booking?.vehicle?.class}
-                    </span>
-                  </label>
-                  <input
-                    type="text"
-                    value={vehicleTicketNo}
-                    onChange={(e) => setVehicleTicketNo(e.target.value)}
-                    placeholder="e.g. VTKT001"
-                    aria-label="Vehicle ticket number"
-                    className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
-                  />
-                </div>
-              )}
-
-              <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Passenger tickets</div>
-              <ul className="space-y-2.5">
+              <button
+                type="button"
+                onClick={() => setPaxOpen((o) => !o)}
+                aria-expanded={paxOpen}
+                className="mb-2 flex w-full items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500 transition-colors hover:text-slate-700"
+              >
+                <span>Passenger tickets</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform duration-150 ${paxOpen ? "" : "rotate-180"}`}>
+                  <path d="m6 15 6-6 6 6" />
+                </svg>
+              </button>
+              <ul className={"space-y-2.5 " + (paxOpen ? "" : "hidden")}>
               {pending.map((t, i) => (
                 <li key={t.id} className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5">
                   <div className="flex items-center gap-3">
@@ -1003,31 +1027,80 @@ function ApproveBookingDialog({
                       {i + 1}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{t.name}</div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="truncate text-[13px] font-semibold tracking-tight text-slate-900">{t.name}</span>
+                        {/* Tripket's own number — deterministic off the booking
+                            ref, so it's shown rather than typed. */}
+                        <span className="shrink-0 font-mono text-[11.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-500">
+                          {ticketNoFor(t, booking!.ref, i)}
+                        </span>
+                      </div>
                       <div className="text-[11px] text-slate-400">{t.fareClass}</div>
                     </div>
                   </div>
                   <div className="mt-2 space-y-2">
                     <input
                       type="text"
-                      value={numbers[t.id] ?? ""}
-                      onChange={(e) => setNumbers((prev) => ({ ...prev, [t.id]: e.target.value }))}
-                      placeholder="Ticket number"
-                      aria-label={`Ticket number for ${t.name}`}
+                      value={operatorNos[t.id] ?? ""}
+                      onChange={(e) => setOperatorNos((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                      placeholder="Operator ticket (optional)"
+                      aria-label={`Operator ticket for ${t.name}`}
                       className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-[12.5px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
-                    />
-                    <textarea
-                      value={notes[t.id] ?? ""}
-                      onChange={(e) => setNotes((prev) => ({ ...prev, [t.id]: e.target.value }))}
-                      rows={2}
-                      placeholder="Note (optional)"
-                      aria-label={`Note for ${t.name}`}
-                      className="w-full resize-none rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[12.5px] leading-relaxed text-slate-900 placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
                     />
                   </div>
                 </li>
               ))}
               </ul>
+
+              {/* Vehicle tickets — its own section, mirroring the passenger
+                  cards. A booking carries at most one vehicle, so this is a
+                  single card rather than a list. */}
+              {hasVehicle && booking?.vehicle && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setVehOpen((o) => !o)}
+                    aria-expanded={vehOpen}
+                    className="mb-2 mt-4 flex w-full items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500 transition-colors hover:text-slate-700"
+                  >
+                    <span>Vehicle tickets</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform duration-150 ${vehOpen ? "" : "rotate-180"}`}>
+                      <path d="m6 15 6-6 6 6" />
+                    </svg>
+                  </button>
+                  <div className={"rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 " + (vehOpen ? "" : "hidden")}>
+                    <div className="flex items-center gap-3">
+                      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-slate-100 font-mono text-[11px] font-semibold tabular-nums text-slate-500">
+                        1
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-2">
+                          <span className="truncate text-[13px] font-semibold tracking-tight text-slate-900">
+                            {booking.vehicle.make} {booking.vehicle.model}
+                          </span>
+                          {/* Tripket's own number — derived off the booking ref,
+                              so it's shown rather than typed. */}
+                          <span className="shrink-0 font-mono text-[11.5px] font-semibold tabular-nums tracking-[0.04em] text-slate-500">
+                            {booking.vehicle.ticketNumber ?? `${booking.ref}-V01`}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-400">{booking.vehicle.class}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2">
+                      <input
+                        type="text"
+                        value={vehicleOperatorNo}
+                        onChange={(e) => setVehicleOperatorNo(e.target.value)}
+                        placeholder="Operator ticket (optional)"
+                        aria-label="Operator ticket for the vehicle"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-[12.5px] tabular-nums text-slate-900 placeholder:font-sans placeholder:text-slate-400 transition-[border-color,box-shadow] duration-150 ease-out hover:border-slate-300 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
             </>
           )}
           {alreadyPaid > 0 && (
@@ -1048,10 +1121,9 @@ function ApproveBookingDialog({
           <button
             type="button"
             onClick={commit}
-            disabled={!ready}
-            className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-emerald-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-emerald-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
           >
-            {ctaLabel}
+            Confirm
           </button>
         </div>
       </div>
@@ -1798,7 +1870,9 @@ function PassengerTable({
                         {/* Issued by the shipping line when they run their own
                             numbering — absent until they hand one back. */}
                         <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Operator ticket</div>
-                        <div className="mt-0.5 font-mono text-[13px] font-bold tabular-nums tracking-[0.04em] text-slate-300">—</div>
+                        <div className={"mt-0.5 font-mono text-[13px] font-bold tabular-nums tracking-[0.04em] " + (t.operatorTicketNumber ? "text-slate-900" : "text-slate-300")}>
+                          {t.operatorTicketNumber ?? "—"}
+                        </div>
                       </div>
                       <div className="col-span-2">
                         <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Valid ID</div>
@@ -1945,7 +2019,9 @@ function VehicleInformation({
               </div>
               <div className="col-span-3">
                 <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Operator ticket</div>
-                <div className="mt-0.5 font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] text-slate-300" title="Issued by the shipping line, when they use their own numbering">—</div>
+                <div className={"mt-0.5 font-mono text-[12.5px] font-bold tabular-nums tracking-[0.04em] " + (v.operatorTicketNumber ? "text-slate-900" : "text-slate-300")} title="Issued by the shipping line, when they use their own numbering">
+                  {v.operatorTicketNumber ?? "—"}
+                </div>
               </div>
               <div className="col-span-2">
                 <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Type</div>

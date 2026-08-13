@@ -835,7 +835,9 @@ function TicketDetailDialog({
                     {/* Issued by the shipping line when they run their own
                         numbering — absent until they hand one back. */}
                     <dt className="text-[10.5px] text-slate-500">Operator ticket</dt>
-                    <dd className="mt-0.5 font-mono font-semibold tabular-nums tracking-[0.04em] text-slate-300">—</dd>
+                    <dd className={"mt-0.5 font-mono font-semibold tabular-nums tracking-[0.04em] " + (ticket.operatorTicketNumber ? "text-slate-900" : "text-slate-300")}>
+                      {ticket.operatorTicketNumber ?? "—"}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-[10.5px] text-slate-500">Gender</dt>
