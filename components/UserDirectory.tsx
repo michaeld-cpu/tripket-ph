@@ -10,9 +10,11 @@ import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import { TableSkeleton } from "@/components/Skeleton";
 import UserFormModal, { type UserDraft } from "@/components/UserFormModal";
+import UserStatusDialog from "@/components/UserStatusDialog";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 import {
   buildUsers,
+  roleLabel,
   roleTone,
   userStatusTone,
   userStatusLabel,
@@ -84,6 +86,7 @@ export default function UserDirectory({
   tableHeading,
   createLabel,
   noun,
+  entityNoun = "user",
   showStatusFilter = true,
   lockLineToActive = false,
   showShippingLine = false,
@@ -97,6 +100,8 @@ export default function UserDirectory({
   createLabel: string;
   /** Plural noun for the Pagination summary, e.g. "users" / "operators". */
   noun: string;
+  /** Singular noun for dialog copy — "user" or "operator". */
+  entityNoun?: "user" | "operator";
   /** Whether to show the status filter dropdown. */
   showStatusFilter?: boolean;
   /** Lock new users to the active shipping line (line-scoped roles, e.g.
@@ -131,13 +136,20 @@ export default function UserDirectory({
     });
   };
 
+  // User queued for a status change — the confirm dialog reads it.
+  const [statusTarget, setStatusTarget] = useState<User | null>(null);
+
   const handleSubmit = (draft: UserDraft) => {
+    // The password never joins the stored User: this store is persisted to
+    // localStorage, and a credential has no business sitting there. A real
+    // backend would take it over its own channel; here it's simply dropped.
+    const { password: _password, ...fields } = draft;
     if (editUser) {
-      updateUsers((prev) => prev.map((x) => x.id === editUser.id ? { ...x, ...draft } : x));
+      updateUsers((prev) => prev.map((x) => x.id === editUser.id ? { ...x, ...fields } : x));
     } else {
       const nu: User = {
         id: `usr-${Date.now()}`,
-        ...draft,
+        ...fields,
         lastActive: new Date(),
       };
       updateUsers((prev) => [nu, ...prev]);
@@ -242,7 +254,7 @@ export default function UserDirectory({
                   options={[
                     { value: "all", label: "All status" },
                     { value: "Active", label: "Active" },
-                    { value: "Suspended", label: "Disabled" },
+                    { value: "Suspended", label: "Suspended" },
                   ]}
                 />
               )}
@@ -300,7 +312,7 @@ export default function UserDirectory({
                       {showRoleColumn && (
                         <td className="px-5 py-3.5 align-middle">
                           <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${roleTone[u.role]}`}>
-                            {u.role}
+                            {roleLabel[u.role]}
                           </span>
                         </td>
                       )}
@@ -349,12 +361,9 @@ export default function UserDirectory({
                               ),
                             },
                             {
-                              label: u.status === "Suspended" ? "Enable" : "Disable",
-                              danger: u.status !== "Suspended",
-                              onClick: () =>
-                                updateUsers((prev) =>
-                                  prev.map((x) => x.id === u.id ? { ...x, status: x.status === "Suspended" ? "Active" : "Suspended" } : x)
-                                ),
+                              label: u.status === "Suspended" ? "Reactivate" : "Suspend",
+                              tone: u.status === "Suspended" ? ("success" as const) : ("danger" as const),
+                              onClick: () => setStatusTarget(u),
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                   <circle cx="12" cy="12" r="9" />
@@ -376,10 +385,25 @@ export default function UserDirectory({
         </section>
       )}
 
+      <UserStatusDialog
+        open={!!statusTarget}
+        name={statusTarget?.name ?? ""}
+        noun={entityNoun}
+        mode={statusTarget?.status === "Suspended" ? "reactivate" : "suspend"}
+        onClose={() => setStatusTarget(null)}
+        onConfirm={() => {
+          if (!statusTarget) return;
+          const next = statusTarget.status === "Suspended" ? "Active" : "Suspended";
+          updateUsers((prev) => prev.map((x) => (x.id === statusTarget.id ? { ...x, status: next } : x)));
+          setStatusTarget(null);
+        }}
+      />
+
       <UserFormModal
         open={formOpen}
         editUser={editUser}
         defaultRole={roles[0]}
+        entityNoun={entityNoun}
         lockedLineId={lockLineToActive && !editUser ? active.id : undefined}
         onClose={() => setFormOpen(false)}
         onSubmit={handleSubmit}

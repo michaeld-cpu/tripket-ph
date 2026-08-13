@@ -9,9 +9,10 @@ export default function UsersPage() {
       roles={["Admin", "Superadmin"]}
       title="Users"
       subtitle="Admin accounts"
-      tableHeading="Users"
-      createLabel="Create admin"
+      tableHeading="Platform users"
+      createLabel="Create user"
       noun="users"
+      entityNoun="user"
       lockLineToActive
       showShippingLine
     />

@@ -8,9 +8,10 @@ export default function OperatorsPage() {
       roles={["Operator"]}
       title="Operators"
       subtitle="Operator accounts"
-      tableHeading="Operators"
+      tableHeading="Operator accounts"
       createLabel="Create operator"
       noun="operators"
+      entityNoun="operator"
       showStatusFilter={false}
       lockLineToActive
     />

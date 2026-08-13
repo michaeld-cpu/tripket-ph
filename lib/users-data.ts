@@ -22,6 +22,14 @@ export type User = {
 
 // Admin reads as the elevated role in brand orange; Operator is a quiet
 // neutral chip. Same shape so the pair looks uniform and on-brand.
+// Display label per role — keeps the stored "Superadmin" value (so filters and
+// persisted users still match) while surfacing "Super Admin" to the operator.
+export const roleLabel: Record<UserRole, string> = {
+  Superadmin: "Super Admin",
+  Admin: "Admin",
+  Operator: "Operator",
+};
+
 export const roleTone: Record<UserRole, string> = {
   Superadmin: "bg-violet-50 text-violet-700 ring-1 ring-violet-100",
   Admin:      "bg-brand-50 text-brand-700 ring-1 ring-brand-100",
@@ -33,11 +41,11 @@ export const userStatusTone: Record<UserStatus, string> = {
   Suspended: "bg-slate-100 text-slate-500",
 };
 
-// Display label — surfaces the Enable/Disable vocabulary used site-wide while
-// keeping the internal "Suspended" value (so persisted data isn't migrated).
+// Display label per status. Value and label now agree — the UI says
+// "Suspended" because that's what the record is.
 export const userStatusLabel: Record<UserStatus, string> = {
   Active:    "Active",
-  Suspended: "Disabled",
+  Suspended: "Suspended",
 };
 
 // Deterministic mock directory — a spread of roles/statuses across the lines.
