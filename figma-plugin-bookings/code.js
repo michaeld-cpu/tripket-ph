@@ -1425,18 +1425,73 @@ const MD_W = 476;                                   // max-w-md → 28rem × 17p
 const LG_W = 544;                                   // max-w-lg → 32rem × 17px
 
 /**
- * Ticket-by-ticket issuance. One booking reference for the whole booking, an
- * optional vehicle ticket number, then a card per pending passenger with its
- * own ticket number + note. The CTA stays disabled until every pending ticket
- * has a number.
+ * Rewritten: the operator no longer types Tripket's ticket numbers.
  *
- * opts: { filled, settled }
+ *   · Tripket's own number is DERIVED (`ticketNoFor` → `TKT-0017-A`, or the
+ *     ticket's existing number) and shown inline beside the passenger name.
+ *   · The only editable field per row is the OPERATOR's ticket number, and it
+ *     is optional — as is the operator's booking reference at the top.
+ *   · Passenger and Vehicle tickets are now two collapsible sections; the
+ *     vehicle number moved out of the header into its own card.
+ *   · The per-ticket Note textarea is gone.
+ *   · `ready` is just `pending.length > 0`, so the CTA — now **Confirm** — is
+ *     live as soon as there is anything to issue. Nothing has to be typed.
+ *
+ * opts: { filled, settled, single, paxCollapsed, vehCollapsed }
+ *   single — a one-passenger booking, so each section holds exactly one entry.
  */
 const APPROVE_PAX = [
-  { name: 'Camille Torres', cls: 'Business', no: 'TKT2026-0451' },
-  { name: 'Miguel Torres',  cls: 'Tourist',  no: 'TKT2026-0452' },
-  { name: 'Sofia Torres',   cls: 'Economy',  no: 'TKT2026-0453' },
+  { name: 'Camille Torres', cls: 'Business', no: 'T2026-0451', op: 'OP-88120' },
+  { name: 'Miguel Torres',  cls: 'Tourist',  no: 'T2026-0452', op: 'OP-88121' },
+  // Not yet issued, so ticketNoFor() falls back to `${ref}-C`.
+  { name: 'Sofia Torres',   cls: 'Economy',  no: 'TKT-0017-C', op: 'OP-88122' },
 ];
+
+const AP_CARD_ROW = lh(FS.t13) + lh(FS.t11);        // name line + fare class
+const AP_AVATAR = 29.75;                             // h-7 w-7
+const AP_INPUT_H = SP.s1_5 * 2 + lh(FS.t12_5);       // px-2.5 py-1.5
+const AP_CARD_H = SP.s2_5 * 2 + Math.max(AP_AVATAR, AP_CARD_ROW) + SP.s2 + AP_INPUT_H;
+const AP_SECTION_H = lh(FS.t11) + SP.s2;             // label row + mb-2
+
+/** Collapsible section header — label left, chevron right (up when open). */
+function approveSection(parent, x, y, w, label, collapsed) {
+  text(parent, 'Section label', label.toUpperCase(), x, y,
+    { size: FS.t11, weight: FONT.medium, color: C.slate500, tracking: 0.96 });
+  const ch = icon(parent, 'Icon · chevron', BI.chevDown, x + w - 12.75,
+    y + (lh(FS.t11) - 12.75) / 2, 12.75, C.slate400);
+  // The glyph is a chevron-UP; it rotates 180 once the section is collapsed.
+  if (!collapsed) ch.rotation = 180;
+  return AP_SECTION_H;
+}
+
+/** One ticket card: index chip · name + derived number · class · operator field. */
+function approveCard(parent, x, y, w, index, name, derivedNo, sub, opValue) {
+  const card = frame(parent, 'Ticket · ' + name, x, y, w, AP_CARD_H,
+    { bg: C.white, radius: RAD.xl, stroke: C.slate200 });
+  const av = frame(card, 'Index', SP.s3_5, SP.s2_5, AP_AVATAR, AP_AVATAR,
+    { bg: C.slate100, radius: RAD.full });
+  const at = text(av, 'Number', String(index), 0, 0,
+    { size: FS.t10, weight: FONT.semibold, color: C.slate500 });
+  centerIn(at, { x: 0, y: 0, w: AP_AVATAR, h: AP_AVATAR });
+
+  const tx = SP.s3_5 + AP_AVATAR + SP.s3;
+  const ty = SP.s2_5 + (Math.max(AP_AVATAR, AP_CARD_ROW) - AP_CARD_ROW) / 2;
+  const nm = text(card, 'Name', name, tx, ty,
+    { size: FS.t13, weight: FONT.semibold, color: C.slate900, tracking: -0.3 });
+  // Tripket's own number — shown, never typed.
+  text(card, 'Tripket ticket no', derivedNo, tx + nm.width + SP.s2,
+    ty + lh(FS.t13) - lh(FS.t11_5),
+    { size: FS.t11_5, weight: FONT.semibold, color: C.slate500, tracking: 0.56 });
+  text(card, 'Sub', sub, tx, ty + lh(FS.t13),
+    { size: FS.t11, color: C.slate400 });
+
+  const iy = SP.s2_5 + Math.max(AP_AVATAR, AP_CARD_ROW) + SP.s2;
+  const inp = frame(card, 'Input - Operator ticket', SP.s3_5, iy, w - SP.s3_5 * 2, AP_INPUT_H,
+    { bg: C.white, radius: RAD.lg, stroke: C.slate200 });
+  text(inp, opValue ? 'Value' : 'Placeholder', opValue || 'Operator ticket (optional)',
+    SP.s2_5, SP.s1_5, { size: FS.t12_5, color: opValue ? C.slate900 : C.slate400 });
+  return AP_CARD_H;
+}
 
 function buildApproveDialog(parent, opts) {
   const o = opts || {};
@@ -1450,19 +1505,22 @@ function buildApproveDialog(parent, opts) {
   const headH = SP.s5 + Math.max(badgeS, headBlock) + SP.s4;
   const head = frame(dlg, 'Header', 0, 0, W, headH);
   hairline(head, 'Border bottom', 0, headH - 1, W, C.slate100);
-  const badge = frame(head, 'Icon badge', SP.s6, SP.s5, badgeS, badgeS,
+  const by0 = SP.s5 + (Math.max(badgeS, headBlock) - badgeS) / 2;
+  const badge = frame(head, 'Icon badge', SP.s6, by0, badgeS, badgeS,
     { bg: C.emerald50, radius: RAD.full, stroke: C.emerald200, strokeOpacity: 0.7 });
   icon(badge, 'Icon', BI.approve, (badgeS - 17) / 2, (badgeS - 17) / 2, 17, C.emerald600);
   const tx = SP.s6 + badgeS + SP.s2_5;
-  text(head, 'Title', 'Approve booking', tx, SP.s5,
+  const ty0 = SP.s5 + (Math.max(badgeS, headBlock) - headBlock) / 2;
+  text(head, 'Title', 'Approve booking', tx, ty0,
     { size: FS.t15_5, weight: FONT.semibold, color: C.slate900, tracking: -0.3 });
   const sub = text(head, 'Subtitle', 'TKT-0017 · Enter each passenger’s ticket number to issue.',
-    tx, SP.s5 + lh(FS.t15_5), { size: FS.t11, color: C.slate500 });
+    tx, ty0 + lh(FS.t15_5), { size: FS.t11, color: C.slate500 });
   sub.setRangeFills(0, 8, fill(C.slate700));
   sub.setRangeFontName(0, 8, { family: FONT.family, style: FONT.medium });
 
   const footH = SP.s3_5 * 2 + (SP.s1_5 * 2 + lh(FS.sm));
-  const body = frame(dlg, 'Body', 0, headH, W, H - headH - footH, { clip: true });
+  const bodyH = H - headH - footH;
+  const body = frame(dlg, 'Body', 0, headH, W, bodyH, { clip: true });
   const iw = W - SP.s6 * 2;
 
   if (o.settled) {
@@ -1471,70 +1529,60 @@ function buildApproveDialog(parent, opts) {
     t.y = SP.s6 + 25.5;
   } else {
     let by = SP.s4;
-    const fieldLabelH = lh(FS.t11) + SP.s1_5;
-    const inH = SP.s2 * 2 + lh(FS.t13);
 
-    text(body, 'Field label', 'BOOKING REFERENCE #', SP.s6, by,
+    /* Operator's booking reference — optional, like every field here. */
+    text(body, 'Field label', 'OPERATOR’S BOOKING REFERENCE #', SP.s6, by,
       { size: FS.t11, weight: FONT.medium, color: C.slate500, tracking: 0.96 });
-    const brf = frame(body, 'Input - Booking reference', SP.s6, by + fieldLabelH, iw, inH,
-      { bg: C.white, radius: RAD.lg, stroke: C.slate200 });
-    text(brf, o.filled ? 'Value' : 'Placeholder', o.filled ? 'BREF2026-0089' : 'e.g. BREF001',
-      SP.s3, SP.s2, { size: FS.t13, color: o.filled ? C.slate900 : C.slate400 });
-    by += fieldLabelH + inH + SP.s4;
+    const refH = SP.s2 * 2 + lh(FS.t13);
+    const brf = frame(body, 'Input - Operator booking reference', SP.s6,
+      by + lh(FS.t11) + SP.s1_5, iw, refH, { bg: C.white, radius: RAD.lg, stroke: C.slate200 });
+    text(brf, o.filled ? 'Value' : 'Placeholder',
+      o.filled ? 'BREF2026-0089' : 'e.g. BREF001 (optional)', SP.s3, SP.s2,
+      { size: FS.t13, color: o.filled ? C.slate900 : C.slate400 });
+    by += lh(FS.t11) + SP.s1_5 + refH + SP.s4;
 
-    const vl = text(body, 'Field label', 'VEHICLE TICKET #', SP.s6, by,
-      { size: FS.t11, weight: FONT.medium, color: C.slate500, tracking: 0.96 });
-    text(body, 'Vehicle label', 'Sedan Vios', SP.s6 + vl.width + SP.s1_5, by,
-      { size: FS.t11, color: C.slate400 });
-    const vtf = frame(body, 'Input - Vehicle ticket', SP.s6, by + fieldLabelH, iw, inH,
-      { bg: C.white, radius: RAD.lg, stroke: C.slate200 });
-    text(vtf, o.filled ? 'Value' : 'Placeholder', o.filled ? 'VTKT2026-0090' : 'e.g. VTKT001',
-      SP.s3, SP.s2, { size: FS.t13, color: o.filled ? C.slate900 : C.slate400 });
-    by += fieldLabelH + inH + SP.s4;
+    /* Passenger tickets */
+    const pax = o.single ? APPROVE_PAX.slice(0, 1) : APPROVE_PAX;
+    by += approveSection(body, SP.s6, by, iw, 'Passenger tickets', o.paxCollapsed);
+    if (!o.paxCollapsed) {
+      pax.forEach((t, i) => {
+        approveCard(body, SP.s6, by, iw, i + 1, t.name, t.no, t.cls, o.filled ? t.op : null);
+        by += AP_CARD_H + SP.s2_5;
+      });
+      by -= SP.s2_5;
+    }
 
-    text(body, 'Section label', 'PASSENGER TICKETS', SP.s6, by,
-      { size: FS.t11, weight: FONT.medium, color: C.slate500, tracking: 0.96 });
-    by += lh(FS.t11) + SP.s2;
+    /* Vehicle tickets — its own section; a booking carries at most one. */
+    by += SP.s4;
+    by += approveSection(body, SP.s6, by, iw, 'Vehicle tickets', o.vehCollapsed);
+    if (!o.vehCollapsed) {
+      by += approveCard(body, SP.s6, by, iw, 1, 'Toyota Vios', 'TKT-0017-V01', 'Car / SUV',
+        o.filled ? 'OP-V4410' : null);
+    }
 
-    const avatarS = SP.s7 || 29.75;                  // h-7 w-7
-    const tinH = SP.s1_5 * 2 + lh(FS.t12_5);
-    const areaH = SP.s1_5 * 2 + lh(FS.t12_5) * 2;
-    const cardH = SP.s2_5 * 2 + (lh(FS.t13) + lh(FS.t11)) + SP.s2 + tinH + SP.s2 + areaH;
-    APPROVE_PAX.forEach((p, i) => {
-      const c = frame(body, 'Ticket · ' + p.name, SP.s6, by + i * (cardH + SP.s2_5), iw, cardH,
-        { bg: C.white, radius: RAD.xl, stroke: C.slate200 });
-      const av = frame(c, 'Index', SP.s3_5, SP.s2_5, avatarS, avatarS,
-        { bg: C.slate100, radius: RAD.full });
-      const at = text(av, 'Number', String(i + 1), 0, 0,
-        { size: FS.t10, weight: FONT.semibold, color: C.slate500 });
-      centerIn(at, { x: 0, y: 0, w: avatarS, h: avatarS });
-      const nx = SP.s3_5 + avatarS + SP.s3;
-      text(c, 'Name', p.name, nx, SP.s2_5,
-        { size: FS.t13, weight: FONT.semibold, color: C.slate900, tracking: -0.3 });
-      text(c, 'Fare class', p.cls, nx, SP.s2_5 + lh(FS.t13),
-        { size: FS.t11, color: C.slate400 });
-      const iy = SP.s2_5 + (lh(FS.t13) + lh(FS.t11)) + SP.s2;
-      const tin = frame(c, 'Input - Ticket number', SP.s3_5, iy, iw - SP.s3_5 * 2, tinH,
-        { bg: C.white, radius: RAD.lg, stroke: C.slate200 });
-      text(tin, o.filled ? 'Value' : 'Placeholder', o.filled ? p.no : 'Ticket number',
-        SP.s2_5, SP.s1_5, { size: FS.t12_5, color: o.filled ? C.slate900 : C.slate400 });
-      const ta = frame(c, 'Textarea - Note', SP.s3_5, iy + tinH + SP.s2, iw - SP.s3_5 * 2, areaH,
-        { bg: C.white, radius: RAD.lg, stroke: C.slate200 });
-      text(ta, 'Placeholder', 'Note (optional)', SP.s2_5, SP.s1_5,
-        { size: FS.t12_5, color: C.slate400 });
-    });
-    by += APPROVE_PAX.length * (cardH + SP.s2_5);
+    // alreadyPaid = tickets.length - pending.length; a one-pax booking has none,
+    // so the line doesn't render.
+    if (!o.single) {
+      text(body, 'Already settled', '1 ticket already settled — unaffected.', SP.s6, by + SP.s3,
+        { size: FS.t11_5, color: C.slate400 });
+      by += SP.s3 + lh(FS.t11_5);
+    }
+    by += SP.s4;
 
-    text(body, 'Already settled', '1 ticket already settled — unaffected.', SP.s6, by + SP.s1,
-      { size: FS.t11_5, color: C.slate400 });
+    if (by > bodyH) {
+      const trackH = bodyH * (bodyH / by);
+      rect(body, 'Scrollbar', W - 8, 2, 4, trackH - 4,
+        { bg: C.slate300, radius: RAD.full, opacity: 0.8 });
+    }
   }
 
-  /* Footer */
+  /* Footer — the primary is never disabled now; `ready` is just
+     `pending.length > 0`, and nothing has to be typed. */
   const btnH = SP.s1_5 * 2 + lh(FS.sm);
   const foot = frame(dlg, 'Footer', 0, H - footH, W, footH);
   hairline(foot, 'Border top', 0, 0, W, C.slate100);
   const by2 = (footH - btnH) / 2;
-  const label = o.settled ? 'Close booking' : 'Approve & issue';
+  const label = 'Confirm';
   const pw = SP.s3 * 2 + measure(label, FS.sm, FONT.medium);
   const cw = SP.s3 * 2 + measure('Cancel', FS.sm, FONT.medium);
   const ca = frame(foot, 'Button - Cancel', W - SP.s6 - pw - SP.s2 - cw, by2, cw, btnH,
@@ -1542,7 +1590,6 @@ function buildApproveDialog(parent, opts) {
   text(ca, 'Label', 'Cancel', SP.s3, SP.s1_5, { size: FS.sm, weight: FONT.medium, color: C.slate700 });
   const pr = frame(foot, 'Button - ' + label, W - SP.s6 - pw, by2, pw, btnH,
     { bg: C.emerald600, radius: RAD.lg });
-  if (!o.filled && !o.settled) pr.opacity = 0.6;     // disabled:opacity-60
   text(pr, 'Label', label, SP.s3, SP.s1_5, { size: FS.sm, weight: FONT.medium, color: C.white });
   return dlg;
 }
@@ -2778,6 +2825,17 @@ const BUILDERS = [
       // canEditBooking() is false once refunded — the button greys out and
       // loses its ring, so the picker can't be opened at all.
       buildBookingDetailDialog(s.frame, { status: 'Refunded' }); } },
+
+  /* ── Appended last on purpose: grid position derives from the index in this
+        array, so a new entry inserted mid-list would land on a slot an
+        existing frame already occupies. ──────────────────────────────── */
+
+  // A one-passenger booking with a vehicle: both sections open, exactly one
+  // entry in each. The clearest read of the two-section anatomy — the
+  // multi-pax frames above push the vehicle card below the fold.
+  { name: 'Bookings / Approve / 04 — One passenger + one vehicle',
+    build: (x, y, n) => { const s = buildShell(n, x, y, B_TITLE, B_NAV); bPageBehind(s);
+      buildApproveDialog(s.frame, { filled: true, single: true }); } },
 ];
 
 

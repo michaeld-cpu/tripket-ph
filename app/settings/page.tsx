@@ -730,6 +730,11 @@ function AccountTab({ line }: { line: Line }) {
   const bookingProviderOptions = Array.from(
     new Set([profile.displayName || line.name, ...BOOKING_PROVIDERS, profile.bookingProvider].filter(Boolean)),
   );
+  // Same guard for payment: a provider saved before the list changed stays
+  // selectable rather than rendering as an empty Select.
+  const paymentProviderOptions = Array.from(
+    new Set([...PAYMENT_PROVIDERS, profile.paymentProvider].filter(Boolean)),
+  );
 
   return (
     <div className="space-y-5 pb-24">
@@ -782,7 +787,7 @@ function AccountTab({ line }: { line: Line }) {
             <Select
               value={profile.paymentProvider}
               onChange={(v) => set("paymentProvider", v)}
-              options={PAYMENT_PROVIDERS.map((p) => ({ value: p, label: p }))}
+              options={paymentProviderOptions.map((p) => ({ value: p, label: p }))}
               ariaLabel="Payment provider"
               className="w-full"
             />
@@ -794,6 +799,16 @@ function AccountTab({ line }: { line: Line }) {
               options={bookingProviderOptions.map((p) => ({ value: p, label: p }))}
               ariaLabel="Booking provider"
               className="w-full"
+            />
+          </AccountField>
+          <AccountField label="Booking cutoff (minutes)">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={profile.bookingCutoffMinutes}
+              onChange={(e) => set("bookingCutoffMinutes", e.target.value.replace(/[^\d]/g, ""))}
+              placeholder="30"
+              className={inputCls}
             />
           </AccountField>
         </div>

@@ -209,6 +209,8 @@ export type AccountProfile = {
   paymentProvider: string;
   /** Who fulfils bookings for this line (self or a partner line). */
   bookingProvider: string;
+  /** Minutes before departure that bookings stop being accepted. */
+  bookingCutoffMinutes: string;
   /** Booking rules — customers must supply a phone number. */
   requireMobile: boolean;
   /** Booking rules — customers must supply an address. */
@@ -217,7 +219,7 @@ export type AccountProfile = {
   autoConfirm: boolean;
 };
 
-export const PAYMENT_PROVIDERS = ["Maayo Pay", "PayMongo", "Xendit", "Manual / Over-the-counter"];
+export const PAYMENT_PROVIDERS = ["Asbir Pay", "Beetzee Pay", "Maayo Pay"];
 export const BOOKING_PROVIDERS = ["Maayo Shipping", "Tripket Direct", "Partner Agency"];
 
 export function defaultAccount(name: string, id: string): AccountProfile {
@@ -231,6 +233,7 @@ export function defaultAccount(name: string, id: string): AccountProfile {
     scheduleDaysAhead: "30",
     paymentProvider: PAYMENT_PROVIDERS[0],
     bookingProvider: name,
+    bookingCutoffMinutes: "30",
     requireMobile: true,
     requireAddress: true,
     autoConfirm: false,

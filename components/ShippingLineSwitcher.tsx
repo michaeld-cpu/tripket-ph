@@ -187,7 +187,7 @@ export default function ShippingLineSwitcher() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         existingIds={lines.map(l => l.id)}
-        onCreate={({ line, enabled, contact }) => {
+        onCreate={({ line, enabled, contact, settings }) => {
           addCustomLine(line);
           // Seed the account profile so the logo + contact details entered here
           // show up immediately in Settings. Start from the line's defaults,
@@ -201,6 +201,14 @@ export default function ShippingLineSwitcher() {
             contactEmail: contact.contactEmail || base.contactEmail,
             contactPhone: contact.contactPhone || base.contactPhone,
             address: contact.address || base.address,
+            // Booking behaviour + rules captured at create time.
+            scheduleDaysAhead: settings.scheduleDaysAhead,
+            paymentProvider: settings.paymentProvider,
+            bookingProvider: settings.bookingProvider,
+            bookingCutoffMinutes: settings.bookingCutoffMinutes,
+            requireMobile: settings.requireMobile,
+            requireAddress: settings.requireAddress,
+            autoConfirm: settings.autoConfirm,
           });
           // Honor the create-time enable/disable choice.
           setLineStatus(line.id, enabled ? "active" : "suspended");

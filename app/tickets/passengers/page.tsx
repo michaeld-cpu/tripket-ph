@@ -133,7 +133,6 @@ export default function TicketsPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Row whose "Mark Paid" was triggered from the row menu — opens the
   // ticket-number prompt before committing the Paid status.
-  const [paidTarget, setPaidTarget] = useState<TicketRow | null>(null);
   const [editTarget, setEditTarget] = useState<TicketRow | null>(null);
 
   // Copy-to-clipboard state for ticket IDs.
@@ -521,17 +520,6 @@ export default function TicketsPage() {
                                 </svg>
                               ),
                             },
-                            // Mark Paid — terminal Cancelled/Refunded tickets stay locked.
-                            {
-                              label: "Mark Issued",
-                              disabled: r.status === "Cancelled" || r.status === "Refunded" || r.status === "Issued",
-                              onClick: () => setPaidTarget(r),
-                              icon: (
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                                  <path d="M5 12l5 5 9-11" />
-                                </svg>
-                              ),
-                            },
                             // Refund — only after the ticket has been marked To Refund.
                             {
                               label: "Refund",
@@ -595,19 +583,6 @@ export default function TicketsPage() {
         onGoToBooking={() => {
           if (!openTicket) return;
           window.location.href = `/bookings?ref=${openTicket.bookingRef}`;
-        }}
-      />
-
-      <MarkPaidDialog
-        open={!!paidTarget}
-        existingNumber={paidTarget?.ticketNumber}
-        existingNote={paidTarget?.note}
-        onClose={() => setPaidTarget(null)}
-        onConfirm={(ticketNumber, note) => {
-          if (!paidTarget) return;
-          mutateTicket(paidTarget.id, { status: "Issued", ticketNumber, note: note || undefined });
-          showToast(`Ticket ${ticketNumber} marked Issued`);
-          setPaidTarget(null);
         }}
       />
 
@@ -1033,9 +1008,7 @@ function StatusPicker({
   onChange: (patch: Partial<Ticket>) => void;
 }) {
   const [open, setOpen] = useState(false);
-  // When the admin picks "Issued", we intercept to collect the ticket number
   // before committing the status change.
-  const [askPaid, setAskPaid] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1063,8 +1036,9 @@ function StatusPicker({
     return true;
   };
 
+  // Issuing happens through booking approval, so the picker offers only the
+  // money-side transitions.
   const options: { value: TicketStatus; label: string }[] = [
-    { value: "Issued",      label: "Mark Issued" },
     { value: "Refunded",    label: "Refund" },
     { value: "Cancelled",   label: "Cancel ticket" },
   ];
@@ -1111,9 +1085,6 @@ function StatusPicker({
                     onClick={() => {
                       if (disabled) return;
                       setOpen(false);
-                      // Paid requires an admin-entered ticket number — prompt for it
-                      // instead of committing the status outright.
-                      if (o.value === "Issued") { setAskPaid(true); return; }
                       // Cancelling queues a refund rather than voiding outright —
                       // the ticket moves to "To Refund" (surfaced as "For Refund").
                       if (o.value === "Cancelled") { onChange({ status: "To Refund" }); return; }
@@ -1149,13 +1120,6 @@ function StatusPicker({
         )}
       </AnimatePresence>
 
-      <MarkPaidDialog
-        open={askPaid}
-        existingNumber={existingNumber}
-        existingNote={existingNote}
-        onClose={() => setAskPaid(false)}
-        onConfirm={(ticketNumber, note) => { onChange({ status: "Issued", ticketNumber, note: note || undefined }); setAskPaid(false); }}
-      />
     </div>
   );
 }

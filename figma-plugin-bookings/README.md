@@ -1,7 +1,7 @@
 # Tripket — Build "Bookings — All states"
 
 The fourth Figma plugin in the set, after Tickets, Routes and Vessels. It builds
-**39 frames** from `app/bookings/page.tsx` into a **brand-new section** it
+**40 frames** from `app/bookings/page.tsx` into a **brand-new section** it
 creates itself — nothing already in the file is touched.
 
 Rebuilt against the latest edits to `BookingStatusPicker` and the passenger
@@ -63,7 +63,7 @@ marker if you want the frames to match a particular store.
 | Operator ticket | — | New field, mono bold, `—` until the shipping line hands a number back |
 | Valid ID Photos | not drawn | The `RequirementRow` list is now built — 40px thumbnail, two-line label, emerald `UPLOADED` / rose `MISSING` chip |
 
-## The 39 frames
+## The 40 frames
 
 **Recent bookings (01–10)**
 
@@ -96,13 +96,35 @@ marker if you want the frames to match a particular store.
 |---|---|---|
 | 01 | Copy ref — Copied | Copy glyph swaps to an emerald check + toast |
 
-**Approve (01–03)** — `ApproveBookingDialog`
+**Approve (01–04)** — `ApproveBookingDialog`, rewritten
+
+The operator no longer types Tripket's ticket numbers:
+
+- Tripket's own number is **derived** (`ticketNoFor` → the ticket's number, or
+  `TKT-0017-A` off the booking ref) and shown inline beside the passenger name.
+- The only editable field per row is the **operator's** ticket number — and it's
+  optional, as is the operator's booking reference at the top.
+- Passenger and Vehicle tickets are now **collapsible sections**; the vehicle
+  number moved out of the header into its own card.
+- The per-ticket **Note** textarea is gone.
+- `ready` is just `pending.length > 0`, so the CTA — now **Confirm**, not
+  "Approve & issue" — is live as soon as there's anything to issue. **Nothing
+  has to be typed.**
 
 | # | Frame | State |
 |---|---|---|
-| 01 | Approve booking — Empty form | Booking ref # + vehicle ticket # + a card per pending pax; CTA at `opacity-60` |
-| 02 | Ticket numbers entered — Ready to issue | Every field filled, CTA live |
+| 01 | Approve booking — Empty form | Nothing typed, and Confirm is still live |
+| 02 | Ticket numbers entered — Ready to issue | Operator numbers filled in |
 | 03 | All tickets settled — Nothing to issue | `All tickets in this booking are already settled.` |
+| 04 | One passenger + one vehicle | Both sections open with exactly one entry each — everything fits without scrolling |
+
+Frames 01–03 use a four-pax booking, which pushes the Vehicle section below the
+fold. Frame 04 is a one-passenger booking so both sections and both entries read
+in a single view. `paxCollapsed` / `vehCollapsed` are still available on the
+builder if you want the collapsed states drawn.
+
+Frame names 01–03 are unchanged so they rebuild in place — **delete
+`Approve / 01` and `02` before re-running** to pick up the new layout.
 
 **Refund (01–03)** — `RefundConfirmDialog`
 
@@ -263,7 +285,13 @@ Several look like bugs — flagging rather than silently "fixing" them.
     enabled with both ID photos missing.** Frame Edit entity / 02 shows the back
     photo empty and Save live.
 
-19. **The two refund rows fall below the fold.** For Refund and Refunded are the
+19. **Approve can now be confirmed with nothing filled in.** `ready` is only
+    `pending.length > 0` — every field in the dialog is optional, so Confirm
+    issues every pending ticket with no operator reference captured at all. The
+    subtitle still reads *"Enter each passenger's ticket number to issue"*,
+    which no longer describes what the form asks for.
+
+20. **The two refund rows fall below the fold.** For Refund and Refunded are the
     two oldest bookings, and the default sort is booking date descending, so on
     a 900px screen they're off-screen. Row-action frames 04 and 05 apply the
     status filter to surface them — that's why those two frames look different.
