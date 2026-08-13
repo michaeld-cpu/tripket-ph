@@ -11,11 +11,14 @@ import Select from "@/components/Select";
 // for that case. The dismiss button says "Keep …" so it can't be misread as the
 // destructive action sitting next to it.
 //
-// A reason is required. The fixed options are deliberately non-overlapping —
-// weather/port, fleet, and duplicate-record each answer a different question —
-// so the same cancellation can't be logged two different ways. Anything else
-// goes under "Others", which unlocks a free-text field. The chosen reason is
-// what the caller writes into the activity log.
+// A reason is required; "Others" unlocks a free-text field. The chosen reason
+// is what the caller writes into the activity log.
+//
+// Three lists, one per surface, because the reasons genuinely differ: a whole
+// sailing is grounded for operational causes, while an individual ticket is
+// voided over the record itself.
+
+// Booking-level.
 export const CANCEL_REASONS = [
   "Bad weather / port closure",
   "No available vessel",
@@ -23,6 +26,14 @@ export const CANCEL_REASONS = [
   "Others",
 ] as const;
 export type CancelReason = (typeof CANCEL_REASONS)[number];
+
+// Per-ticket (passenger and vehicle) — a single ticket is cancelled because
+// the record is wrong, not because the trip can't sail.
+export const TICKET_CANCEL_REASONS = [
+  "Duplicate Ticket",
+  "Invalid/Missing Requirements",
+  "Others",
+] as const;
 
 // A whole route/leg can't be cancelled for a duplicate booking — that's a
 // per-booking concern — so route cancellation offers the operational reasons

@@ -29,10 +29,13 @@ import {
   paxFareBreakdown,
   canEditBooking,
   updatePassenger,
+  logTo,
+  makeActivity,
 } from "@/lib/bookings-data";
 import { loadScopedVoyages } from "@/lib/line-scope";
 import { reviveBookings, mergeSeededBookings } from "@/lib/bookings-data";
 import { loadStore, saveStore } from "@/lib/persisted-store";
+import CancelConfirmDialog, { TICKET_CANCEL_REASONS } from "@/components/CancelConfirmDialog";
 import EditEntityDialog from "@/components/EditEntityDialog";
 
 // ─────────── Flat ticket row shape ───────────
@@ -135,6 +138,8 @@ export default function TicketsPage() {
 
   // Copy-to-clipboard state for ticket IDs.
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Ticket queued for cancellation — the reason dialog reads it.
+  const [cancelTicketId, setCancelTicketId] = useState<string | null>(null);
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
   const handleCopyId = async (id: string) => {
     try {
@@ -258,6 +263,29 @@ export default function TicketsPage() {
   // Status mutations operate on the booking's ticket list so the bookings
   // page stays in sync (since both pages derive from the same in-memory
   // bookings array — and from `tripket.voyages` on next reload).
+  // Cancelling a ticket queues its fare for return and records why — the
+  // reason lands on the parent booking's activity trail, so it shows up
+  // wherever that booking is opened.
+  const cancelTicket = (ticketId: string, reason: string) => {
+    setBookings((prev) => {
+      if (!prev) return prev;
+      const next = prev.map((b) => {
+        if (!b.tickets.some((t) => t.id === ticketId)) return b;
+        const patched = {
+          ...b,
+          tickets: b.tickets.map((t) => (t.id === ticketId ? { ...t, status: "To Refund" as const } : t)),
+        };
+        return logTo(
+          patched,
+          makeActivity("to_refund", "Ticket cancelled — marked for refund", "Someone", `${ticketId} · Reason: ${reason}`),
+        );
+      });
+      saveStore("bookings", active.id, next);
+      return next;
+    });
+    showToast(`Ticket ${ticketId} cancelled — marked For Refund`);
+  };
+
   const mutateTicket = (ticketId: string, patch: Partial<Ticket>) => {
     setBookings((prev) => {
       if (!prev) return prev;
@@ -523,7 +551,7 @@ export default function TicketsPage() {
                               label: "Cancel ticket",
                               danger: true,
                               disabled: r.status === "To Refund" || r.status === "Refunded",
-                              onClick: () => { mutateTicket(r.id, { status: "To Refund" }); showToast(`Ticket ${r.id} cancelled — marked For Refund`); },
+                              onClick: () => setCancelTicketId(r.id),
                               icon: (
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                                   <circle cx="12" cy="12" r="9" />
@@ -559,6 +587,9 @@ export default function TicketsPage() {
         onCopyId={handleCopyId}
         onMutate={(patch: Partial<Ticket>) => {
           if (!openTicket) return;
+          // Cancelling has to capture a reason, so it routes through the
+          // confirm dialog rather than committing the patch outright.
+          if (patch.status === "To Refund") { setOpenTicketId(null); setCancelTicketId(openTicket.id); return; }
           mutateTicket(openTicket.id, patch);
         }}
         onGoToBooking={() => {
@@ -577,6 +608,18 @@ export default function TicketsPage() {
           mutateTicket(paidTarget.id, { status: "Issued", ticketNumber, note: note || undefined });
           showToast(`Ticket ${ticketNumber} marked Issued`);
           setPaidTarget(null);
+        }}
+      />
+
+      <CancelConfirmDialog
+        targetRef={cancelTicketId}
+        noun="ticket"
+        reasons={TICKET_CANCEL_REASONS}
+        onClose={() => setCancelTicketId(null)}
+        onConfirm={(reason) => {
+          if (!cancelTicketId) return;
+          cancelTicket(cancelTicketId, reason);
+          setCancelTicketId(null);
         }}
       />
 

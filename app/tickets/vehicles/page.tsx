@@ -26,7 +26,7 @@ import {
 import { loadScopedVoyages } from "@/lib/line-scope";
 import { loadStore, saveStore } from "@/lib/persisted-store";
 import EditEntityDialog from "@/components/EditEntityDialog";
-import CancelConfirmDialog from "@/components/CancelConfirmDialog";
+import CancelConfirmDialog, { TICKET_CANCEL_REASONS } from "@/components/CancelConfirmDialog";
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -363,6 +363,7 @@ export default function VehicleTicketsPage() {
       <CancelConfirmDialog
         targetRef={cancelRef}
         noun="ticket"
+        reasons={TICKET_CANCEL_REASONS}
         onClose={() => setCancelRef(null)}
         onConfirm={(reason) => {
           if (!cancelRef) return;
