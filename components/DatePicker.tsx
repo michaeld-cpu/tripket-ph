@@ -49,6 +49,24 @@ export type DatePickerProps = {
 };
 
 const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
+const MONTH_LABELS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+// First year of the 12-year page containing `y`, so paging is stable: the same
+// year always lands on the same page rather than shifting with the view.
+function decadeStart(y: number): number {
+  return Math.floor(y / 12) * 12;
+}
+
+// One arrow click moves by whatever the current view shows: a month, a year,
+// or a full page of years.
+function step(m: Date, view: "days" | "months" | "years", dir: 1 | -1): Date {
+  if (view === "days") return addMonths(m, dir);
+  if (view === "months") return new Date(m.getFullYear() + dir, m.getMonth(), 1);
+  return new Date(m.getFullYear() + dir * 12, m.getMonth(), 1);
+}
 
 export default function DatePicker({
   value,
@@ -101,6 +119,8 @@ export default function DatePicker({
     return () => window.cancelAnimationFrame(id);
   }, [open]);
 
+  useEffect(() => { if (open) setView("days"); }, [open]);
+
   const selected = parseISO(value);
   const minDate = parseISO(min ?? "");
   const maxDate = parseISO(max ?? "");
@@ -111,6 +131,10 @@ export default function DatePicker({
     : placeholder;
 
   const cells = useMemo(() => buildMonthCells(viewMonth), [viewMonth]);
+
+  // Drill-down level, mirroring how a native picker narrows: tap the title to
+  // widen (days → months → years), tap a cell to narrow back down.
+  const [view, setView] = useState<"days" | "months" | "years">("days");
 
   const isDisabled = (d: Date) =>
     (minDate ? d < minDate : false) || (maxDate ? d > maxDate : false);
@@ -166,22 +190,44 @@ export default function DatePicker({
           <div className="mb-1 flex items-center justify-between gap-1 px-1">
             <button
               type="button"
-              aria-label="Previous month"
-              onClick={() => setViewMonth((m) => addMonths(m, -1))}
+              aria-label={view === "years" ? "Previous years" : view === "months" ? "Previous year" : "Previous month"}
+              onClick={() => setViewMonth((m) => step(m, view, -1))}
               className="grid h-6 w-6 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
                 <path d="M15 18l-6-6 6-6" />
               </svg>
             </button>
-            <div className="text-[12.5px] font-semibold tracking-tight text-slate-900">
-              {viewMonth.toLocaleDateString("en-US", { month: "long" })}{" "}
-              <span className="tabular-nums text-slate-500">{viewMonth.getFullYear()}</span>
-            </div>
+
+            {/* Title drills up a level — the whole point of the rebuild: a
+                1955 birthday is two clicks away, not 850. */}
             <button
               type="button"
-              aria-label="Next month"
-              onClick={() => setViewMonth((m) => addMonths(m, 1))}
+              onClick={() => setView((v) => (v === "days" ? "months" : v === "months" ? "years" : "days"))}
+              aria-label={view === "years" ? "Back to days" : "Choose a wider range"}
+              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12.5px] font-semibold tracking-tight text-slate-900 transition-colors hover:bg-slate-100"
+            >
+              {view === "days" && (
+                <>
+                  {MONTH_LABELS[viewMonth.getMonth()]}{" "}
+                  <span className="tabular-nums text-slate-500">{viewMonth.getFullYear()}</span>
+                </>
+              )}
+              {view === "months" && <span className="tabular-nums">{viewMonth.getFullYear()}</span>}
+              {view === "years" && (
+                <span className="tabular-nums">
+                  {decadeStart(viewMonth.getFullYear())}–{decadeStart(viewMonth.getFullYear()) + 11}
+                </span>
+              )}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5 text-slate-400">
+                <path d="m6 15 6-6 6 6" />
+              </svg>
+            </button>
+
+            <button
+              type="button"
+              aria-label={view === "years" ? "Next years" : view === "months" ? "Next year" : "Next month"}
+              onClick={() => setViewMonth((m) => step(m, view, 1))}
               className="grid h-6 w-6 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
@@ -190,6 +236,76 @@ export default function DatePicker({
             </button>
           </div>
 
+          {/* Year grid — 12 at a time, paged by the arrows. */}
+          {view === "years" && (
+            <div className="grid grid-cols-3 gap-1 px-0.5 pb-0.5">
+              {Array.from({ length: 12 }, (_, i) => decadeStart(viewMonth.getFullYear()) + i).map((y) => {
+                const outOfRange =
+                  (minDate ? y < minDate.getFullYear() : false) ||
+                  (maxDate ? y > maxDate.getFullYear() : false);
+                const isCurrent = y === viewMonth.getFullYear();
+                return (
+                  <button
+                    key={y}
+                    type="button"
+                    disabled={outOfRange}
+                    onClick={() => {
+                      setViewMonth((m) => new Date(y, m.getMonth(), 1));
+                      setView("months");
+                    }}
+                    className={
+                      "grid h-8 place-items-center rounded-md text-[12px] tabular-nums transition-colors duration-100 " +
+                      (outOfRange
+                        ? "cursor-not-allowed text-slate-200"
+                        : isCurrent
+                          ? "bg-brand-500 font-semibold text-white"
+                          : "text-slate-700 hover:bg-slate-100")
+                    }
+                  >
+                    {y}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Month grid for the viewed year. */}
+          {view === "months" && (
+            <div className="grid grid-cols-3 gap-1 px-0.5 pb-0.5">
+              {MONTH_LABELS.map((label, i) => {
+                const first = new Date(viewMonth.getFullYear(), i, 1);
+                const last = new Date(viewMonth.getFullYear(), i + 1, 0);
+                // Out of range only when the whole month falls outside it.
+                const outOfRange =
+                  (minDate ? last < minDate : false) || (maxDate ? first > maxDate : false);
+                const isCurrent = i === viewMonth.getMonth();
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    disabled={outOfRange}
+                    onClick={() => {
+                      setViewMonth((m) => new Date(m.getFullYear(), i, 1));
+                      setView("days");
+                    }}
+                    className={
+                      "grid h-8 place-items-center rounded-md text-[12px] transition-colors duration-100 " +
+                      (outOfRange
+                        ? "cursor-not-allowed text-slate-200"
+                        : isCurrent
+                          ? "bg-brand-500 font-semibold text-white"
+                          : "text-slate-700 hover:bg-slate-100")
+                    }
+                  >
+                    {label.slice(0, 3)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {view === "days" && (
+          <>
           {/* Weekday headers */}
           <div className="grid grid-cols-7 gap-0.5 px-0.5 pb-0.5">
             {WEEKDAY_LABELS.map((w, i) => (
@@ -234,6 +350,9 @@ export default function DatePicker({
               );
             })}
           </div>
+
+          </>
+          )}
 
           {/* Footer — Today shortcut */}
           <div className="mt-1 border-t border-slate-100 pt-1">

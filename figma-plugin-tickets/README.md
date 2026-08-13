@@ -1,6 +1,6 @@
 # Tripket — Build "Tickets — All states (v2)"
 
-The fifth Figma plugin in the set. It builds **43 frames** covering **both**
+The fifth Figma plugin in the set. It builds **44 frames** covering **both**
 ticket sub-pages:
 
 - `app/tickets/passengers/page.tsx` → Passenger tickets
@@ -18,7 +18,7 @@ The original `figma-plugin/` also covers both sub-pages, but:
 | Target section | writes into the imported **"Tickets- Passenger…"** section | **creates its own** "Tickets — All states (v2)" |
 | Section grid | 3 frames per row | 4, matching Routes / Vessels / Bookings |
 | Plugin id | `tripket-tickets-allstates` | `tripket-tickets-allstates-v2` |
-| Frames | 33, no per-page pager control, no Operator ticket field | 43, current |
+| Frames | 33, no per-page pager control, no Operator ticket field | 44, current |
 
 Different `id`, so both can be installed at once and the old section is never
 touched. Once you're happy with v2, `figma-plugin/` can go.
@@ -34,10 +34,16 @@ Drops a new **"Tickets — All states (v2)"** section 400px clear of everything
 else.
 
 **Re-runs are additive.** The run reads the frame names already in the section
-and skips every one it finds, so re-running after this update adds only the ten
-new **Edit entity** and **Cancel passenger ticket** frames and leaves the other
-33 exactly where they are — it reports `Added 10 frames · kept 33 existing`.
-To rebuild one frame, delete just that frame and run again.
+and skips every one it finds, so re-running adds only frame names that aren't
+there yet and leaves everything else where it is. To rebuild one frame, delete
+just that frame and run again.
+
+⚠️ **Delete the old `Cancel ticket` frames before re-running.** Both sub-pages
+switched to the new `TICKET_CANCEL_REASONS`, so any Cancel-ticket frame built
+before that shows the wrong reason list. The group was renamed (`01 — Vehicle
+ticket — …` etc.), so the new frames will be added regardless — but the stale
+ones will sit alongside them until you remove them. Everything outside that
+group is unaffected.
 
 ## About the seed data
 
@@ -48,7 +54,7 @@ store. The vocabulary (`FIRST_NAMES` / `LAST_NAMES`, `TKT-####` refs, the fleet,
 the port pairs, the fare classes, the vehicle makes) is real; the specific rows
 are not. Adjust `PAX_TICKETS` / `VEHICLE_TICKETS` under the `T1.` marker.
 
-## The 43 frames
+## The 44 frames
 
 **Passenger tickets (01–10)**
 
@@ -115,13 +121,26 @@ are not. Adjust `PAX_TICKETS` / `VEHICLE_TICKETS` under the `T1.` marker.
 | 01 | Confirmed — Dialog open | Route card · Vehicle grid · Valid ID Photos (OR / CR / Vehicle photo) |
 | 02 | Update status — Menu open | **Two** options only — no "Mark Issued" here |
 
-**Cancel ticket (01–03)** — the shared `CancelConfirmDialog` with `noun="ticket"`
+**Cancel ticket (01–07)** — the shared `CancelConfirmDialog`, `noun="ticket"`
+
+Both sub-pages now route Cancel through it with the new
+**`TICKET_CANCEL_REASONS`** — `Duplicate Ticket` · `Invalid/Missing
+Requirements` · `Others`. That's a third reason set on the component, alongside
+the booking-level `CANCEL_REASONS` and the route-level `ROUTE_CANCEL_REASONS`;
+none of the weather/vessel reasons appear here.
+
+The target differs by page: on vehicles it's the **booking ref** (a booking
+carries at most one vehicle), on passengers it's the **ticket id**.
 
 | # | Frame | State |
 |---|---|---|
-| 01 | Reason required | Placeholder; **Keep ticket** / **Cancel ticket** |
-| 02 | Choose reason — Menu open | All four reasons (the booking-level set) |
-| 03 | Reason selected — Ready to cancel | `Bad weather / port closure` |
+| 01 | Vehicle ticket — Reason required | Placeholder; **Keep ticket** / **Cancel ticket** |
+| 02 | Vehicle ticket — Reason menu open | The three ticket reasons |
+| 03 | Vehicle ticket — Reason selected | `Invalid/Missing Requirements` |
+| 04 | Passenger ticket — Reason required | Target is `TKT-0017-A`, the ticket id |
+| 05 | Passenger ticket — Reason menu open | Same three reasons |
+| 06 | Passenger ticket — Reason selected | `Duplicate Ticket` |
+| 07 | Passenger ticket — Cancelled toast | Row flips to **For Refund** + the toast |
 
 **Edit entity (01–07)** — `components/EditEntityDialog.tsx`, `max-w-lg`
 
@@ -206,18 +225,18 @@ Several look like bugs — flagging rather than silently "fixing" them.
    `To Refund` too. The dialog says "Cancel ticket ‘REF’?" and gives no hint
    that the passengers go with it.
 
-6. **Refunding a passenger ticket has no confirmation.** The row menu's
-   `Refund` calls `mutateTicket(..., { status: "Refunded" })` inline and toasts.
-   Money leaving the platform is gated behind a remarks dialog on the Bookings
-   page but is one click here. Same for `Cancel ticket` on the passenger page —
-   it mutates immediately, while the *vehicle* page routes through
-   `CancelConfirmDialog` and captures a reason.
+6. **Cancel is now consistent across both sub-pages — refund still isn't.**
+   The passenger page was mutating inline; it now routes through
+   `CancelConfirmDialog` and writes the reason into the activity entry, matching
+   vehicles. But the row menu's **`Refund`** still calls
+   `mutateTicket(..., { status: "Refunded" })` inline and toasts. Money leaving
+   the platform is gated behind a remarks dialog on the Bookings page and is
+   one unconfirmed click here.
 
-7. **So the same action is gated differently on the two sub-pages.** Cancel on
-   passengers: instant, no reason captured. Cancel on vehicles: reason dialog.
-   Both write to the same activity trail — so the log ends up with some
-   cancellations carrying a reason and some not, depending only on which page
-   the admin happened to be on. Frames Cancel ticket 04–06 show both.
+7. **The detail dialog's status picker hands off to the same dialog.** Picking
+   "Cancel ticket" no longer mutates — it closes the dialog and opens the reason
+   prompt (`patch.status === "To Refund"` → `setCancelTicketId`). Worth knowing
+   the picker's Cancel row and the table's Cancel row now share one path.
 
 8. **`Mark Issued` is reachable on a `To Refund` ticket.** The guard is
    `status === "Cancelled" || "Refunded" || "Issued"` — `To Refund` isn't in it,

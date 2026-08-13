@@ -1085,10 +1085,13 @@ const PAX_FILTER_FIELDS = [
   { label: 'Booking date',   kind: 'dateRange', value: 'Jul 14 – Aug 13, 2026' },
 ];
 
+// TICKET_CANCEL_REASONS — the ticket-level set, added to
+// components/CancelConfirmDialog.tsx alongside the booking and route sets.
+// Both sub-pages pass it, so passenger and vehicle cancellations now offer the
+// same three reasons — and none of the booking or route ones.
 const CANCEL_REASONS = [
-  'Bad weather / port closure',
-  'No available vessel',
-  'Duplicate booking',
+  'Duplicate Ticket',
+  'Invalid/Missing Requirements',
   'Others',
 ];
 
@@ -2651,17 +2654,44 @@ const BUILDERS = [
 
   /* ── Cancel ticket ─────────────────────────────────────────────────── */
 
-  { name: 'Tickets / Cancel ticket / 01 — Reason required',
-    build: (x, y, n) => { const s = buildShell(n, x, y, VEH_TITLE, VEH_NAV); vehPage(s);
-      buildCancelTicketDialog(s.frame, {}); } },
+  // Both sub-pages now route Cancel through the shared CancelConfirmDialog with
+  // noun="ticket" and TICKET_CANCEL_REASONS. On vehicles the target is the
+  // BOOKING ref (one vehicle per booking); on passengers it is the ticket id.
 
-  { name: 'Tickets / Cancel ticket / 02 — Choose reason — Menu open',
+  { name: 'Tickets / Cancel ticket / 01 — Vehicle ticket — Reason required',
     build: (x, y, n) => { const s = buildShell(n, x, y, VEH_TITLE, VEH_NAV); vehPage(s);
-      buildCancelTicketDialog(s.frame, { menuOpen: true }); } },
+      buildCancelTicketDialog(s.frame, { subject: 'TKT-0002' }); } },
 
-  { name: 'Tickets / Cancel ticket / 03 — Reason selected — Ready to cancel',
+  { name: 'Tickets / Cancel ticket / 02 — Vehicle ticket — Reason menu open',
     build: (x, y, n) => { const s = buildShell(n, x, y, VEH_TITLE, VEH_NAV); vehPage(s);
-      buildCancelTicketDialog(s.frame, { reason: 'Bad weather / port closure' }); } },
+      buildCancelTicketDialog(s.frame, { subject: 'TKT-0002', menuOpen: true }); } },
+
+  { name: 'Tickets / Cancel ticket / 03 — Vehicle ticket — Reason selected',
+    build: (x, y, n) => { const s = buildShell(n, x, y, VEH_TITLE, VEH_NAV); vehPage(s);
+      buildCancelTicketDialog(s.frame, { subject: 'TKT-0002',
+        reason: 'Invalid/Missing Requirements' }); } },
+
+  // The passenger side, newly wired. Reached from the row menu AND from the
+  // detail dialog's status picker, which now hands off here instead of
+  // mutating inline.
+  { name: 'Tickets / Cancel ticket / 04 — Passenger ticket — Reason required',
+    build: (x, y, n) => { const s = buildShell(n, x, y, PAX_TITLE, PAX_NAV); paxPage(s);
+      buildCancelTicketDialog(s.frame, { subject: 'TKT-0017-A' }); } },
+
+  { name: 'Tickets / Cancel ticket / 05 — Passenger ticket — Reason menu open',
+    build: (x, y, n) => { const s = buildShell(n, x, y, PAX_TITLE, PAX_NAV); paxPage(s);
+      buildCancelTicketDialog(s.frame, { subject: 'TKT-0017-A', menuOpen: true }); } },
+
+  { name: 'Tickets / Cancel ticket / 06 — Passenger ticket — Reason selected',
+    build: (x, y, n) => { const s = buildShell(n, x, y, PAX_TITLE, PAX_NAV); paxPage(s);
+      buildCancelTicketDialog(s.frame, { subject: 'TKT-0017-A',
+        reason: 'Duplicate Ticket' }); } },
+
+  { name: 'Tickets / Cancel ticket / 07 — Passenger ticket — Cancelled toast',
+    build: (x, y, n) => { const s = buildShell(n, x, y, PAX_TITLE, PAX_NAV);
+      paxPage(s, { rows: PAX_TICKETS.map(function (t, i) {
+        return i === 0 ? Object.assign({}, t, { st: 'ToRefund' }) : t; }) });
+      buildToast(s.frame, 'Ticket TKT-0017-A cancelled — marked For Refund'); } },
 
   /* ── Added after the first build. The run is additive, so re-running keeps
         every frame above exactly as it is. ────────────────────────────── */
@@ -2700,27 +2730,6 @@ const BUILDERS = [
     build: (x, y, n) => { const s = buildShell(n, x, y, VEH_TITLE, VEH_NAV); vehPage(s);
       buildEditEntityDialog(s.frame, { kind: 'vehicle', locked: true }); } },
 
-  /* ── Cancel passenger ticket ───────────────────────────────────────── */
-
-  // Frame 04 is what the page does TODAY: the row item mutates straight to
-  // "To Refund" and toasts — no dialog, no reason captured. Frames 05-06 are
-  // the proposed parity with the vehicle sub-page, using the same
-  // CancelConfirmDialog with noun="ticket". See the README.
-  { name: 'Tickets / Cancel ticket / 04 — Passenger ticket — Today, no dialog',
-    build: (x, y, n) => { const s = buildShell(n, x, y, PAX_TITLE, PAX_NAV);
-      paxPage(s, { menuRowIndex: 0 });
-      const a = ticketMenuAnchor(s, 0);
-      buildTicketMenu(s.frame, a.x, a.y, paxMenuItems('Issued', true));
-      buildToast(s.frame, 'Ticket TKT-0017-A cancelled — marked For Refund'); } },
-
-  { name: 'Tickets / Cancel ticket / 05 — Passenger ticket — Reason required (proposed)',
-    build: (x, y, n) => { const s = buildShell(n, x, y, PAX_TITLE, PAX_NAV); paxPage(s);
-      buildCancelTicketDialog(s.frame, { subject: 'TKT-0017-A' }); } },
-
-  { name: 'Tickets / Cancel ticket / 06 — Passenger ticket — Reason selected (proposed)',
-    build: (x, y, n) => { const s = buildShell(n, x, y, PAX_TITLE, PAX_NAV); paxPage(s);
-      buildCancelTicketDialog(s.frame, { subject: 'TKT-0017-A',
-        reason: 'Duplicate booking' }); } },
 ];
 
 
