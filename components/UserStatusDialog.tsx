@@ -43,11 +43,12 @@ export default function UserStatusDialog({
             {suspending ? (
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
                 <circle cx="12" cy="12" r="9" />
-                <path d="M5.6 5.6l12.8 12.8" />
+                <path d="M9 9l6 6M15 9l-6 6" />
               </svg>
             ) : (
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-                <path d="M20 6 9 17l-5-5" />
+                <circle cx="12" cy="12" r="9" />
+                <path d="M8.5 12.5l2.5 2.5 4.5-5" />
               </svg>
             )}
           </span>

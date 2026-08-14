@@ -1,0 +1,9 @@
+{
+  "name": "Tripket — Build Activity Logs Section",
+  "id": "tripket-activity-logs-allstates",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": { "allowedDomains": ["none"] }
+}

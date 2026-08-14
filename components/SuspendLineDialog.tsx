@@ -34,24 +34,25 @@ export default function SuspendLineDialog({ open, line, name, onClose, onConfirm
   return (
     <Modal open={open} onClose={() => !submitting && onClose()} maxWidth="max-w-md">  
       <div className="px-6 pb-5 pt-6">
-        <div className="flex items-start gap-4">
+        <div className="flex items-start gap-3">
           <span
             aria-hidden
             className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-rose-50 text-rose-600 ring-1 ring-rose-200/70"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
               <circle cx="12" cy="12" r="9" />
-              <path d="M9 9h2v6H9zM13 9h2v6h-2z" />
+              <path d="M9 9l6 6M15 9l-6 6" />
             </svg>
           </span>
           <div className="min-w-0 flex-1">
-            <h2 className="text-[15.5px] font-semibold tracking-tight text-slate-900">
+            <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">
               Disable this shipping line?
             </h2>
-            <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
-              <span className="font-medium text-slate-900">{expected || "—"}</span>{" "}
-              will stop accepting new bookings and its future schedules will be hidden. Existing
-              bookings are honored and nothing is deleted — you can enable it again at any time.
+            <p className="mt-1 text-[12.5px] leading-relaxed text-slate-500">
+              <span className="font-semibold text-slate-700">{expected || "—"}</span>{" "}
+              will stop accepting new bookings and its future schedules will be{" "}
+              <span className="font-semibold text-rose-600">hidden</span>. Existing bookings are
+              honored and nothing is deleted — you can enable it again at any time.
             </p>
           </div>
         </div>
@@ -73,12 +74,12 @@ export default function SuspendLineDialog({ open, line, name, onClose, onConfirm
         </div>
       </div>
 
-      <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-3.5">
+      <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 px-6 py-3.5">
         <button
           type="button"
           onClick={onClose}
           disabled={submitting}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-[background-color,transform] duration-150 ease-out hover:bg-slate-50 active:scale-[0.97] disabled:opacity-60"
+          className="rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-slate-600 ring-1 ring-slate-200 transition-colors hover:bg-slate-50 disabled:opacity-60"
         >
           Cancel
         </button>
@@ -86,7 +87,7 @@ export default function SuspendLineDialog({ open, line, name, onClose, onConfirm
           type="button"
           onClick={handleConfirm}
           disabled={!matches || submitting}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white transition-[background-color,transform,box-shadow] duration-150 ease-out hover:bg-rose-700 hover:shadow-[0_6px_16px_-6px_rgba(244,63,94,0.55)] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-none disabled:active:scale-100"
+          className="rounded-lg bg-rose-600 px-4 py-2 text-[12.5px] font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? "Disabling…" : "Disable line"}
         </button>
