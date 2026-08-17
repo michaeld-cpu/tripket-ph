@@ -3,7 +3,8 @@
 // localStorage keyed by line id so each operator keeps its own setup.
 // (Per the product decision: Configurations + Booking policy are one screen.)
 
-import type { VehicleClass, PassengerType, AddOn } from "@/lib/dashboard-data";
+import type { VehicleClass, PassengerType, AddOn, AccommodationClass } from "@/lib/dashboard-data";
+export type { AccommodationClass };
 export type { VehicleClass, PassengerType, AddOn };
 
 export type RequirementKey =
@@ -108,6 +109,9 @@ export type LineCatalog = {
   vehicleClasses: VehicleClass[];
   passengerTypes: PassengerType[];
   addOns: AddOn[];
+  /** Seating tiers offered line-wide. Vessels toggle availability but can't
+      override the catalog's capacity or fare. */
+  accommodations: AccommodationClass[];
 };
 
 export const DEFAULT_VEHICLE_CLASSES: VehicleClass[] = [
@@ -126,6 +130,22 @@ export const DEFAULT_PASSENGER_TYPES: PassengerType[] = [
   { key: "infant",  label: "Infant",                       discountPct: 100, requiredDoc: "Birth certificate or PSA copy", isInfant: true },
 ];
 
+// Fixed class vocabularies. Each catalog row picks one, so a line's own naming
+// ("Sakay Regular") still maps onto a category the rest of the system knows.
+export const PASSENGER_CLASS_OPTIONS = [
+  "Regular", "Student", "Senior Citizen", "PWD", "Child", "Infant", "Free",
+] as const;
+
+export const VEHICLE_CLASS_OPTIONS = [
+  "Motor", "Car", "SUV", "Van", "6-Wheeler", "10-Wheeler",
+] as const;
+
+export const DEFAULT_ACCOMMODATIONS: AccommodationClass[] = [
+  { key: "economy",  label: "Economy",  descriptor: "Open-air / standard seating", enabled: true, capacity: 200, fare: 500 },
+  { key: "tourist",  label: "Tourist",  descriptor: "Air-conditioned cabin",       enabled: true, capacity: 80,  fare: 900 },
+  { key: "business", label: "Business", descriptor: "Reclining / premium cabin",   enabled: true, capacity: 40,  fare: 1500 },
+];
+
 export const DEFAULT_ADD_ONS: AddOn[] = [
   { key: "extraBag",      label: "Extra Cabin Bag",      descriptor: "Beyond included carry-on",       defaultPrice: 150, enabled: true },
   { key: "mealPack",      label: "Onboard Meal Pack",    descriptor: "Hot meal + drink mid-voyage",    defaultPrice: 250, enabled: true },
@@ -138,6 +158,7 @@ export function defaultCatalog(): LineCatalog {
     vehicleClasses: DEFAULT_VEHICLE_CLASSES.map((c) => ({ ...c })),
     passengerTypes: DEFAULT_PASSENGER_TYPES.map((p) => ({ ...p })),
     addOns: DEFAULT_ADD_ONS.map((a) => ({ ...a })),
+    accommodations: DEFAULT_ACCOMMODATIONS.map((a) => ({ ...a })),
   };
 }
 
@@ -296,6 +317,8 @@ export function loadSettings(lineId: string): LineSettings {
             vehicleClasses: mergeCatalogRows(parsed.catalog.vehicleClasses, base.catalog.vehicleClasses),
             passengerTypes: parsed.catalog.passengerTypes ?? base.catalog.passengerTypes,
             addOns: mergeCatalogRows(parsed.catalog.addOns, base.catalog.addOns),
+            // Absent on catalogs saved before accommodations existed.
+            accommodations: parsed.catalog.accommodations ?? base.catalog.accommodations,
           }
         : base.catalog,
     };

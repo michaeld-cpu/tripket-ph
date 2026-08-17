@@ -56,6 +56,9 @@ export type VehicleClass = {
   label: string;
   descriptor: string;
   enabled: boolean;
+  /** Which standard class this row maps to (motor / car / suv / …). Chosen
+      from a fixed list so vessels and bookings can match on it. */
+  classKey?: string;
   maxWeightKg?: number;
   maxLengthM?: number;
   /** Vehicle slots this class consumes on the vessel's vehicle deck.
@@ -76,6 +79,9 @@ export type DiscountKind = "percent" | "flat";
 export type PassengerType = {
   key: string;
   label: string;
+  /** Which fare category this row maps to (regular / student / senior / …).
+      Chosen from a fixed list so discounts can be matched programmatically. */
+  classKey?: string;
   /** How the discount is expressed. Defaults to "percent" for legacy rows. */
   discountKind?: DiscountKind;
   /** % discount when discountKind === "percent" (0-100). */

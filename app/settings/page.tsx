@@ -21,6 +21,9 @@ import {
   type VehicleClass,
   type PassengerType,
   type AddOn,
+  type AccommodationClass,
+  PASSENGER_CLASS_OPTIONS,
+  VEHICLE_CLASS_OPTIONS,
 } from "@/lib/settings-data";
 import type { Line } from "@/lib/shipping-lines";
 import { useCurrentUser } from "@/components/UserContext";
@@ -175,7 +178,7 @@ function SystemTab() {
 // Section descriptors drive both the left navigator and the anchor ids.
 const CONFIG_SECTIONS = [
   { id: "passenger-types", label: "Passenger types" },
-  { id: "vehicle-classes", label: "Vehicle classes" },
+  { id: "vehicle-classes", label: "Vehicle types" },
   { id: "add-ons",         label: "Add-ons" },
   { id: "accommodations",  label: "Accommodations" },
 ];
@@ -273,7 +276,7 @@ function BookingTab({ lineId }: { lineId: string }) {
 
           {activeSection === "vehicle-classes" && (
           <section id="vehicle-classes">
-            <Card title="Vehicle classes" subtitle="Define the vehicle catalog for this shipping line. Vessels toggle which classes they accept; edits here flow live into every vessel that uses them.">
+            <Card title="Vehicle types" subtitle="Define the vehicle catalog for this shipping line. Vessels toggle which types they accept; edits here flow live into every vessel that uses them.">
               <VehicleClassesEditor
                 value={draft.catalog.vehicleClasses}
                 onChange={(v) => setCatalog("vehicleClasses", v)}
@@ -296,22 +299,10 @@ function BookingTab({ lineId }: { lineId: string }) {
           {activeSection === "accommodations" && (
           <section id="accommodations">
             <Card title="Accommodations" subtitle="Seating tiers (Economy / Tourist / Business) this shipping line offers. Vessels pick from these and set their own seat counts and fares.">
-              {/* Placeholder — accommodations aren't part of the line catalog
-                  yet. The section exists so the page reflects the full config
-                  set; the editor lands once the data model supports it. */}
-              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 px-4 py-10 text-center">
-                <div className="mx-auto mb-2 grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-slate-400">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                    <rect x="3" y="10" width="18" height="8" rx="1" />
-                    <path d="M6 10V7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3" />
-                    <path d="M3 18v2M21 18v2" />
-                  </svg>
-                </div>
-                <div className="text-[13px] font-semibold tracking-tight text-slate-700">No accommodation tiers yet</div>
-                <p className="mx-auto mt-1 max-w-sm text-[12px] leading-relaxed text-slate-500">
-                  Accommodation tiers are configured per vessel for now. Line-level defaults will live here soon.
-                </p>
-              </div>
+              <AccommodationsEditor
+                value={draft.catalog.accommodations}
+                onChange={(v) => setCatalog("accommodations", v)}
+              />
             </Card>
           </section>
           )}
@@ -384,6 +375,35 @@ function CatalogHeader({
   );
 }
 
+// Per-row enable switch used across all four catalog editors. Green when on,
+// so a disabled row reads as inert at a glance.
+function RowStatusToggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={() => onChange(!on)}
+      className={`relative inline-flex h-[22px] w-[38px] shrink-0 items-center rounded-full transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 ${
+        on ? "bg-emerald-500" : "bg-slate-300"
+      }`}
+    >
+      <span
+        className={`grid h-[18px] w-[18px] transform place-items-center rounded-full bg-white shadow transition-transform duration-150 ${
+          on ? "translate-x-[18px]" : "translate-x-[2px]"
+        }`}
+      >
+        {on && (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5 text-emerald-500">
+            <path d="M5 12l5 5 9-11" />
+          </svg>
+        )}
+      </span>
+    </button>
+  );
+}
+
 const catalogInputCls =
   "w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12.5px] tracking-tight placeholder:text-slate-400 focus:border-brand-200 focus:outline-none focus:ring-2 focus:ring-brand-100";
 
@@ -422,69 +442,63 @@ function VehicleClassesEditor({
     <div>
       <CatalogHeader
         label="Catalog"
-        hint="Set the label, descriptor, default fare, and weight or length limit for each class."
+        hint="Define vehicle types with capacity, default fare, and passenger limits."
         count={{ used: usedCount, total: value.length }}
         onAdd={add}
-        addLabel="Add class"
+        addLabel="Add type"
       />
-      <div className="grid grid-cols-[1.4fr_1.2fr_96px_80px_96px_72px_36px] items-center gap-2 border-b border-slate-100 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
-        <span className="whitespace-nowrap">Label</span>
-        <span className="whitespace-nowrap">Descriptor</span>
-        <span className="whitespace-nowrap text-right">Max (kg / m)</span>
-        <span className="whitespace-nowrap text-right">Slots</span>
-        <span className="whitespace-nowrap text-right">Default fare</span>
-        <span className="whitespace-nowrap text-right" title="Extra companion seats bundled into the vehicle fare (driver always rides free)">Companions</span>
+      <div className="grid grid-cols-[44px_170px_1.4fr_120px_100px_120px_36px] items-center gap-2 border-b border-slate-100 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+        <span className="whitespace-nowrap">Status</span>
+        <span className="whitespace-nowrap">Class</span>
+        <span className="whitespace-nowrap">Name</span>
+        <span className="whitespace-nowrap text-right leading-tight">Capacity<br />in vessel</span>
+        <span className="whitespace-nowrap text-right">Free pax</span>
+        <span className="whitespace-nowrap text-right">Fare</span>
         <span />
       </div>
       <div className="divide-y divide-slate-100">
         {value.length === 0 ? (
-          <div className="py-6 text-center text-[11.5px] text-slate-400">No vehicle classes. Add one to make it available to vessels.</div>
+          <div className="py-6 text-center text-[11.5px] text-slate-400">No vehicle types. Add one to make it available to vessels.</div>
         ) : (
           value.map((c) => (
-            <div key={c.key} className="grid grid-cols-[1.4fr_1.2fr_96px_80px_96px_72px_36px] items-center gap-2 py-2">
+            <div key={c.key} className="grid grid-cols-[44px_170px_1.4fr_120px_100px_120px_36px] items-center gap-2 py-2">
+              <RowStatusToggle
+                on={c.enabled}
+                onChange={(v) => update(c.key, { enabled: v })}
+                label={`Enable ${c.label || "vehicle type"}`}
+              />
+              <Select
+                value={c.classKey ?? ""}
+                onChange={(v) => update(c.key, { classKey: v })}
+                options={VEHICLE_CLASS_OPTIONS.map((o) => ({ value: o, label: o }))}
+                placeholder="Select"
+                ariaLabel="Vehicle class"
+                className="w-full"
+                inline
+              />
               <input
                 type="text"
                 value={c.label}
                 onChange={(e) => update(c.key, { label: e.target.value })}
-                placeholder="e.g. Motorcycle / Tricycle"
-                className={catalogInputCls}
-              />
-              <input
-                type="text"
-                value={c.descriptor}
-                onChange={(e) => update(c.key, { descriptor: e.target.value })}
-                placeholder="e.g. ≤ 300 kg GVW"
+                placeholder="e.g. ≤ 300kg GVW"
                 className={catalogInputCls}
               />
               <input
                 type="text"
                 inputMode="numeric"
-                value={c.maxLengthM ? `${c.maxLengthM} m` : c.maxWeightKg ? String(c.maxWeightKg) : ""}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  const isLength = /m$/i.test(raw);
-                  const num = Number(raw.replace(/[^0-9.]/g, "")) || undefined;
-                  if (isLength) update(c.key, { maxLengthM: num, maxWeightKg: undefined });
-                  else update(c.key, { maxWeightKg: num, maxLengthM: undefined });
-                }}
-                placeholder="3500"
+                value={String(c.capacity ?? 0)}
+                onChange={(e) => update(c.key, { capacity: Number(e.target.value.replace(/\D/g, "")) || 0 })}
+                aria-label="Capacity in vessel"
                 className={catalogInputCls + " text-right font-mono tabular-nums"}
               />
-              <div className="flex items-center rounded-md border border-slate-200 bg-white px-2 py-1.5">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={c.capacity != null ? String(c.capacity) : ""}
-                  onChange={(e) => {
-                    const n = Number(e.target.value.replace(/\D/g, ""));
-                    update(c.key, { capacity: e.target.value === "" ? undefined : n });
-                  }}
-                  placeholder="—"
-                  aria-label="Vehicle slots this class takes on the vessel deck"
-                  className="w-full bg-transparent text-right font-mono text-[12.5px] tabular-nums text-slate-900 placeholder:text-slate-300 focus:outline-none"
-                />
-                <span className="text-[10.5px] font-medium text-slate-400">slots</span>
-              </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={String(c.includedCompanions ?? 0)}
+                onChange={(e) => update(c.key, { includedCompanions: Number(e.target.value.replace(/\D/g, "")) || 0 })}
+                aria-label="Free passengers bundled with this vehicle"
+                className={catalogInputCls + " text-right font-mono tabular-nums"}
+              />
               <div className="flex items-center rounded-md border border-slate-200 bg-white px-2 py-1.5">
                 <span className="text-[11px] font-medium text-slate-400">₱</span>
                 <input
@@ -492,20 +506,9 @@ function VehicleClassesEditor({
                   inputMode="numeric"
                   value={String(c.defaultPrice ?? 0)}
                   onChange={(e) => update(c.key, { defaultPrice: Number(e.target.value.replace(/\D/g, "")) || 0 })}
+                  aria-label="Default fare"
                   className="w-full bg-transparent text-right font-mono text-[12.5px] tabular-nums text-slate-900 focus:outline-none"
                 />
-              </div>
-              <div className="flex items-center rounded-md border border-slate-200 bg-white px-2 py-1.5">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={String(c.includedCompanions ?? 1)}
-                  onChange={(e) => update(c.key, { includedCompanions: Number(e.target.value.replace(/\D/g, "")) || 0 })}
-                  placeholder="1"
-                  aria-label="Bundled companion seats"
-                  className="w-full bg-transparent text-right font-mono text-[12.5px] tabular-nums text-slate-900 placeholder:text-slate-300 focus:outline-none"
-                />
-                <span className="text-[10.5px] font-medium text-slate-400">pax</span>
               </div>
               <RemoveButton onClick={() => remove(c.key)} label={`Remove ${c.label || "class"}`} />
             </div>
@@ -536,15 +539,16 @@ function PassengerTypesEditor({
     <div>
       <CatalogHeader
         label="Catalog"
-        hint="Set the discount % and required document for each fare category. Mark Infant if the row is the free-fare / no-seat type."
+        hint="Set the class and discount for each fare category. Mark Infant if the row is the free-fare / no-seat type."
         count={{ used: usedCount, total: value.length }}
         onAdd={add}
         addLabel="Add type"
       />
-      <div className="grid grid-cols-[1.4fr_160px_1.4fr_36px] items-center gap-2 border-b border-slate-100 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
-        <span className="whitespace-nowrap">Category</span>
+      <div className="grid grid-cols-[44px_180px_1.4fr_170px_36px] items-center gap-2 border-b border-slate-100 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+        <span className="whitespace-nowrap">Status</span>
+        <span className="whitespace-nowrap">Class</span>
+        <span className="whitespace-nowrap">Name</span>
         <span className="whitespace-nowrap text-right">Discount <span className="text-slate-300">(% or ₱)</span></span>
-        <span className="whitespace-nowrap">Required document</span>
         <span />
       </div>
       <div className="divide-y divide-slate-100">
@@ -556,7 +560,21 @@ function PassengerTypesEditor({
             const isPct = kind === "percent";
             const amount = isPct ? p.discountPct : (p.discountFlat ?? 0);
             return (
-            <div key={p.key} className="grid grid-cols-[1.4fr_160px_1.4fr_36px] items-center gap-2 py-2">
+            <div key={p.key} className="grid grid-cols-[44px_180px_1.4fr_170px_36px] items-center gap-2 py-2">
+              <RowStatusToggle
+                on={p.is_active !== false}
+                onChange={(v) => update(p.key, { is_active: v })}
+                label={`Enable ${p.label || "passenger type"}`}
+              />
+              <Select
+                value={p.classKey ?? ""}
+                onChange={(v) => update(p.key, { classKey: v })}
+                options={PASSENGER_CLASS_OPTIONS.map((o) => ({ value: o, label: o }))}
+                placeholder="Select"
+                ariaLabel="Passenger class"
+                className="w-full"
+                inline
+              />
               <input
                 type="text"
                 value={p.label}
@@ -596,17 +614,90 @@ function PassengerTypesEditor({
                   off
                 </span>
               </div>
-              <input
-                type="text"
-                value={p.requiredDoc}
-                onChange={(e) => update(p.key, { requiredDoc: e.target.value })}
-                placeholder="e.g. OSCA ID / Senior Citizen ID"
-                className={catalogInputCls}
-              />
               <RemoveButton onClick={() => remove(p.key)} label={`Remove ${p.label || "type"}`} />
             </div>
             );
           })
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Seating tiers offered line-wide: Status · Name · Capacity · Base fare.
+function AccommodationsEditor({
+  value, onChange,
+}: {
+  value: AccommodationClass[];
+  onChange: (next: AccommodationClass[]) => void;
+}) {
+  const update = (key: string, patch: Partial<AccommodationClass>) =>
+    onChange(value.map((a) => (a.key === key ? { ...a, ...patch } : a)));
+  const remove = (key: string) => onChange(value.filter((a) => a.key !== key));
+  const add = () => onChange([
+    ...value,
+    { key: `custom-${Date.now()}`, label: "", descriptor: "", enabled: true, capacity: 0, fare: 0 },
+  ]);
+
+  const usedCount = value.filter((a) => a.label.trim()).length;
+  const GRID = "grid grid-cols-[44px_1fr_140px_140px_36px] items-center gap-2";
+
+  return (
+    <div>
+      <CatalogHeader
+        label="Catalog"
+        hint="Define accommodation types with seat capacity and default fare. Vessels can toggle availability but cannot override the catalog values."
+        count={{ used: usedCount, total: value.length }}
+        onAdd={add}
+        addLabel="Add accommodation"
+      />
+      <div className={`${GRID} border-b border-slate-100 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400`}>
+        <span className="whitespace-nowrap">Status</span>
+        <span className="whitespace-nowrap">Name</span>
+        <span className="whitespace-nowrap text-right">Capacity</span>
+        <span className="whitespace-nowrap text-right">Base fare</span>
+        <span />
+      </div>
+      <div className="divide-y divide-slate-100">
+        {value.length === 0 ? (
+          <div className="py-6 text-center text-[11.5px] text-slate-400">No accommodations. Add one to make it available to vessels.</div>
+        ) : (
+          value.map((a) => (
+            <div key={a.key} className={`${GRID} py-2`}>
+              <RowStatusToggle
+                on={a.enabled}
+                onChange={(v) => update(a.key, { enabled: v })}
+                label={`Enable ${a.label || "accommodation"}`}
+              />
+              <input
+                type="text"
+                value={a.label}
+                onChange={(e) => update(a.key, { label: e.target.value })}
+                placeholder="e.g. Economy"
+                className={catalogInputCls}
+              />
+              <input
+                type="text"
+                inputMode="numeric"
+                value={String(a.capacity ?? 0)}
+                onChange={(e) => update(a.key, { capacity: Number(e.target.value.replace(/\D/g, "")) || 0 })}
+                aria-label="Seat capacity"
+                className={catalogInputCls + " text-right font-mono tabular-nums"}
+              />
+              <div className="flex items-center rounded-md border border-slate-200 bg-white px-2 py-1.5">
+                <span className="text-[11px] font-medium text-slate-400">₱</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={String(a.fare ?? 0)}
+                  onChange={(e) => update(a.key, { fare: Number(e.target.value.replace(/\D/g, "")) || 0 })}
+                  aria-label="Base fare"
+                  className="w-full bg-transparent text-right font-mono text-[12.5px] tabular-nums text-slate-900 focus:outline-none"
+                />
+              </div>
+              <RemoveButton onClick={() => remove(a.key)} label={`Remove ${a.label || "accommodation"}`} />
+            </div>
+          ))
         )}
       </div>
     </div>
@@ -638,9 +729,9 @@ function AddOnsEditor({
         onAdd={add}
         addLabel="Add add-on"
       />
-      <div className="grid grid-cols-[1.3fr_1.5fr_96px_36px] items-center gap-2 border-b border-slate-100 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+      <div className="grid grid-cols-[44px_1fr_140px_36px] items-center gap-2 border-b border-slate-100 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+        <span className="whitespace-nowrap">Status</span>
         <span className="whitespace-nowrap">Name</span>
-        <span className="whitespace-nowrap">Descriptor</span>
         <span className="whitespace-nowrap text-right">Default price</span>
         <span />
       </div>
@@ -649,19 +740,17 @@ function AddOnsEditor({
           <div className="py-6 text-center text-[11.5px] text-slate-400">No add-ons. Add one to make it available to vessels.</div>
         ) : (
           value.map((a) => (
-            <div key={a.key} className="grid grid-cols-[1.3fr_1.5fr_96px_36px] items-center gap-2 py-2">
+            <div key={a.key} className="grid grid-cols-[44px_1fr_140px_36px] items-center gap-2 py-2">
+              <RowStatusToggle
+                on={a.enabled}
+                onChange={(v) => update(a.key, { enabled: v })}
+                label={`Enable ${a.label || "add-on"}`}
+              />
               <input
                 type="text"
                 value={a.label}
                 onChange={(e) => update(a.key, { label: e.target.value })}
                 placeholder="e.g. Extra Cabin Bag"
-                className={catalogInputCls}
-              />
-              <input
-                type="text"
-                value={a.descriptor}
-                onChange={(e) => update(a.key, { descriptor: e.target.value })}
-                placeholder="e.g. Beyond included carry-on"
                 className={catalogInputCls}
               />
               <div className="flex items-center rounded-md border border-slate-200 bg-white px-2 py-1.5">
