@@ -16,6 +16,7 @@ import CancelConfirmDialog, { ROUTE_CANCEL_REASONS } from "@/components/CancelCo
 import Modal from "@/components/Modal";
 import { useToast } from "@/components/ToastContext";
 import RouteStatusDialog from "@/components/RouteStatusDialog";
+import BulkDisableRoutesDialog from "@/components/BulkDisableRoutesDialog";
 import { PORTS, portId, findPort, DEFAULT_ROUTE_ACCOMMODATION_FARES, type RoutesValue } from "@/components/schedule-steps/RoutesStep";
 import { getCustomPorts } from "@/lib/custom-ports";
 import type { Booking } from "@/lib/bookings-data";
@@ -187,6 +188,54 @@ function Input({
   );
 }
 
+// Square checkbox used by the header and every row. Wraps a real <input> so
+// keyboard and screen-reader behaviour is native; the visual is drawn on top.
+function SelectCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  label: string;
+}) {
+  return (
+    <label className="relative inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center">
+      <input
+        type="checkbox"
+        checked={checked}
+        aria-label={label}
+        // `indeterminate` isn't an HTML attribute — it has to be set on the
+        // node, so drive it through a ref callback.
+        ref={(el) => { if (el) el.indeterminate = !!indeterminate && !checked; }}
+        onChange={onChange}
+        className="peer sr-only"
+      />
+      <span
+        aria-hidden
+        className={
+          "grid h-4 w-4 place-items-center rounded-[5px] border transition-colors duration-150 " +
+          (checked || indeterminate
+            ? "border-brand-500 bg-brand-500 text-white"
+            : "border-slate-300 bg-white text-transparent hover:border-slate-400")
+        }
+      >
+        {checked ? (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
+            <path d="M5 12l5 5 9-11" />
+          </svg>
+        ) : indeterminate ? (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" className="h-2.5 w-2.5">
+            <path d="M6 12h12" />
+          </svg>
+        ) : null}
+      </span>
+    </label>
+  );
+}
+
 function SortIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3 text-gray-300">
@@ -242,6 +291,20 @@ export default function RoutesPage() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   // Route whose vessel/departure schedule dialog is open (null = closed).
   const [editRoute, setEditRoute] = useState<Route | null>(null);
+  // Bulk selection — ids of checked rows. Kept as a Set so the header
+  // checkbox and per-row state stay O(1) as the page grows.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  // Confirmation for the bulk disable — disabling pulls legs off sale, so it
+  // asks first, same as the single-route action does.
+  const [bulkDisableOpen, setBulkDisableOpen] = useState(false);
+
   // Route whose vessel is being reassigned via the standalone dialog.
   const [assignRoute, setAssignRoute] = useState<Route | null>(null);
   // Route pending an enable/disable confirmation.
@@ -311,6 +374,26 @@ export default function RoutesPage() {
     updateRoutes((prev) =>
       prev.map((r) => (r.id === id ? { ...r, isEnabled: !r.isEnabled } : r)),
     );
+
+  // Disable every selected leg that's still enabled. Legs with confirmed
+  // bookings are skipped — the single-route action already refuses those, and
+  // a bulk path shouldn't be a way around that guard.
+  const bulkDisable = () => {
+    const targets = selectedOnPage.filter((r) => r.isEnabled && !hasConfirmed(r));
+    const blocked = selectedOnPage.filter((r) => r.isEnabled && hasConfirmed(r)).length;
+    const ids = new Set(targets.map((r) => r.id));
+    if (ids.size > 0) {
+      updateRoutes((prev) => prev.map((r) => (ids.has(r.id) ? { ...r, isEnabled: false } : r)));
+    }
+    showToast(
+      ids.size === 0
+        ? "No routes disabled — the selected legs have confirmed bookings or are already disabled."
+        : `${ids.size} route${ids.size === 1 ? "" : "s"} disabled` +
+          (blocked > 0 ? ` · ${blocked} skipped (confirmed bookings)` : ""),
+    );
+    setSelected(new Set());
+    setBulkDisableOpen(false);
+  };
 
   // Mark the leg's actual departure: stamp departedAt + set status Departed.
   const [departRoute, setDepartRoute] = useState<Route | null>(null);
@@ -389,6 +472,11 @@ export default function RoutesPage() {
 
   // Reset to page 1 whenever filters change so users don't land on an empty later page.
   useEffect(() => { setPage(1); }, [originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange, departedRange, scheduleSort]);
+  // Drop the selection whenever the visible set changes — acting on rows the
+  // operator can no longer see would be a nasty surprise.
+  useEffect(() => {
+    setSelected(new Set());
+  }, [originFilter, destinationFilter, lifecycleFilter, activeFilter, dateRange, departedRange, scheduleSort, page]);
 
   // Origin / destination options from the catalog cities, alphabetized.
   const originOptions = useMemo(() => {
@@ -464,6 +552,19 @@ export default function RoutesPage() {
 
   const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
 
+  // Selection is scoped to the rows currently on screen — a filter or page
+  // change shouldn't leave invisible rows queued for a bulk action.
+  const selectedOnPage = pageRows.filter((r) => selected.has(r.id));
+  const allOnPageSelected = pageRows.length > 0 && selectedOnPage.length === pageRows.length;
+  const someOnPageSelected = selectedOnPage.length > 0 && !allOnPageSelected;
+  const toggleAllOnPage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) pageRows.forEach((r) => next.delete(r.id));
+      else pageRows.forEach((r) => next.add(r.id));
+      return next;
+    });
+
   return (
     <div>
       <PageHeader
@@ -482,14 +583,68 @@ export default function RoutesPage() {
               <h2 className="text-base font-semibold tracking-tight text-slate-900">Configured routes</h2>
             </div>
 
-            <FiltersButton onClick={() => setFiltersOpen(true)} activeCount={activeFilterCount} />
+            {/* With a selection live, the bulk action takes the toolbar slot —
+                it's the only thing the operator is here to do at that point. */}
+            {selectedOnPage.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setBulkDisableOpen(true)}
+                className="inline-flex items-center gap-2 rounded-lg border border-rose-300 bg-white px-3.5 py-2 text-[13px] font-semibold text-rose-600 transition-colors duration-150 hover:bg-rose-50"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M5.6 5.6l12.8 12.8" />
+                </svg>
+                Disable routes
+                <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-rose-500 px-1.5 font-mono text-[11px] font-bold tabular-nums text-white">
+                  {selectedOnPage.length}
+                </span>
+              </button>
+            ) : (
+              <FiltersButton onClick={() => setFiltersOpen(true)} activeCount={activeFilterCount} />
+            )}
           </div>
+
+          {/* Selection banner — sits between toolbar and table, mirroring the
+              row highlight so the count and the highlighted rows read together. */}
+          {selectedOnPage.length > 0 && (
+            <div className="flex items-center gap-3 border-b border-brand-100 bg-brand-50/60 px-5 py-2.5">
+              <SelectCheckbox
+                checked={allOnPageSelected}
+                indeterminate={someOnPageSelected}
+                onChange={toggleAllOnPage}
+                label="Select all routes on this page"
+              />
+              <span className="text-[13px] font-semibold tracking-tight text-slate-800">
+                {selectedOnPage.length} route{selectedOnPage.length === 1 ? "" : "s"} selected
+              </span>
+              <span aria-hidden className="text-slate-300">|</span>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="text-[13px] font-semibold text-brand-600 transition-colors hover:text-brand-700"
+              >
+                Clear selection
+              </button>
+            </div>
+          )}
 
           {/* Table */}
           <div>
             <table className="w-full text-sm">
-              <thead>
+              {/* Headers give way to the selection banner while rows are
+                  checked — the banner already carries the select-all control,
+                  so keeping both would duplicate it. */}
+              <thead className={selectedOnPage.length > 0 ? "hidden" : undefined}>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-left text-[11px] uppercase tracking-[0.08em] text-slate-500">
+                  <th className="w-10 px-5 py-2.5 font-medium">
+                    <SelectCheckbox
+                      checked={allOnPageSelected}
+                      indeterminate={someOnPageSelected}
+                      onChange={toggleAllOnPage}
+                      label="Select all routes on this page"
+                    />
+                  </th>
                   <th className="px-5 py-2.5 font-medium">Id</th>
                   <th className="px-5 py-2.5 font-medium">
                     <button
@@ -516,22 +671,44 @@ export default function RoutesPage() {
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={12} className="px-5 py-12 text-center text-sm text-slate-400">
                       No routes match your filters.
                     </td>
                   </tr>
                 )}
                 {pageRows.map((r, i) => {
+                  const isSelected = selected.has(r.id);
                   return (
                   <motion.tr
                     key={r.id}
                     initial={{ opacity: 0, y: 4 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.18, delay: i * 0.02, ease: "easeOut" }}
-                    className="group transition-colors duration-150 hover:bg-slate-50/60"
+                    onClick={() => toggleOne(r.id)}
+                    className={
+                      "group cursor-pointer transition-colors duration-150 " +
+                      (isSelected ? "bg-brand-50/50" : "hover:bg-slate-50/60")
+                    }
                   >
-                    <td className="relative px-5 py-3.5 align-middle">
-                      <span className="absolute left-0 top-0 h-full w-[3px] origin-top scale-y-0 bg-brand-500 transition-transform duration-200 ease-out group-hover:scale-y-100" />
+                    {/* The row owns the click, so the checkbox only needs to
+                        stop it bubbling — otherwise the two would cancel out. */}
+                    <td
+                      className="relative w-10 px-5 py-3.5 align-middle"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* Selected rows keep the accent bar pinned rather than
+                          revealing it on hover. */}
+                      <span className={
+                        "absolute left-0 top-0 h-full w-[3px] origin-top bg-brand-500 transition-transform duration-200 ease-out " +
+                        (isSelected ? "scale-y-100" : "scale-y-0 group-hover:scale-y-100")
+                      } />
+                      <SelectCheckbox
+                        checked={isSelected}
+                        onChange={() => toggleOne(r.id)}
+                        label={`Select route ${r.ref}`}
+                      />
+                    </td>
+                    <td className="px-5 py-3.5 align-middle">
                       <span className="font-mono text-[12.5px] tabular-nums text-slate-500">{(page - 1) * pageSize + i + 1}</span>
                     </td>
                     <td className="px-5 py-3.5 align-middle whitespace-nowrap">
@@ -772,6 +949,19 @@ export default function RoutesPage() {
           );
         }}
         editMode="edit"
+      />
+
+      <BulkDisableRoutesDialog
+        open={bulkDisableOpen}
+        count={selectedOnPage.length}
+        origin={originFilter === "all" ? null : originFilter}
+        destination={destinationFilter === "all" ? null : destinationFilter}
+        dateFrom={dateRange.start}
+        // The filter matches the whole end day, so show it as inclusive
+        // (23:59) rather than the midnight the range actually stores.
+        dateTo={dateRange.end ? new Date(new Date(dateRange.end).setHours(23, 59, 0, 0)) : null}
+        onClose={() => setBulkDisableOpen(false)}
+        onConfirm={bulkDisable}
       />
 
       <AssignVesselDialog

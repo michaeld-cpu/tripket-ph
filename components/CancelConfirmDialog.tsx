@@ -44,6 +44,11 @@ export const ROUTE_CANCEL_REASONS = [
   "Others",
 ] as const;
 
+// Bounds for the "Others" free-text reason, shared by every surface that
+// captures one so the rule can't drift between them.
+export const REASON_MIN = 10;
+export const REASON_MAX = 200;
+
 export default function CancelConfirmDialog({
   targetRef,
   noun = "booking",
@@ -82,7 +87,13 @@ export default function CancelConfirmDialog({
     if (targetRef) { setReason(""); setOther(""); setTouched(false); }
   }, [targetRef]);
 
-  const valid = reason !== "" && (reason !== "Others" || other.trim().length > 0);
+  // The reason reaches the passenger, so a free-text one has to be a readable
+  // explanation: too short and it's shorthand ("bad", "asdf"), too long and it
+  // overflows the activity log and the booking app. The max is enforced by
+  // capping input rather than rejecting on submit.
+  const otherLen = other.trim().length;
+  const tooShort = otherLen > 0 && otherLen < REASON_MIN;
+  const valid = reason !== "" && (reason !== "Others" || otherLen >= REASON_MIN);
   const submit = () => {
     if (!valid) { setTouched(true); return; }
     onConfirm(reason === "Others" ? other.trim() : reason);
@@ -124,27 +135,51 @@ export default function CancelConfirmDialog({
           </div>
 
           {reason === "Others" && (
-            <textarea
-              rows={3}
-              value={other}
-              onChange={(e) => setOther(e.target.value)}
-              onBlur={() => setTouched(true)}
-              placeholder="Describe the reason…"
-              className={
-                "mt-2 w-full resize-none rounded-lg border px-3 py-2 text-[13px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 " +
-                (touched && other.trim() === ""
-                  ? "border-rose-300 focus:ring-rose-200"
-                  : "border-slate-200 focus:border-brand-400 focus:ring-brand-200")
-              }
-            />
+            <>
+              <textarea
+                rows={3}
+                value={other}
+                maxLength={REASON_MAX}
+                onChange={(e) => setOther(e.target.value)}
+                onBlur={() => setTouched(true)}
+                placeholder={`Describe the reason (at least ${REASON_MIN} characters)…`}
+                className={
+                  "mt-2 w-full resize-none rounded-lg border px-3 py-2 text-[13px] text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 " +
+                  ((touched && otherLen === 0) || tooShort
+                    ? "border-rose-300 focus:ring-rose-200"
+                    : "border-slate-200 focus:border-brand-400 focus:ring-brand-200")
+                }
+              />
+            </>
           )}
 
-          {touched && !valid && (
-            <p className="mt-1 text-[11.5px] font-medium text-rose-500">
-              {reason === "Others"
-                ? "Enter the reason before confirming."
-                : "Select a cancellation reason before confirming."}
-            </p>
+          {/* Validation and the character counter share one row: message on
+              the left, count on the right, so they sit on a single baseline
+              instead of stacking. */}
+          {(((touched && !valid) || tooShort) || (reason === "Others" && otherLen > 0)) && (
+            <div className="mt-1 flex items-start justify-between gap-3">
+              <p className="text-[11.5px] font-medium text-rose-500">
+                {((touched && !valid) || tooShort)
+                  ? reason !== "Others"
+                    ? "Select a cancellation reason before confirming."
+                    : tooShort
+                      ? `Use at least ${REASON_MIN} characters.`
+                      : "Enter the reason before confirming."
+                  : ""}
+              </p>
+              {reason === "Others" && otherLen > 0 && (
+                <span className={
+                  "shrink-0 text-[11px] tabular-nums " +
+                  (other.length >= REASON_MAX
+                    ? "font-medium text-rose-500"
+                    : other.length > REASON_MAX - 30
+                      ? "text-amber-600"
+                      : "text-slate-400")
+                }>
+                  {other.length} / {REASON_MAX}
+                </span>
+              )}
+            </div>
           )}
 
           {/* The reason isn't internal-only — it reaches the passenger, and
