@@ -1,0 +1,9 @@
+{
+  "name": "Tripket — Build Routes Bulk Actions & Cancel Validation",
+  "id": "tripket-routes-bulk-cancel",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": { "allowedDomains": ["none"] }
+}

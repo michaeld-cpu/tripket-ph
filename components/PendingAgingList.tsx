@@ -150,12 +150,12 @@ export default function PendingAgingList({ data }: { data: Pending[] }) {
                       </button>
                     )}
                   </div>
-                </td>
+                </td> 
 
                 {/* Status */}
                 <td className="px-2 py-3.5 align-middle">
                   <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${tone}`}>
-                    {d.status}
+                    {d.status} 
                   </span>
                 </td>
 

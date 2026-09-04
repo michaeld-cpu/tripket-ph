@@ -11,6 +11,7 @@ import RowMenu from "@/components/RowMenu";
 import Pagination from "@/components/Pagination";
 import CreateRouteModal from "@/components/CreateRouteModal";
 import { loadStore, saveStore } from "@/lib/persisted-store";
+import { loadAccount } from "@/lib/settings-data";
 import AssignVesselDialog from "@/components/AssignVesselDialog";
 import CancelConfirmDialog, { ROUTE_CANCEL_REASONS } from "@/components/CancelConfirmDialog";
 import Modal from "@/components/Modal";
@@ -291,6 +292,17 @@ export default function RoutesPage() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   // Route whose vessel/departure schedule dialog is open (null = closed).
   const [editRoute, setEditRoute] = useState<Route | null>(null);
+  // Booking cutoff (minutes before departure) for the active line, from its
+  // Settings profile. Read once per line rather than per row.
+  const cutoffMinutes = useMemo(() => {
+    try {
+      const n = Number(loadAccount(active.id, active.name).bookingCutoffMinutes);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    } catch {
+      return 0;
+    }
+  }, [active.id, active.name]);
+
   // Bulk selection — ids of checked rows. Kept as a Set so the header
   // checkbox and per-row state stay O(1) as the page grows.
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -657,6 +669,7 @@ export default function RoutesPage() {
                       <SortArrow dir={scheduleSort} />
                     </button>
                   </th>
+                  <th className="px-5 py-2.5 font-medium whitespace-nowrap">Bookable until</th>
                   <th className="px-5 py-2.5 font-medium">Origin</th>
                   <th className="px-5 py-2.5 font-medium">Destination</th>
                   <th className="px-5 py-2.5 font-medium">Vessel</th>
@@ -671,7 +684,7 @@ export default function RoutesPage() {
               <tbody className="divide-y divide-slate-100">
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={12} className="px-5 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={13} className="px-5 py-12 text-center text-sm text-slate-400">
                       No routes match your filters.
                     </td>
                   </tr>
@@ -714,6 +727,23 @@ export default function RoutesPage() {
                     <td className="px-5 py-3.5 align-middle whitespace-nowrap">
                       <div className="text-[12.5px] tabular-nums text-slate-900">{fmtDateTime(r.scheduleAt)}</div>
                       <div className="mt-0.5 text-[11px] text-slate-400">({fmtWeekday(r.scheduleAt)})</div>
+                    </td>
+                    {/* Bookings close this many minutes before departure —
+                        derived from the line's cutoff rather than stored, so a
+                        settings change applies to every leg at once. */}
+                    <td className="px-5 py-3.5 align-middle whitespace-nowrap">
+                      {r.status === "Cancelled" ? (
+                        <span className="text-[12px] text-slate-300">—</span>
+                      ) : (
+                        <>
+                          <div className="text-[12.5px] tabular-nums text-slate-900">
+                            {fmtDateTime(bookableUntil(r.scheduleAt, cutoffMinutes))}
+                          </div>
+                          <div className="mt-0.5 text-[11px] text-slate-400">
+                            {cutoffMinutes > 0 ? `(${fmtCutoff(cutoffMinutes)} before)` : "(at departure)"}
+                          </div>
+                        </>
+                      )}
                     </td>
                     <td className="px-5 py-3.5 whitespace-nowrap"><PortCell {...r.origin} /></td>
                     <td className="px-5 py-3.5 whitespace-nowrap">
@@ -1054,6 +1084,22 @@ function fmtDateTime(d: Date): string {
     month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit",
   });
+}
+
+// When bookings close for a leg: the scheduled departure minus the line's
+// cutoff. Derived per render so changing the cutoff in Settings updates every
+// leg at once, instead of baking a stale timestamp into each row.
+function bookableUntil(scheduleAt: Date, cutoffMinutes: number): Date {
+  return new Date(scheduleAt.getTime() - cutoffMinutes * 60_000);
+}
+
+// "30m before" / "2h before" / "1h 30m before" — a bare minute count gets hard
+// to read past an hour or two.
+function fmtCutoff(mins: number): string {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 // Weekday shown under the schedule date — ferry crews and admins think in

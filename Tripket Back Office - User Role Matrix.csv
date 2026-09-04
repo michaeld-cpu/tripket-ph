@@ -1,0 +1,177 @@
+﻿TRIPKET BACK OFFICE,,,,
+Super Admin:,"Full system access. Can manage all operators, users, and system-wide settings.",,,
+Admin:,Similar to Super Admin but cannot manage Super Admin accounts or access system settings.,,,
+Operator:,Belongs to a specific ferry/shipping operator. Can only manage their own operator's data.,,,
+,,,,
+"Module
+(Sub-modules)","Permission
+(Action)",Super Admin,Admin,Operator
+SWITCHER,,,,
+,View active shipping line,✅,✅,✅ (Designated Shipping Line)
+,View and search list of shipping lines,✅,✅,❌
+,Switch into another shipping line,✅,✅,❌
+,View line status (active / suspended),✅,✅,✅ (Designated Shipping Line)
+      -  Add Shipping Line,,,,
+,Create a new shipping line,✅,✅,❌
+,Set line name and line code,✅,✅,❌
+,Upload a line logo,✅,✅,❌
+,"Set contact details (website, email, contact number, address)",✅,✅,❌
+,"Set booking behavior (schedule days ahead, cutoff, payment & booking provider)",✅,✅,❌
+,"Set booking rules (require mobile, require address, auto-confirm)",✅,✅,❌
+,,,,
+DASHBOARD,,,,
+,"View performance summary (revenue, bookings, passengers)",✅,✅,✅ (Designated Shipping Line)
+,View departure board,✅,✅,✅ (Designated Shipping Line)
+,View pending bookings aging list,✅,✅,✅ (Designated Shipping Line)
+,View revenue and booking charts,✅,✅,✅ (Designated Shipping Line)
+,,,,
+VOYAGES,,,,
+,View list of voyages,✅,✅,✅ (Designated Shipping Line)
+,View voyage details,✅,✅,✅ (Designated Shipping Line)
+,Create a voyage,✅,✅,✅ (Designated Shipping Line)
+,Update a voyage,✅,✅,✅ (Designated Shipping Line)
+,Remove a voyage,✅,✅,✅ (Designated Shipping Line)
+,Export voyages,✅,✅,✅ (Designated Shipping Line)
+,View manifests,✅,✅,✅ (Designated Shipping Line)
+,Download a manifest (CSV),✅,✅,✅ (Designated Shipping Line)
+,Select departure slots (single or bulk),✅,✅,✅ (Designated Shipping Line)
+,Remove departure slots (single or bulk),✅,✅,✅ (Designated Shipping Line)
+Voyage Configuration:,,,,
+      -  Routes,,,,
+,Set origin and destination ports for a leg,✅,✅,✅ (Designated Shipping Line)
+,Set distance and crossing duration,✅,✅,✅ (Designated Shipping Line)
+      -  Vessel,,,,
+,Assign a vessel to the schedule,✅,✅,✅ (Designated Shipping Line)
+      -  Schedule,,,,
+,Set operating weekdays and departure times,✅,✅,✅ (Designated Shipping Line)
+      -  Fares: Accommodations,,,,
+,Select accommodation tiers offered on the voyage,✅,✅,✅ (Designated Shipping Line)
+,Set accommodation fare per tier,✅,✅,✅ (Designated Shipping Line)
+      -  Fares: Vehicle Types,,,,
+,Select vehicle types accepted on the voyage,✅,✅,✅ (Designated Shipping Line)
+,Set vehicle fare and free-pax allowance per type,✅,✅,✅ (Designated Shipping Line)
+      -  Fares: Passenger Types,,,,
+,Set passenger-type discount per fare category,✅,✅,✅ (Designated Shipping Line)
+      -  Fares: Add-ons,,,,
+,Select add-ons offered on the voyage,✅,✅,✅ (Designated Shipping Line)
+,Set add-on price,✅,✅,✅ (Designated Shipping Line)
+      -  Fares: Service Fee,,,,
+,Set the route service fee,✅,✅,✅ (Designated Shipping Line)
+      -  Ports (Creation),,,,
+,View list of ports,✅,✅,✅
+,Add a new port,✅,✅,❌
+,,,,
+ROUTES (Legs / Trip Schedules),,,,
+,View list of legs,✅,✅,✅ (Designated Shipping Line)
+,View leg details,✅,✅,✅ (Designated Shipping Line)
+,View all bookings under a leg,✅,✅,✅ (Designated Shipping Line)
+,Enable a leg,✅,✅,✅ (Designated Shipping Line)
+,Disable a leg (single or bulk),✅,✅,✅ (Designated Shipping Line)
+,Cancel a leg with reason (must not already be cancelled),✅,✅,✅ (Designated Shipping Line)
+,Mark a leg as departed,✅,✅,✅ (Designated Shipping Line)
+,"Re-schedule a leg (must not be in ""Scheduled"" status)",✅,✅,✅ (Designated Shipping Line)
+,"Assign a vessel to a leg (no confirmed bookings, must be scheduled)",✅,✅,✅ (Designated Shipping Line)
+,Issue bulk refunds for a cancelled leg,✅,✅,✅ (Designated Shipping Line)
+,"Filter legs by schedule, departure date, origin, destination and status",✅,✅,✅ (Designated Shipping Line)
+,,,,
+VESSELS,,,,
+,View list of vessels,✅,✅,✅ (Designated Shipping Line)
+,View vessel details,✅,✅,✅ (Designated Shipping Line)
+,Add a new vessel,✅,✅,✅ (Designated Shipping Line)
+,Update vessel information,✅,✅,✅ (Designated Shipping Line)
+,Enable a vessel,✅,✅,✅ (Designated Shipping Line)
+,Disable a vessel,✅,✅,✅ (Designated Shipping Line)
+,,,,
+BOOKINGS,,,,
+,View list of all bookings,✅,✅,✅ (Designated Shipping Line)
+,View booking details,✅,✅,✅ (Designated Shipping Line)
+,"Approve a booking (must be in ""Under Review"" status)",✅,✅,✅ (Designated Shipping Line)
+,Issue tickets on approval (Tripket and operator ticket numbers),✅,✅,✅ (Designated Shipping Line)
+,Record an operator's booking reference (on approval),✅,✅,✅ (Designated Shipping Line)
+,"Cancel a booking with reason (not while Under Review, refunded or expired)",✅,✅,✅ (Designated Shipping Line)
+,"Process a refund on a booking (must be in ""For Refund"" status)",✅,✅,✅ (Designated Shipping Line)
+,View tickets under a booking,✅,✅,✅ (Designated Shipping Line)
+,Update passenger details on a booking,✅,✅,✅ (Designated Shipping Line)
+,Update vehicle details on a booking,✅,✅,✅ (Designated Shipping Line)
+,View booking activity history / logs,✅,✅,✅ (Designated Shipping Line)
+,,,,
+TICKETS,,,,
+      -  Tickets: Passengers,,,,
+,View list of passenger tickets,✅,✅,✅ (Designated Shipping Line)
+,View passenger ticket details,✅,✅,✅ (Designated Shipping Line)
+,Update passenger ticket details,✅,✅,✅ (Designated Shipping Line)
+,Cancel a passenger ticket with reason,✅,✅,✅ (Designated Shipping Line)
+,"Process a refund on a passenger ticket (must be in ""For Refund"" status)",✅,✅,✅ (Designated Shipping Line)
+      -  Tickets: Vehicles,,,,
+,View list of vehicle tickets,✅,✅,✅ (Designated Shipping Line)
+,View vehicle ticket details,✅,✅,✅ (Designated Shipping Line)
+,Update vehicle ticket details,✅,✅,✅ (Designated Shipping Line)
+,Cancel a vehicle ticket with reason,✅,✅,✅ (Designated Shipping Line)
+,"Process a refund on a vehicle ticket (must be in ""For Refund"" status)",✅,✅,✅ (Designated Shipping Line)
+,,,,
+REPORTS,,,,
+,View reports,✅,✅,✅ (Designated Shipping Line)
+,,,,
+ACCOUNT,,,,
+      -  Account: Users,,,,
+,View list of users,✅,✅,❌
+,View user details,✅,✅,❌
+,Create a new user,✅,✅,❌
+,Update a user's information,✅,✅ (Admin and Operator accounts only),❌
+,Suspend a user account,✅,✅ (Admin and Operator accounts only),❌
+,Reactivate a user account,✅,✅ (Admin and Operator accounts only),❌
+      -  Account: Operators,,,,
+,View list of operators,✅,✅,❌
+,View operator details,✅,✅,✅ (Designated Shipping Line)
+,Create a new operator,✅,✅,❌
+,Update operator information,✅,✅,✅ (Designated Shipping Line)
+,Suspend an operator,✅,✅,❌
+,Reactivate an operator,✅,✅,❌
+,,,,
+ACTIVITY LOGS,,,,
+,View system-wide activity logs,✅,✅,❌
+,View activity logs for a specific booking,✅,✅,✅ (Designated Shipping Line)
+,"Filter activity logs by actor, action and date",✅,✅,❌
+,,,,
+SETTINGS,,,,
+      -  Settings: Account (Operators/Shipping Lines),,,,
+,View line profile,✅,✅,✅ (Designated Shipping Line)
+,"Update line profile (display name, logo, contact details, address)",✅,✅,✅ (Designated Shipping Line)
+,"Update booking behavior (schedule days ahead, booking cutoff, payment & booking provider)",✅,✅,✅ (Designated Shipping Line)
+,"Update booking rules (require mobile, require address, auto-confirm)",✅,✅,✅ (Designated Shipping Line)
+,Disable / enable this shipping line (Danger zone),✅,✅,❌
+      -  Settings: Configuration > Passenger Types,,,,
+,View list of passenger types,✅,✅,❌
+,"Update passenger type details (class, name, discount)",✅,✅,❌
+,Add a passenger type,✅,✅,❌
+,Remove a passenger type,✅,✅,❌
+,Enable a passenger type,✅,✅,❌
+,Disable a passenger type,✅,✅,❌
+      -  Settings: Configuration > Vehicle Types,,,,
+,View list of vehicle types,✅,✅,❌
+,"Update vehicle type details (class, name, capacity, free pax, fare)",✅,✅,❌
+,Add a vehicle type,✅,✅,❌
+,Remove a vehicle type,✅,✅,❌
+,Enable a vehicle type,✅,✅,❌
+,Disable a vehicle type,✅,✅,❌
+      -  Settings: Configuration > Add-ons,,,,
+,View list of add-ons,✅,✅,❌
+,"Update add-on details (name, default price)",✅,✅,❌
+,Add an add-on,✅,✅,❌
+,Remove an add-on,✅,✅,❌
+,Enable an add-on,✅,✅,❌
+,Disable an add-on,✅,✅,❌
+      -  Settings: Configuration > Accommodations,,,,
+,View list of accommodations,✅,✅,❌
+,"Update accommodation details (name, capacity, base fare)",✅,✅,❌
+,Add an accommodation,✅,✅,❌
+,Remove an accommodation,✅,✅,❌
+,Enable an accommodation,✅,✅,❌
+,Disable an accommodation,✅,✅,❌
+      -  Settings: System,,,,
+,View system settings,✅,❌,❌
+,Add a system setting,✅,❌,❌
+,Update a system setting,✅,❌,❌
+,Delete a system setting,✅,❌,❌
+      -  Export,,,,
+,Export settings,✅,✅,✅ (Designated Shipping Line)
