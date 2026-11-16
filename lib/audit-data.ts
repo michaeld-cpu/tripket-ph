@@ -6,10 +6,11 @@
 
 import { lines } from "@/lib/shipping-lines";
 
-export type AuditArea = "Bookings" | "Tickets" | "Routes" | "Vessels" | "Schedules" | "Users";
+export type AuditArea = "Bookings" | "Tickets" | "Routes" | "Vessels" | "Schedules" | "Users" | "Vouchers";
 export type AuditAction =
   | "created" | "updated" | "approved" | "cancelled" | "refunded"
-  | "paid" | "disabled" | "enabled" | "deleted";
+  | "paid" | "disabled" | "enabled" | "deleted"
+  | "published" | "paused" | "resumed" | "ended";
 
 export type AuditEntry = {
   id: string;
@@ -33,6 +34,10 @@ export const actionTone: Record<AuditAction, string> = {
   refunded:    "bg-sky-50 text-sky-700 ring-1 ring-sky-100",
   disabled:    "bg-rose-50 text-rose-700 ring-1 ring-rose-100",
   deleted:     "bg-rose-50 text-rose-700 ring-1 ring-rose-100",
+  published:   "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100",
+  resumed:     "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100",
+  paused:      "bg-amber-50 text-amber-700 ring-1 ring-amber-100",
+  ended:       "bg-rose-50 text-rose-700 ring-1 ring-rose-100",
 };
 
 export const areaTone: Record<AuditArea, string> = {
@@ -42,6 +47,7 @@ export const areaTone: Record<AuditArea, string> = {
   Vessels:   "bg-violet-50 text-violet-700",
   Schedules: "bg-emerald-50 text-emerald-700",
   Users:     "bg-slate-100 text-slate-600",
+  Vouchers:  "bg-fuchsia-50 text-fuchsia-700",
 };
 
 // Staff actions are attributed generically to "Someone"; "System" stays last
@@ -64,7 +70,13 @@ const TEMPLATES: { area: AuditArea; action: AuditAction; target: () => string; d
   { area: "Users",    action: "created",   target: () => personName() },
   { area: "Users",    action: "disabled",  target: () => personName() },
   { area: "Users",    action: "enabled",   target: () => personName() },
+  { area: "Vouchers", action: "created",   target: () => voucherCode(), detail: "Saved as draft" },
+  { area: "Vouchers", action: "published", target: () => voucherCode() },
+  { area: "Vouchers", action: "paused",    target: () => voucherCode() },
+  { area: "Vouchers", action: "updated",   target: () => voucherCode(), detail: "End date extended" },
 ];
+
+function voucherCode() { return pick(["NEW50", "OFFPEAK", "HOLIDAY15", "ROUTEINTRO", "SUMMER25"]); }
 
 const VESSEL_NAMES = ["MV Filipinas Cebu", "MV Reina del Cielo", "MV Visayan Star", "FC Sinulog", "MV Santa Maria"];
 function vesselName() { return pick(VESSEL_NAMES); }
