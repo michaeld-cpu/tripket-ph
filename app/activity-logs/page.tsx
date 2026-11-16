@@ -17,7 +17,7 @@ import {
 
 const PAGE_SIZE = 15;
 
-const AREAS: AuditArea[] = ["Bookings", "Tickets", "Routes", "Vessels", "Schedules", "Users"];
+const AREAS: AuditArea[] = ["Bookings", "Tickets", "Routes", "Vessels", "Schedules", "Users", "Vouchers"];
 
 function fmtTime(d: Date): string {
   return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });

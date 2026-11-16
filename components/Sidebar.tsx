@@ -90,6 +90,16 @@ const ReportsIcon = ({ className }: IconProps) => (
   </svg>
 );
 
+// Vouchers — ticket stub with a percent sign.
+const VouchersIcon = ({ className }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4V8Z" />
+    <path d="M9.5 14.5l5-5" />
+    <circle cx="9.75" cy="9.75" r=".9" fill="currentColor" stroke="none" />
+    <circle cx="14.25" cy="14.25" r=".9" fill="currentColor" stroke="none" />
+  </svg>
+);
+
 const UsersIcon = ({ className }: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -186,6 +196,9 @@ function buildNavEntries(role: "admin" | "operator"): (NavEntry | { kind: "divid
     { kind: "leaf", href: "/bookings", label: "Bookings",  Icon: TicketIcon },
     ticketsGroup,
     { kind: "leaf", href: "/reports",  label: "Reports",   Icon: ReportsIcon },
+
+    // Vouchers are Tripket-funded and platform-wide — admins only.
+    ...(role === "admin" ? [{ kind: "leaf", href: "/vouchers", label: "Vouchers", Icon: VouchersIcon } as NavEntry] : []),
 
     ...(role === "admin" ? [accountsGroup, { kind: "leaf", href: "/activity-logs", label: "Activity logs", Icon: AuditIcon } as NavEntry] : []),
 

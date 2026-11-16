@@ -27,7 +27,10 @@ export default function WizardFooter({
   isLast = false,
   isSubmitting = false,
   continueDisabled = false,
+  secondaryAction,
 }: {
+  /** Optional extra outlined action before the primary (e.g. "Save as draft"). */
+  secondaryAction?: { label: string; onClick: () => void; disabled?: boolean };
   /** Zero-based active step index. */
   stepIdx: number;
   /** Total number of steps. */
@@ -69,6 +72,16 @@ export default function WizardFooter({
               <path d="M15 18l-6-6 6-6" />
             </svg>
             Back
+          </button>
+        )}
+        {secondaryAction && (
+          <button
+            type="button"
+            onClick={secondaryAction.onClick}
+            disabled={secondaryAction.disabled || isSubmitting}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-[background-color,transform] duration-150 ease-out hover:bg-slate-50 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100"
+          >
+            {secondaryAction.label}
           </button>
         )}
         <button
