@@ -15,11 +15,12 @@ import {
 export function validityCaption(v: Voucher, status: VoucherStatus): string {
   const today = toISODate(new Date());
   if (status === "Draft") return "Not published";
-  if (status === "Ended") return v.endDate < today ? `Ended ${fmtShortDate(v.endDate)}` : "Ended early";
+  if (status === "Ended") return v.endDate && v.endDate < today ? `Ended ${fmtShortDate(v.endDate)}` : "Ended";
   if (status === "Scheduled") {
     const d = daysBetween(today, v.startDate);
     return d === 1 ? "Starts tomorrow" : `Starts in ${d}d`;
   }
+  if (!v.endDate) return status === "Disabled" ? "Turned off" : "No end date";
   const d = daysBetween(today, v.endDate);
   return d === 0 ? "Ends today" : d === 1 ? "Ends tomorrow" : `Ends in ${d}d`;
 }
@@ -65,7 +66,6 @@ export const EyeIcon = () => <svg {...svgProps}><path d="M2 12s3.5-7 10-7 10 7 1
 export const PencilIcon = () => <svg {...svgProps}><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>;
 export const CopyIcon = () => <svg {...svgProps}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>;
 export const CheckIcon = () => <svg {...svgProps}><path d="M20 6 9 17l-5-5" /></svg>;
-export const PauseIcon = () => <svg {...svgProps}><path d="M9 5v14M15 5v14" /></svg>;
-export const PlayIcon = () => <svg {...svgProps}><path d="M7 5l12 7-12 7Z" /></svg>;
+export const PowerIcon = () => <svg {...svgProps}><path d="M12 3v8" /><path d="M6.4 6.4a8 8 0 1 0 11.2 0" /></svg>;
 export const StopIcon = () => <svg {...svgProps}><circle cx="12" cy="12" r="9" /><path d="M5.6 5.6l12.8 12.8" /></svg>;
 export const TrashIcon = () => <svg {...svgProps}><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" /></svg>;

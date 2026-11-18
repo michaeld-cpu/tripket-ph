@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 
-export type VoucherConfirmKind = "pause" | "resume" | "end" | "publish" | "delete";
+export type VoucherConfirmKind = "disable" | "enable" | "end" | "publish" | "delete";
 
 const COPY: Record<VoucherConfirmKind, { title: string; body: string; cta: string; tone: "brand" | "danger" | "amber"; reason?: boolean }> = {
   publish: {
@@ -11,17 +11,17 @@ const COPY: Record<VoucherConfirmKind, { title: string; body: string; cta: strin
     cta: "Publish",
     tone: "brand",
   },
-  pause: {
-    title: "Pause voucher?",
-    body: "Customers can't apply the code while it's paused. You can resume any time before the end date.",
-    cta: "Pause voucher",
+  disable: {
+    title: "Disable voucher?",
+    body: "Customers can't apply the code while it's disabled. You can enable it again any time before it ends.",
+    cta: "Disable voucher",
     tone: "amber",
     reason: true,
   },
-  resume: {
-    title: "Resume voucher?",
+  enable: {
+    title: "Enable voucher?",
     body: "Customers will be able to apply the code again straight away.",
-    cta: "Resume",
+    cta: "Enable",
     tone: "brand",
   },
   end: {

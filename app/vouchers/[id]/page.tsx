@@ -7,14 +7,22 @@ import { useCurrentUser } from "@/components/UserContext";
 import CreateVoucherModal, { type VoucherSubmitIntent } from "@/components/CreateVoucherModal";
 import VoucherConfirmDialog, { type VoucherConfirmKind } from "@/components/VoucherConfirmDialog";
 import EmptyState from "@/components/EmptyState";
+import Pagination from "@/components/Pagination";
+import { lines } from "@/lib/shipping-lines";
+
+const LINE_NAMES = Object.fromEntries(lines.map((l) => [l.id, l.name]));
 import RowMenu, { type RowMenuItem } from "@/components/RowMenu";
-import { StatusBadge, validityCaption, CopyIcon, PencilIcon, PauseIcon, PlayIcon, StopIcon, CheckIcon, TrashIcon } from "@/components/voucher-ui";
+import { StatusBadge, validityCaption, CopyIcon, PencilIcon, PowerIcon, StopIcon, CheckIcon, TrashIcon } from "@/components/voucher-ui";
 import {
   actionToast,
   applyVoucherAction,
   discountLabel,
   duplicateVoucher,
   fmtDate,
+  fmtTime,
+  operatorsLabel,
+  platformsLabel,
+  audienceLabel,
   fmtShortDate,
   historyLabel,
   loadVouchers,
@@ -53,7 +61,11 @@ export default function VoucherDetailPage() {
 
   const voucher = all?.find((v) => v.id === id) ?? null;
   const status = voucher ? voucherStatus(voucher) : null;
-  const redemptions = useMemo(() => (voucher ? sampleRedemptions(voucher, 6) : []), [voucher]);
+  const redemptions = useMemo(() => (voucher ? sampleRedemptions(voucher, voucher.stats.redeemed) : []), [voucher]);
+  const [redPage, setRedPage] = useState(1);
+  const [redPageSize, setRedPageSize] = useState(10);
+  useEffect(() => setRedPage(1), [voucher?.id]);
+  const redRows = redemptions.slice((redPage - 1) * redPageSize, redPage * redPageSize);
 
   const update = (fn: (prev: Voucher[]) => Voucher[]) => {
     setAll((prev) => {
@@ -122,7 +134,7 @@ export default function VoucherDetailPage() {
   // Primary actions stay visible; the rest go in the overflow menu.
   const moreItems: RowMenuItem[] = [];
   if (status !== "Ended") moreItems.push({ label: "Duplicate", onClick: duplicate, icon: <CopyIcon /> });
-  if (status === "Active" || status === "Scheduled" || status === "Paused")
+  if (status === "Active" || status === "Scheduled" || status === "Disabled")
     moreItems.push({ label: "End now", danger: true, divider: true, onClick: () => setConfirm("end"), icon: <StopIcon /> });
   if (status === "Draft")
     moreItems.push({ label: "Delete draft", danger: true, divider: true, onClick: () => setConfirm("delete"), icon: <TrashIcon /> });
@@ -187,13 +199,13 @@ export default function VoucherDetailPage() {
           {(status === "Active" || status === "Scheduled") && (
             <>
               <ActionButton onClick={() => setEditing(voucher)}><PencilIcon /> Edit</ActionButton>
-              <ActionButton onClick={() => setConfirm("pause")}><PauseIcon /> Pause</ActionButton>
+              <ActionButton onClick={() => setConfirm("disable")}><PowerIcon /> Disable</ActionButton>
             </>
           )}
-          {status === "Paused" && (
+          {status === "Disabled" && (
             <>
               <ActionButton onClick={() => setEditing(voucher)}><PencilIcon /> Edit</ActionButton>
-              <ActionButton onClick={() => setConfirm("resume")} tone="primary"><PlayIcon /> Resume</ActionButton>
+              <ActionButton onClick={() => setConfirm("enable")} tone="primary"><PowerIcon /> Enable</ActionButton>
             </>
           )}
           {status === "Ended" && <ActionButton onClick={duplicate}><CopyIcon /> Duplicate</ActionButton>}
@@ -226,8 +238,7 @@ export default function VoucherDetailPage() {
           {status !== "Draft" && (
             <section className={CARD}>
               <div className={SECTION_HEADER}>
-                <h2 className="text-[14px] font-semibold tracking-tight text-slate-900">Recent redemptions</h2>
-                {used > redemptions.length && <span className="text-[12px] text-slate-500">Latest {redemptions.length} of {used.toLocaleString()}</span>}
+                <h2 className="text-[14px] font-semibold tracking-tight text-slate-900">Redemptions</h2>
               </div>
               {redemptions.length === 0 ? (
                 <div className="px-5 py-8 text-center">
@@ -247,7 +258,7 @@ export default function VoucherDetailPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {redemptions.map((r) => (
+                      {redRows.map((r) => (
                         <tr key={r.id}>
                           <td className="px-3.5 py-3 font-mono text-[12px] font-semibold text-slate-900">{r.bookingRef}</td>
                           <td className="px-3.5 py-3 text-slate-700">{r.customer}</td>
@@ -259,6 +270,17 @@ export default function VoucherDetailPage() {
                     </tbody>
                   </table>
                 </div>
+              )}
+              {redemptions.length > 0 && (
+                <Pagination
+                  page={redPage}
+                  pageSize={redPageSize}
+                  total={redemptions.length}
+                  onPageChange={setRedPage}
+                  onPageSizeChange={(n) => { setRedPageSize(n); setRedPage(1); }}
+                  noun="redemptions"
+                  centerControls
+                />
               )}
             </section>
           )}
@@ -295,17 +317,21 @@ export default function VoucherDetailPage() {
           </div>
           <dl className="divide-y divide-slate-100 text-[12.5px]">
             <Row label="Discount" value={discountLabel(voucher)} />
-            <Row label="Valid from" value={fmtDate(voucher.startDate)} />
-            <Row label="Valid until" value={`${fmtDate(voucher.endDate)}, 11:59 PM`} />
+            <Row label="Minimum purchase" value={voucher.minSpend != null ? peso(voucher.minSpend) : "None"} />
+            <Row label="Operators" value={operatorsLabel(voucher.operators, LINE_NAMES)} />
+            <Row label="Platforms" value={platformsLabel(voucher.platforms)} />
+            <Row label="Who can use it" value={audienceLabel(voucher.openToAll)} />
+            <Row label="Valid from" value={`${fmtDate(voucher.startDate)}, ${fmtTime(voucher.startTime)}`} />
+            <Row label="Valid until" value={voucher.endDate ? `${fmtDate(voucher.endDate)}, ${fmtTime(voucher.endTime)}` : "No end date"} />
             <Row label="Total uses" value={voucher.usageLimit != null ? voucher.usageLimit.toLocaleString() : "No limit"} />
-            <Row label="Discount budget" value={voucher.budgetLimit != null ? peso(voucher.budgetLimit) : "No limit"} />
+            <Row label="Max claims per user" value={voucher.perCustomerLimit != null ? voucher.perCustomerLimit.toLocaleString() : "No limit"} />
+            {voucher.budgetLimit != null && <Row label="Discount budget" value={peso(voucher.budgetLimit)} />}
             {exposure != null && <Row label="Max possible cost" value={peso(exposure)} />}
           </dl>
           <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-3.5">
             <div className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-400">Applied automatically</div>
             <ul className="space-y-1 text-[12px] text-slate-600">
-              <li>1 use per customer · 1 voucher per booking</li>
-              <li>Everyone, on all participating trips</li>
+              <li>1 voucher per booking, no stacking</li>
               <li>Funded by {voucher.funding}</li>
             </ul>
           </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import type { DiscountType } from "@/lib/vouchers-data";
+import type { DiscountType, VoucherPlatform } from "@/lib/vouchers-data";
 
 /** Form state for the voucher wizard. Numbers stay strings while typing. */
 export type VoucherDraft = {
@@ -12,11 +12,24 @@ export type VoucherDraft = {
   discountType: DiscountType;
   amount: string;
   maxDiscount: string;
+  /** Minimum booking amount; blank = no minimum. */
+  minSpend: string;
+  operatorMode: "all" | "selected";
+  operators: string[];
+  platforms: VoucherPlatform[];
+  /** Guests and signed-in customers (true) or signed-in only (false). */
+  openToAll: boolean;
   startMode: "now" | "scheduled";
   startDate: string;
+  startTime: string;
+  hasEnd: boolean;
   endDate: string;
+  endTime: string;
   limitUses: boolean;
   usageLimit: string;
+  limitPerUser: boolean;
+  perCustomerLimit: string;
+  /** Kept for vouchers saved with a budget; no longer offered in the wizard. */
   limitBudget: boolean;
   budgetLimit: string;
 };
@@ -163,6 +176,57 @@ export function SectionTitle({ title, caption }: { title: string; caption?: stri
       <h3 className="text-[14px] font-semibold tracking-tight text-slate-900">{title}</h3>
       {caption && <p className="mt-0.5 text-[12px] text-slate-500">{caption}</p>}
     </div>
+  );
+}
+
+/** Checkbox row used for targeting choices. */
+export function CheckRow({
+  checked,
+  onChange,
+  title,
+  caption,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  title: string;
+  caption?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <label
+      className={
+        "flex cursor-pointer items-start gap-3 rounded-xl px-4 py-3 ring-1 transition-colors " +
+        (checked ? "bg-white ring-brand-200" : "bg-white ring-slate-200 hover:ring-slate-300") +
+        (disabled ? " cursor-not-allowed opacity-60" : "")
+      }
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-600"
+      />
+      <span className="min-w-0">
+        <span className="block text-[13px] font-semibold tracking-tight text-slate-900">{title}</span>
+        {caption && <span className="block text-[11.5px] text-slate-500">{caption}</span>}
+      </span>
+    </label>
+  );
+}
+
+/** Native time input styled like the other fields. Value is HH:MM (24h). */
+export function TimeInput({ value, onChange, ariaLabel, disabled }: { value: string; onChange: (v: string) => void; ariaLabel: string; disabled?: boolean }) {
+  return (
+    <input
+      type="time"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      className={inputCls + " tabular-nums"}
+    />
   );
 }
 

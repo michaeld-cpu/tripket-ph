@@ -6,7 +6,12 @@ import { AffixInput, Field, LockedNote, Segmented, SectionTitle, num, type Vouch
 export function discountErrors(v: VoucherDraft) {
   const amount = num(v.amount);
   const cap = num(v.maxDiscount);
-  const e: { amount?: string; maxDiscount?: string } = {};
+  const e: { amount?: string; maxDiscount?: string; minSpend?: string } = {};
+  if (v.minSpend !== "") {
+    const min = num(v.minSpend);
+    if (!(min > 0)) e.minSpend = "Enter an amount above zero, or leave it blank.";
+    else if (v.discountType === "fixed" && num(v.amount) > 0 && min < num(v.amount)) e.minSpend = "Should be at least the discount amount.";
+  }
   if (v.amount !== "") {
     if (!(amount > 0)) e.amount = "Enter an amount above zero.";
     else if (v.discountType === "percent" && amount > 100) e.amount = "A percentage can't exceed 100%.";
@@ -91,6 +96,19 @@ export default function DiscountStep({
               />
             </Field>
           )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Minimum purchase" error={errors.minSpend} hint="Optional. Booking total needed before the discount applies.">
+            <AffixInput
+              value={value.minSpend}
+              onChange={(minSpend) => onChange({ ...value, minSpend })}
+              prefix="₱"
+              placeholder="No minimum"
+              disabled={locks.terms}
+              ariaLabel="Minimum purchase amount"
+            />
+          </Field>
         </div>
 
         {locks.terms && <LockedNote>Discount terms are locked after publishing so past and in-progress bookings stay accurate. Duplicate the voucher to change them.</LockedNote>}

@@ -4,7 +4,12 @@ import { maxExposure, peso } from "@/lib/vouchers-data";
 import { AffixInput, SectionTitle, num, type VoucherDraft, type VoucherLocks } from "./shared";
 
 export function limitsErrors(v: VoucherDraft, locks: VoucherLocks) {
-  const e: { uses?: string; budget?: string; none?: string } = {};
+  const e: { uses?: string; budget?: string; perUser?: string } = {};
+  const per = num(v.perCustomerLimit);
+  if (v.limitPerUser && v.perCustomerLimit !== "") {
+    if (!(per >= 1) || !Number.isInteger(per)) e.perUser = "Enter a whole number of 1 or more.";
+    else if (v.limitUses && num(v.usageLimit) >= 1 && per > num(v.usageLimit)) e.perUser = "Can't be more than the total uses.";
+  }
   const uses = num(v.usageLimit);
   const budget = num(v.budgetLimit);
   if (v.limitUses && v.usageLimit !== "") {
@@ -15,7 +20,6 @@ export function limitsErrors(v: VoucherDraft, locks: VoucherLocks) {
     if (!(budget > 0)) e.budget = "Enter a budget above zero.";
     else if (budget < locks.granted) e.budget = `${peso(locks.granted)} already granted — can't go lower.`;
   }
-  if (!v.limitUses && !v.limitBudget) e.none = "Set at least one limit so the voucher can't run unbounded.";
   return e;
 }
 
@@ -23,7 +27,8 @@ export function limitsValid(v: VoucherDraft, locks: VoucherLocks): boolean {
   if (Object.keys(limitsErrors(v, locks)).length) return false;
   if (v.limitUses && !(num(v.usageLimit) >= 1)) return false;
   if (v.limitBudget && !(num(v.budgetLimit) > 0)) return false;
-  return v.limitUses || v.limitBudget;
+  if (v.limitPerUser && !(num(v.perCustomerLimit) >= 1)) return false;
+  return true;
 }
 
 export function draftExposure(v: VoucherDraft): number | null {
@@ -51,13 +56,13 @@ export default function LimitsStep({
   return (
     <div className="space-y-6">
       <div>
-        <SectionTitle title="How many, or how much?" caption="Pick one or both. The voucher stops working as soon as either limit is reached." />
-        <div className="space-y-3">
+        <SectionTitle title="Limits" caption="Optional. The voucher stops working once the total is reached." />
+        <div className="grid grid-cols-2 gap-3">
           <LimitCard
             checked={value.limitUses}
             onToggle={(limitUses) => onChange({ ...value, limitUses })}
             title="Limit total uses"
-            caption="E.g. the first 300 successful bookings."
+            caption="E.g. the first 300 bookings."
             error={errors.uses}
           >
             <AffixInput
@@ -70,21 +75,20 @@ export default function LimitsStep({
           </LimitCard>
 
           <LimitCard
-            checked={value.limitBudget}
-            onToggle={(limitBudget) => onChange({ ...value, limitBudget })}
-            title="Limit total discount budget"
-            caption="Stops once this much discount has been given out."
-            error={errors.budget}
+            checked={value.limitPerUser}
+            onToggle={(limitPerUser) => onChange({ ...value, limitPerUser })}
+            title="Max claims per user"
+            caption="Times one customer can use it."
+            error={errors.perUser}
           >
             <AffixInput
-              value={value.budgetLimit}
-              onChange={(budgetLimit) => onChange({ ...value, budgetLimit })}
-              prefix="₱"
-              placeholder="15,000"
-              ariaLabel="Total discount budget"
+              value={value.perCustomerLimit}
+              onChange={(perCustomerLimit) => onChange({ ...value, perCustomerLimit: perCustomerLimit.replace(/\./g, "") })}
+              suffix="times"
+              placeholder="1"
+              ariaLabel="Max claims per user"
             />
           </LimitCard>
-          {errors.none && <p className="text-[11.5px] font-medium text-rose-500">{errors.none}</p>}
         </div>
       </div>
 
@@ -97,14 +101,6 @@ export default function LimitsStep({
           <div className="text-[18px] font-semibold tabular-nums tracking-tight text-brand-700">{peso(exposure)}</div>
         </div>
       )}
-
-      <div>
-        <SectionTitle title="Applied automatically" caption="Standard voucher policy for this version." />
-        <ul className="divide-y divide-slate-100 rounded-xl ring-1 ring-slate-200/70">
-          <PolicyRow label="Per customer" value="1 successful use" />
-          <PolicyRow label="Per booking" value="1 voucher, no stacking" />
-        </ul>
-      </div>
     </div>
   );
 }
@@ -140,7 +136,7 @@ function LimitCard({
       </label>
       {checked && (
         <div className="mt-3 pl-7">
-          <div className="max-w-[220px]">{children}</div>
+          <div>{children}</div>
           {error && <span className="mt-1 block text-[11.5px] font-medium text-rose-500">{error}</span>}
         </div>
       )}

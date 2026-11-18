@@ -7,6 +7,7 @@ import WizardFooter from "@/components/wizard/WizardFooter";
 import { useCurrentUser } from "@/components/UserContext";
 import DetailsStep from "@/components/voucher-steps/DetailsStep";
 import DiscountStep, { discountValid } from "@/components/voucher-steps/DiscountStep";
+import OperatorStep, { operatorValid } from "@/components/voucher-steps/OperatorStep";
 import ValidityStep, { effectiveStart, validityValid } from "@/components/voucher-steps/ValidityStep";
 import LimitsStep, { limitsValid } from "@/components/voucher-steps/LimitsStep";
 import ReviewStep from "@/components/voucher-steps/ReviewStep";
@@ -14,6 +15,7 @@ import { NO_LOCKS, num, type VoucherDraft, type VoucherLocks } from "@/component
 import {
   CODE_PATTERN,
   fmtShortDate,
+  fmtTime,
   parseISODate,
   peso,
   toISODate,
@@ -25,8 +27,8 @@ import {
 type StepId = "voucher" | "availability" | "review";
 
 const STEPS: { id: StepId; label: string; description: string }[] = [
-  { id: "voucher",      label: "Voucher",            description: "Name, code and discount." },
-  { id: "availability", label: "Validity & limits",  description: "When it can be used, and how many times." },
+  { id: "voucher",      label: "Voucher",            description: "Name, code, operator and discount." },
+  { id: "availability", label: "Target & validity",  description: "Where, who, when, and how many times." },
   { id: "review",       label: "Review",             description: "Check everything before it goes live." },
 ];
 
@@ -48,11 +50,21 @@ function emptyDraft(): VoucherDraft {
     discountType: "fixed",
     amount: "",
     maxDiscount: "",
+    minSpend: "",
+    operatorMode: "all",
+    operators: [],
+    platforms: ["app", "web"],
+    openToAll: true,
     startMode: "now",
     startDate: today,
+    startTime: "00:00",
+    hasEnd: false,
     endDate: plusDays(today, 29),
+    endTime: "23:59",
     limitUses: true,
     usageLimit: "",
+    limitPerUser: true,
+    perCustomerLimit: "1",
     limitBudget: false,
     budgetLimit: "",
   };
@@ -70,9 +82,19 @@ function draftFromVoucher(v: Voucher): VoucherDraft {
     maxDiscount: v.maxDiscount != null ? String(v.maxDiscount) : "",
     // Drafts dated today (or earlier) read as "start on publish".
     startMode: v.state === "draft" && v.startDate <= today ? "now" : "scheduled",
+    minSpend: v.minSpend != null ? String(v.minSpend) : "",
+    operatorMode: v.operators === "all" ? "all" : "selected",
+    operators: v.operators === "all" ? [] : v.operators,
+    platforms: v.platforms,
+    openToAll: v.openToAll,
     startDate: v.startDate,
-    endDate: v.endDate,
+    startTime: v.startTime,
+    hasEnd: v.endDate != null,
+    endDate: v.endDate ?? plusDays(today, 29),
+    endTime: v.endTime,
     limitUses: v.usageLimit != null,
+    limitPerUser: v.perCustomerLimit != null,
+    perCustomerLimit: v.perCustomerLimit != null ? String(v.perCustomerLimit) : "1",
     usageLimit: v.usageLimit != null ? String(v.usageLimit) : "",
     limitBudget: v.budgetLimit != null,
     budgetLimit: v.budgetLimit != null ? String(v.budgetLimit) : "",
@@ -96,8 +118,11 @@ function changeSummary(before: Voucher, after: Voucher): string | undefined {
   if (before.name !== after.name) parts.push(`Name → ${after.name}`);
   if (before.code !== after.code) parts.push(`Code → ${after.code}`);
   if (before.discountType !== after.discountType || before.amount !== after.amount || before.maxDiscount !== after.maxDiscount) parts.push("Discount changed");
-  if (before.startDate !== after.startDate) parts.push(`Start → ${fmtShortDate(after.startDate)}`);
-  if (before.endDate !== after.endDate) parts.push(`End → ${fmtShortDate(after.endDate)}`);
+  if (before.startDate !== after.startDate || before.startTime !== after.startTime) parts.push(`Start → ${fmtShortDate(after.startDate)} ${fmtTime(after.startTime)}`);
+  if (before.endDate !== after.endDate || before.endTime !== after.endTime) parts.push(after.endDate ? `End → ${fmtShortDate(after.endDate)} ${fmtTime(after.endTime)}` : "End date removed");
+  if (before.perCustomerLimit !== after.perCustomerLimit) parts.push(after.perCustomerLimit != null ? `Per user → ${after.perCustomerLimit}` : "Per-user limit removed");
+  if (JSON.stringify(before.platforms) !== JSON.stringify(after.platforms) || before.openToAll !== after.openToAll) parts.push("Targeting changed");
+  if (before.minSpend !== after.minSpend) parts.push(after.minSpend != null ? `Min purchase → ${peso(after.minSpend)}` : "Min purchase removed");
   if (before.usageLimit !== after.usageLimit) parts.push(after.usageLimit != null ? `Uses → ${after.usageLimit.toLocaleString()}` : "Use limit removed");
   if (before.budgetLimit !== after.budgetLimit) parts.push(after.budgetLimit != null ? `Budget → ${peso(after.budgetLimit)}` : "Budget limit removed");
   if (before.description !== after.description) parts.push("Note updated");
@@ -143,7 +168,7 @@ export default function CreateVoucherModal({
     : !CODE_PATTERN.test(draft.code) ? "Use 3–20 letters, numbers or dashes."
     : codeTaken ? "Another voucher already uses this code."
     : null;
-  const detailsOk = draft.name.trim() !== "" && draft.code !== "" && !codeError;
+  const detailsOk = draft.name.trim() !== "" && draft.code !== "" && !codeError && operatorValid(draft);
   const discountOk = discountValid(draft);
   const validityOk = validityValid(draft, locks);
   const limitsOk = limitsValid(draft, locks);
@@ -157,6 +182,7 @@ export default function CreateVoucherModal({
   const build = (intent: VoucherSubmitIntent): Voucher => {
     const now = new Date().toISOString();
     const today = toISODate(new Date());
+    const nowHHMM = (() => { const d = new Date(); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; })();
     const fields = {
       name: draft.name.trim(),
       code: draft.code,
@@ -166,7 +192,14 @@ export default function CreateVoucherModal({
       maxDiscount: draft.discountType === "percent" ? num(draft.maxDiscount) : null,
       // "Start on publish" pins to today at the moment it's saved.
       startDate: locks.start ? editVoucher!.startDate : draft.startMode === "now" ? today : draft.startDate,
-      endDate: draft.endDate,
+      startTime: locks.start ? editVoucher!.startTime : draft.startMode === "now" ? (intent === "publish" ? nowHHMM : "00:00") : draft.startTime,
+      endDate: draft.hasEnd ? draft.endDate : null,
+      endTime: draft.endTime,
+      operators: draft.operatorMode === "all" ? ("all" as const) : draft.operators,
+      platforms: draft.platforms,
+      openToAll: draft.openToAll,
+      minSpend: draft.minSpend.trim() === "" ? null : num(draft.minSpend),
+      perCustomerLimit: draft.limitPerUser ? Math.round(num(draft.perCustomerLimit)) : null,
       usageLimit: draft.limitUses ? Math.round(num(draft.usageLimit)) : null,
       budgetLimit: draft.limitBudget ? num(draft.budgetLimit) : null,
     };
@@ -188,7 +221,6 @@ export default function CreateVoucherModal({
     return {
       id: `vch-${Date.now().toString(36)}`,
       ...fields,
-      perCustomerLimit: 1,
       eligibility: { audience: "everyone", trips: "all" },
       funding: "Tripket",
       state: intent === "publish" ? "published" : "draft",
@@ -211,7 +243,7 @@ export default function CreateVoucherModal({
     setStepIdx((i) => Math.min(STEPS.length - 1, i + 1));
   };
 
-  const startsLater = draft.startMode === "scheduled" && draft.startDate > toISODate(new Date());
+  const startsLater = draft.startMode === "scheduled" && draft.startDate >= toISODate(new Date());
   const primaryLabel = !isLast
     ? "Continue"
     : isLiveEdit
@@ -240,6 +272,7 @@ export default function CreateVoucherModal({
           {step.id === "voucher" ? (
             <div className="space-y-8">
               <DetailsStep value={draft} onChange={setDraft} locks={locks} codeError={codeError} />
+              <OperatorStep value={draft} onChange={setDraft} locks={locks} />
               <DiscountStep value={draft} onChange={setDraft} locks={locks} />
             </div>
           ) : step.id === "availability" ? (

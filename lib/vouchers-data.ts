@@ -1,5 +1,5 @@
 // ─────────── Vouchers (v1) ───────────
-// Platform-wide promo vouchers. v1 covers the common creation scenario only:
+// Promo vouchers. v1 covers the common creation scenario only:
 // a public code, a fixed ₱ or % discount, a validity window and a use/budget
 // cap. Everything else in the Voucher spec (audience, eligible trips, partner
 // codes, entitlements, approval, funding exceptions) lands in a later version
@@ -13,12 +13,13 @@ import { loadStore, saveStore } from "@/lib/persisted-store";
 
 /** Persisted lifecycle state. The *displayed* status is derived from this
  *  plus the dates — see `voucherStatus`. */
-export type VoucherState = "draft" | "published" | "paused" | "ended";
-export type VoucherStatus = "Draft" | "Scheduled" | "Active" | "Paused" | "Ended";
+export type VoucherState = "draft" | "published" | "disabled" | "ended";
+export type VoucherStatus = "Draft" | "Scheduled" | "Active" | "Disabled" | "Ended";
+export type VoucherPlatform = "app" | "web";
 export type DiscountType = "fixed" | "percent";
 
 export type VoucherHistoryAction =
-  | "created" | "updated" | "published" | "paused" | "resumed" | "ended" | "duplicated";
+  | "created" | "updated" | "published" | "disabled" | "enabled" | "ended" | "duplicated";
 
 export type VoucherHistoryEntry = {
   at: string; // ISO timestamp
@@ -38,16 +39,28 @@ export type Voucher = {
   amount: number;
   /** Required ₱ ceiling for percent discounts; null for fixed. */
   maxDiscount: number | null;
-  /** YYYY-MM-DD, starts at 00:00 local. */
+  /** YYYY-MM-DD local. */
   startDate: string;
-  /** YYYY-MM-DD, valid through 23:59 local. */
-  endDate: string;
+  /** HH:MM local, 24h. */
+  startTime: string;
+  /** YYYY-MM-DD local. null = no end date (runs until disabled or exhausted). */
+  endDate: string | null;
+  /** HH:MM local, 24h. Only meaningful with an end date. */
+  endTime: string;
+  /** Operators (shipping lines) whose trips accept the code. "all" = every line. */
+  operators: "all" | string[];
+  /** Where the code can be applied. */
+  platforms: VoucherPlatform[];
+  /** true = guests and signed-in customers; false = signed-in customers only. */
+  openToAll: boolean;
+  /** Minimum booking amount (₱) before the discount applies. null = none. */
+  minSpend: number | null;
   /** Total successful uses across all customers. null = no count cap. */
   usageLimit: number | null;
   /** Total ₱ discount budget. null = no budget cap. At least one cap is set. */
   budgetLimit: number | null;
-  /** v1 policy is fixed: one use per customer, one voucher per booking. */
-  perCustomerLimit: 1;
+  /** Max successful claims per customer. null = unlimited. */
+  perCustomerLimit: number | null;
   /** Placeholder for the v2 rule engine. v1 is always everyone / all trips. */
   eligibility: { audience: "everyone"; trips: "all" };
   /** v1 policy: always Tripket-funded. */
@@ -75,16 +88,23 @@ export function parseISODate(iso: string): Date {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
-function startOf(iso: string) { return parseISODate(iso); }
-function endOf(iso: string) { const d = parseISODate(iso); d.setHours(23, 59, 59, 999); return d; }
+function at(iso: string, time: string, endOfMinute = false) {
+  const d = parseISODate(iso);
+  const [h, m] = (time || "00:00").split(":").map(Number);
+  d.setHours(h || 0, m || 0, endOfMinute ? 59 : 0, endOfMinute ? 999 : 0);
+  return d;
+}
+export function startsAt(v: Pick<Voucher, "startDate" | "startTime">): Date { return at(v.startDate, v.startTime); }
+export function endsAt(v: Pick<Voucher, "endDate" | "endTime">): Date | null { return v.endDate ? at(v.endDate, v.endTime, true) : null; }
 
 export function voucherStatus(v: Voucher, now = new Date()): VoucherStatus {
   if (v.state === "draft") return "Draft";
   if (v.state === "ended") return "Ended";
-  if (now > endOf(v.endDate)) return "Ended";
+  const end = endsAt(v);
+  if (end && now > end) return "Ended";
   if (isExhausted(v)) return "Ended";
-  if (v.state === "paused") return "Paused";
-  if (now < startOf(v.startDate)) return "Scheduled";
+  if (v.state === "disabled") return "Disabled";
+  if (now < startsAt(v)) return "Scheduled";
   return "Active";
 }
 
@@ -100,7 +120,7 @@ export const statusTone: Record<VoucherStatus, string> = {
   Draft:     "bg-slate-100 text-slate-600",
   Scheduled: "bg-sky-50 text-sky-700",
   Active:    "bg-emerald-100 text-emerald-800",
-  Paused:    "bg-amber-50 text-amber-700",
+  Disabled:  "bg-amber-50 text-amber-700",
   Ended:     "bg-slate-100 text-slate-500",
 };
 
@@ -108,7 +128,7 @@ export const statusDescription: Record<VoucherStatus, string> = {
   Draft:     "Not live · only visible to admins",
   Scheduled: "Published · goes live on the start date",
   Active:    "Live · customers can apply the code at checkout",
-  Paused:    "Temporarily stopped · customers can't apply the code",
+  Disabled:  "Turned off · customers can't apply the code until it's enabled",
   Ended:     "No longer redeemable · kept for reporting",
 };
 
@@ -116,8 +136,8 @@ export const historyLabel: Record<VoucherHistoryAction, string> = {
   created: "Created",
   updated: "Updated",
   published: "Published",
-  paused: "Paused",
-  resumed: "Resumed",
+  disabled: "Disabled",
+  enabled: "Enabled",
   ended: "Ended",
   duplicated: "Duplicated",
 };
@@ -135,6 +155,13 @@ export function discountLabel(v: Pick<Voucher, "discountType" | "amount" | "maxD
 
 export function fmtDate(iso: string): string {
   return parseISODate(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** "9:00 AM" from "09:00". */
+export function fmtTime(hhmm: string): string {
+  const [h, m] = (hhmm || "00:00").split(":").map(Number);
+  const d = new Date(2000, 0, 1, h || 0, m || 0);
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 export function fmtShortDate(iso: string): string {
@@ -158,6 +185,23 @@ export function maxExposure(
   const byCount = v.usageLimit != null && perUse != null ? v.usageLimit * perUse : null;
   if (byCount != null && v.budgetLimit != null) return Math.min(byCount, v.budgetLimit);
   return byCount ?? v.budgetLimit ?? null;
+}
+
+export const PLATFORM_LABEL: Record<VoucherPlatform, string> = { app: "Tripket app", web: "Tripket website" };
+
+export function platformsLabel(p: VoucherPlatform[]): string {
+  if (p.length === 2) return "App and website";
+  return p.length ? PLATFORM_LABEL[p[0]] : "—";
+}
+
+export function operatorsLabel(ops: Voucher["operators"], names: Record<string, string>): string {
+  if (ops === "all") return "All operators";
+  if (ops.length === 1) return names[ops[0]] ?? ops[0];
+  return `${ops.length} operators`;
+}
+
+export function audienceLabel(openToAll: boolean): string {
+  return openToAll ? "Guests and signed-in" : "Signed-in only";
 }
 
 // ─────────── Code helpers ───────────
@@ -209,7 +253,8 @@ export function sampleRedemptions(v: Voucher, limit = 12): Redemption[] {
   if (n === 0) return [];
   const rnd = seeded(v.id);
   const pick = <T,>(a: T[]) => a[Math.floor(rnd() * a.length)];
-  const endAnchor = Math.min(Date.now(), endOf(v.endDate).getTime());
+  const end = endsAt(v);
+  const endAnchor = Math.min(Date.now(), end ? end.getTime() : Date.now());
   const out: Redemption[] = [];
   for (let i = 0; i < n; i++) {
     const spend = 600 + Math.floor(rnd() * 30) * 100;
@@ -245,7 +290,9 @@ function stamp(daysAgo: number, hour = 10): string {
   return d.toISOString();
 }
 
-type SeedInput = Omit<Voucher, "perCustomerLimit" | "eligibility" | "funding" | "createdBy" | "updatedAt" | "history" | "description"> & {
+type Defaulted = "perCustomerLimit" | "eligibility" | "funding" | "createdBy" | "updatedAt" | "history" | "description"
+  | "startTime" | "endTime" | "operators" | "platforms" | "openToAll" | "minSpend";
+type SeedInput = Omit<Voucher, Defaulted> & Partial<Pick<Voucher, Defaulted>> & {
   description?: string;
   history?: VoucherHistoryEntry[];
 };
@@ -258,6 +305,12 @@ function seed(v: SeedInput): Voucher {
   return {
     description: "",
     perCustomerLimit: 1,
+    startTime: "00:00",
+    endTime: "23:59",
+    operators: "all",
+    platforms: ["app", "web"],
+    openToAll: true,
+    minSpend: null,
     eligibility: { audience: "everyone", trips: "all" },
     funding: "Tripket",
     createdBy: "Admin User",
@@ -288,7 +341,7 @@ export function seedVouchers(): Voucher[] {
       id: "vch-holiday15", name: "Holiday Sale", code: "HOLIDAY15",
       description: "December peak-season campaign.",
       discountType: "percent", amount: 15, maxDiscount: 150,
-      startDate: offset(15), endDate: offset(45), usageLimit: 1000, budgetLimit: 75000,
+      startDate: offset(15), endDate: offset(45), usageLimit: 1000, budgetLimit: 75000, minSpend: 1000, perCustomerLimit: 2,
       state: "published", stats: { redeemed: 0, discountGranted: 0 },
       createdAt: stamp(2),
     }),
@@ -296,12 +349,13 @@ export function seedVouchers(): Voucher[] {
       id: "vch-routeintro", name: "Route Launch", code: "ROUTEINTRO",
       discountType: "fixed", amount: 30, maxDiscount: null,
       startDate: offset(-8), endDate: offset(6), usageLimit: 200, budgetLimit: null,
-      state: "paused", stats: { redeemed: 41, discountGranted: 1230 },
+      operators: ["montenegro"], minSpend: 500,
+      state: "disabled", stats: { redeemed: 41, discountGranted: 1230 },
       createdAt: stamp(9),
       history: [
         { at: stamp(9), actor: "Admin User", action: "created" },
         { at: stamp(9), actor: "Admin User", action: "published" },
-        { at: stamp(1, 15), actor: "Admin User", action: "paused", detail: "Holding until operator confirms the new schedule" },
+        { at: stamp(1, 15), actor: "Admin User", action: "disabled", detail: "Holding until operator confirms the new schedule" },
       ],
     }),
     seed({
@@ -315,7 +369,8 @@ export function seedVouchers(): Voucher[] {
       id: "vch-appwelcome", name: "App Launch", code: "APPWELCOME",
       description: "Pending final launch date from marketing.",
       discountType: "fixed", amount: 50, maxDiscount: null,
-      startDate: offset(30), endDate: offset(44), usageLimit: null, budgetLimit: 25000,
+      startDate: offset(30), startTime: "09:00", endDate: null, usageLimit: 1000, budgetLimit: null,
+      platforms: ["app"], openToAll: false, perCustomerLimit: 1,
       state: "draft", stats: { redeemed: 0, discountGranted: 0 },
       createdAt: stamp(0, 9),
     }),
@@ -327,9 +382,30 @@ export function seedVouchers(): Voucher[] {
 const NS = "vouchers";
 const SCOPE = "global";
 
+/** Fill fields added after v1 shipped, so older saved vouchers still load. */
+function normalize(raw: Voucher): Voucher {
+  const v = raw as Voucher & { state: string };
+  return {
+    ...v,
+    startTime: v.startTime ?? "00:00",
+    endTime: v.endTime ?? "23:59",
+    endDate: v.endDate ?? null,
+    operators: v.operators ?? "all",
+    platforms: v.platforms ?? ["app", "web"],
+    openToAll: v.openToAll ?? true,
+    minSpend: v.minSpend ?? null,
+    perCustomerLimit: v.perCustomerLimit === undefined ? 1 : v.perCustomerLimit,
+    state: ((v.state as string) === "paused" ? "disabled" : v.state) as VoucherState,
+    history: v.history.map((h) => {
+      const a = h.action as string;
+      return { ...h, action: (a === "paused" ? "disabled" : a === "resumed" ? "enabled" : a) as VoucherHistoryAction };
+    }),
+  };
+}
+
 export function loadVouchers(): Voucher[] {
   const stored = loadStore<Voucher[]>(NS, SCOPE);
-  if (stored && Array.isArray(stored)) return stored;
+  if (stored && Array.isArray(stored)) return stored.map(normalize);
   const seeded = seedVouchers();
   saveStore(NS, SCOPE, seeded);
   return seeded;
@@ -357,15 +433,19 @@ export function duplicateVoucher(v: Voucher, actor: string, existingCodes: strin
   for (let i = 2; existingCodes.includes(code); i++) code = `${base}-${i}`;
   const at = new Date().toISOString();
   const today = toISODate(new Date());
-  const span = Math.max(1, daysBetween(v.startDate, v.endDate));
-  const end = parseISODate(today); end.setDate(end.getDate() + span);
+  let endDate: string | null = null;
+  if (v.endDate) {
+    const span = Math.max(1, daysBetween(v.startDate, v.endDate));
+    const end = parseISODate(today); end.setDate(end.getDate() + span);
+    endDate = toISODate(end);
+  }
   return {
     ...v,
     id: `vch-${Date.now().toString(36)}`,
     name: `${v.name} (copy)`,
     code,
     startDate: today,
-    endDate: toISODate(end),
+    endDate,
     state: "draft",
     stats: { redeemed: 0, discountGranted: 0 },
     createdBy: actor,
@@ -377,22 +457,22 @@ export function duplicateVoucher(v: Voucher, actor: string, existingCodes: strin
 
 // ─────────── Lifecycle actions ───────────
 
-export type VoucherAction = "publish" | "pause" | "resume" | "end";
+export type VoucherAction = "publish" | "disable" | "enable" | "end";
 
 /** Apply a lifecycle action, recording who did it and why. */
 export function applyVoucherAction(v: Voucher, action: VoucherAction, actor: string, reason?: string): Voucher {
   const detail = reason || undefined;
   switch (action) {
     case "publish": return withHistory(v, actor, "published", { state: "published" }, detail);
-    case "pause":   return withHistory(v, actor, "paused", { state: "paused" }, detail);
-    case "resume":  return withHistory(v, actor, "resumed", { state: "published" }, detail);
+    case "disable": return withHistory(v, actor, "disabled", { state: "disabled" }, detail);
+    case "enable":  return withHistory(v, actor, "enabled", { state: "published" }, detail);
     case "end":     return withHistory(v, actor, "ended", { state: "ended" }, detail);
   }
 }
 
 export const actionToast: Record<VoucherAction, string> = {
   publish: "published",
-  pause: "paused",
-  resume: "resumed",
+  disable: "disabled",
+  enable: "enabled",
   end: "ended",
 };
