@@ -1,6 +1,9 @@
 "use client";
 
-import { discountLabel, fmtDate, peso } from "@/lib/vouchers-data";
+import { audienceLabel, discountLabel, fmtDate, fmtTime, operatorsLabel, peso, platformsLabel } from "@/lib/vouchers-data";
+import { lines } from "@/lib/shipping-lines";
+
+const LINE_NAMES = Object.fromEntries(lines.map((l) => [l.id, l.name]));
 import { draftExposure, PolicyRow } from "./LimitsStep";
 import { effectiveStart } from "./ValidityStep";
 import { num, type VoucherDraft, type VoucherLocks } from "./shared";
@@ -24,11 +27,11 @@ export default function ReviewStep({
   const exposure = draftExposure(value);
   const uses = value.limitUses ? num(value.usageLimit) : null;
   const budget = value.limitBudget ? num(value.budgetLimit) : null;
-
-  const limitsText = [
-    uses ? `${uses.toLocaleString()} uses` : null,
-    budget ? `${peso(budget)} budget` : null,
-  ].filter(Boolean).join(" or ");
+  const perUser = value.limitPerUser ? num(value.perCustomerLimit) : null;
+  const minSpend = value.minSpend.trim() ? num(value.minSpend) : null;
+  const operators = operatorsLabel(value.operatorMode === "all" ? "all" : value.operators, LINE_NAMES);
+  const startLabel = startsNow ? "When published" : `${fmtDate(start)}, ${fmtTime(value.startTime)}`;
+  const endLabel = value.hasEnd && value.endDate ? `${fmtDate(value.endDate)}, ${fmtTime(value.endTime)}` : "No end date";
 
   return (
     <div className="space-y-5">
@@ -43,8 +46,13 @@ export default function ReviewStep({
             {value.discountType === "fixed" ? `${peso(num(value.amount) || 0)} off` : `${num(value.amount) || 0}% off`}
           </span>{" "}
           one booking
-          {value.discountType === "percent" && num(value.maxDiscount) > 0 && <> (up to {peso(num(value.maxDiscount))})</>}, for any customer on any participating trip.
-          Valid {startsNow ? "from publish" : `from ${fmtDate(start)}`} until {value.endDate ? fmtDate(value.endDate) : "—"}, up to {limitsText || "—"}.
+          {value.discountType === "percent" && num(value.maxDiscount) > 0 && <> (up to {peso(num(value.maxDiscount))})</>}
+          {minSpend ? <> of {peso(minSpend)} or more</> : null},{" "}
+          {value.operatorMode === "all" ? "on any operator's trips" : value.operators.length === 1 ? `on ${operators} trips` : `on trips from ${operators}`},
+          {" "}{value.platforms.length === 2 ? "in the app and on the website" : value.platforms[0] === "app" ? "in the app" : "on the website"},
+          {" "}for {value.openToAll ? "guests and signed-in customers" : "signed-in customers"}.
+          {" "}Valid {startsNow ? "from publish" : `from ${fmtDate(start)}`}{value.hasEnd && value.endDate ? ` until ${fmtDate(value.endDate)}` : " with no end date"}
+          {uses ? `, up to ${uses.toLocaleString()} uses` : ""}{perUser ? ` (${perUser} per customer)` : ""}.
         </p>
         {exposure != null && exposure > 0 && (
           <p className="mt-2 text-[12px] text-slate-500">Maximum possible cost <span className="font-semibold text-brand-700">{peso(exposure)}</span></p>
@@ -57,26 +65,27 @@ export default function ReviewStep({
         {value.description.trim() && <PolicyRow label="Internal note" value={value.description.trim()} />}
       </ReviewSection>
 
-      <ReviewSection title="Discount" onEdit={() => onEdit(0)}>
+      <ReviewSection title="Operator and discount" onEdit={() => onEdit(0)}>
+        <PolicyRow label="Operators" value={operators} />
         <PolicyRow label="Discount" value={discount} />
+        <PolicyRow label="Minimum purchase" value={minSpend ? peso(minSpend) : "None"} />
+      </ReviewSection>
+
+      <ReviewSection title="Target" onEdit={() => onEdit(1)}>
+        <PolicyRow label="Platforms" value={platformsLabel(value.platforms)} />
+        <PolicyRow label="Who can use it" value={audienceLabel(value.openToAll)} />
       </ReviewSection>
 
       <ReviewSection title="Validity" onEdit={() => onEdit(1)}>
-        <PolicyRow label="Starts" value={startsNow ? "When published" : fmtDate(start)} />
-        <PolicyRow label="Ends" value={value.endDate ? `${fmtDate(value.endDate)}, 11:59 PM` : "—"} />
+        <PolicyRow label="Starts" value={startLabel} />
+        <PolicyRow label="Ends" value={endLabel} />
       </ReviewSection>
 
       <ReviewSection title="Limits" onEdit={() => onEdit(1)}>
         <PolicyRow label="Total uses" value={uses ? uses.toLocaleString() : "No limit"} />
-        <PolicyRow label="Discount budget" value={budget ? peso(budget) : "No limit"} />
-        <PolicyRow label="Per customer" value="1 successful use" />
+        <PolicyRow label="Max claims per user" value={perUser ? perUser.toLocaleString() : "No limit"} />
+        {budget ? <PolicyRow label="Discount budget" value={peso(budget)} /> : null}
         <PolicyRow label="Per booking" value="1 voucher, no stacking" />
-      </ReviewSection>
-
-      <ReviewSection title="Eligibility and funding">
-        <PolicyRow label="Who can use it" value="Everyone" badge="Rules in next version" />
-        <PolicyRow label="Eligible trips" value="All participating trips" badge="Rules in next version" />
-        <PolicyRow label="Funded by" value="Tripket" />
       </ReviewSection>
     </div>
   );

@@ -38,6 +38,7 @@ export default function Pagination({
   onPageSizeChange,
   noun = "items",
   className = "",
+  centerControls = false,
 }: {
   page: number;
   pageSize: number;
@@ -49,6 +50,8 @@ export default function Pagination({
   noun?: string;
   /** Extra classes (e.g. to override the default rounded-b-2xl border-t). */
   className?: string;
+  /** Put the page controls in the centre and the "Per page" selector on the right. */
+  centerControls?: boolean;
 }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   // The footer now carries the only running count on the page, so it renders
@@ -67,12 +70,12 @@ export default function Pagination({
   return (
     <div
       className={
-        "flex items-center justify-between rounded-b-2xl border-t border-slate-100 px-5 py-3 " +
+        (centerControls ? "grid grid-cols-[1fr_auto_1fr] gap-3" : "flex justify-between") + " items-center rounded-b-2xl border-t border-slate-100 px-5 py-3 " +
         className
       }
     >
       {/* Left — running count */}
-      <span className="text-[12px] text-slate-500">
+      <span className={"text-[12px] text-slate-500" + (centerControls ? " order-1" : "")}>
         Showing{" "}
         <span className="font-mono tabular-nums text-slate-700">{from}</span>
         <span className="mx-0.5">–</span>
@@ -82,7 +85,7 @@ export default function Pagination({
 
       {/* Centre — rows per page */}
       {onPageSizeChange && (
-        <label className="flex items-center gap-2 text-[12px] text-slate-500">
+        <label className={"flex items-center gap-2 text-[12px] text-slate-500" + (centerControls ? " order-3 justify-self-end" : "")}>
           <span>Per page</span>
           <select
             value={pageSize}
@@ -103,7 +106,7 @@ export default function Pagination({
 
       {/* Right — paging controls */}
       {showPager && (
-      <nav aria-label="Pagination" className="flex items-center gap-1">
+      <nav aria-label="Pagination" className={"flex items-center gap-1" + (centerControls ? " order-2" : "")}>
         <PageButton
           onClick={() => go(page - 1)}
           disabled={page === 1}

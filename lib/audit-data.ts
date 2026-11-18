@@ -10,7 +10,7 @@ export type AuditArea = "Bookings" | "Tickets" | "Routes" | "Vessels" | "Schedul
 export type AuditAction =
   | "created" | "updated" | "approved" | "cancelled" | "refunded"
   | "paid" | "disabled" | "enabled" | "deleted"
-  | "published" | "paused" | "resumed" | "ended";
+  | "published" | "ended";
 
 export type AuditEntry = {
   id: string;
@@ -35,8 +35,6 @@ export const actionTone: Record<AuditAction, string> = {
   disabled:    "bg-rose-50 text-rose-700 ring-1 ring-rose-100",
   deleted:     "bg-rose-50 text-rose-700 ring-1 ring-rose-100",
   published:   "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100",
-  resumed:     "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100",
-  paused:      "bg-amber-50 text-amber-700 ring-1 ring-amber-100",
   ended:       "bg-rose-50 text-rose-700 ring-1 ring-rose-100",
 };
 
@@ -72,7 +70,7 @@ const TEMPLATES: { area: AuditArea; action: AuditAction; target: () => string; d
   { area: "Users",    action: "enabled",   target: () => personName() },
   { area: "Vouchers", action: "created",   target: () => voucherCode(), detail: "Saved as draft" },
   { area: "Vouchers", action: "published", target: () => voucherCode() },
-  { area: "Vouchers", action: "paused",    target: () => voucherCode() },
+  { area: "Vouchers", action: "disabled",    target: () => voucherCode() },
   { area: "Vouchers", action: "updated",   target: () => voucherCode(), detail: "End date extended" },
 ];
 

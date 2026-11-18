@@ -19,8 +19,7 @@ import {
   PencilIcon,
   CopyIcon,
   CheckIcon,
-  PauseIcon,
-  PlayIcon,
+  PowerIcon,
   StopIcon,
   TrashIcon,
 } from "@/components/voucher-ui";
@@ -38,8 +37,8 @@ import {
   type VoucherStatus,
 } from "@/lib/vouchers-data";
 
-const TABS: ("All" | VoucherStatus)[] = ["All", "Active", "Scheduled", "Paused", "Draft", "Ended"];
-const STATUS_ORDER: Record<VoucherStatus, number> = { Active: 0, Scheduled: 1, Paused: 2, Draft: 3, Ended: 4 };
+const TABS: ("All" | VoucherStatus)[] = ["All", "Active", "Scheduled", "Disabled", "Draft", "Ended"];
+const STATUS_ORDER: Record<VoucherStatus, number> = { Active: 0, Scheduled: 1, Disabled: 2, Draft: 3, Ended: 4 };
 const DEFAULT_PAGE_SIZE = 10;
 
 export default function VouchersPage() {
@@ -139,9 +138,9 @@ export default function VouchersPage() {
     if (status !== "Ended") items.push({ label: "Edit", onClick: () => setEditing(v), icon: <PencilIcon /> });
     items.push({ label: "Duplicate", onClick: () => handleDuplicate(v), icon: <CopyIcon /> });
     if (status === "Draft") items.push({ label: "Publish", tone: "success", onClick: () => setConfirm({ kind: "publish", voucher: v }), icon: <CheckIcon /> });
-    if (status === "Active" || status === "Scheduled") items.push({ label: "Pause", tone: "warning", onClick: () => setConfirm({ kind: "pause", voucher: v }), icon: <PauseIcon /> });
-    if (status === "Paused") items.push({ label: "Resume", tone: "success", onClick: () => setConfirm({ kind: "resume", voucher: v }), icon: <PlayIcon /> });
-    if (status === "Active" || status === "Scheduled" || status === "Paused") items.push({ label: "End now", danger: true, divider: true, onClick: () => setConfirm({ kind: "end", voucher: v }), icon: <StopIcon /> });
+    if (status === "Active" || status === "Scheduled") items.push({ label: "Disable", tone: "warning", onClick: () => setConfirm({ kind: "disable", voucher: v }), icon: <PowerIcon /> });
+    if (status === "Disabled") items.push({ label: "Enable", tone: "success", onClick: () => setConfirm({ kind: "enable", voucher: v }), icon: <PowerIcon /> });
+    if (status === "Active" || status === "Scheduled" || status === "Disabled") items.push({ label: "End now", danger: true, divider: true, onClick: () => setConfirm({ kind: "end", voucher: v }), icon: <StopIcon /> });
     if (status === "Draft") items.push({ label: "Delete draft", danger: true, divider: true, onClick: () => setConfirm({ kind: "delete", voucher: v }), icon: <TrashIcon /> });
     return items;
   };
@@ -274,7 +273,7 @@ export default function VouchersPage() {
                       <div className="font-medium text-slate-900">{discountLabel(v)}</div>
                     </td>
                     <td className="px-5 py-3.5 align-middle">
-                      <div className="tabular-nums text-slate-900">{fmtShortDate(v.startDate)} – {fmtShortDate(v.endDate)}</div>
+                      <div className="tabular-nums text-slate-900">{fmtShortDate(v.startDate)} – {v.endDate ? fmtShortDate(v.endDate) : "No end"}</div>
                       <div className="text-[12px] text-slate-500">{validityCaption(v, status)}</div>
                     </td>
                     <td className="px-5 py-3.5 align-middle">
